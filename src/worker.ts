@@ -8,6 +8,8 @@ import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import { QuoteStateObject } from './durable-objects/quote-state';
 import { handleScheduledRetry } from './scheduled/retry';
+import { handleDailyDigest } from './scheduled/daily-digest';
+import { handleSloCheck } from './scheduled/slo-check';
 
 export { QuoteStateObject };
 
@@ -59,7 +61,13 @@ export default {
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(handleScheduledRetry(event, env));
+    if (event.cron === '0 8 * * *') {
+      ctx.waitUntil(handleDailyDigest(env));
+    } else if (event.cron === '*/30 * * * *') {
+      ctx.waitUntil(handleSloCheck(env));
+    } else if (event.cron === '0 * * * *') {
+      ctx.waitUntil(handleScheduledRetry(event, env));
+    }
   }
 };
 

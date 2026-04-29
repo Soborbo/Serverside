@@ -14,7 +14,9 @@ import {
   markQuoteUpgraded,
   markViewContentFired
 } from '../lib/quote-state';
-import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from '../lib/error-codes';
+import { recordFanoutMetric, recordConversionMetric } from '../lib/metrics';
+import { sendAlert } from '../lib/notify';
 
 const QUOTE_UPGRADE_EVENTS = new Set([
   'callback_conversion',
@@ -150,13 +152,22 @@ export async function handleConversion(
 
   fanOut(effectivePayload, siteConfig, hashedUserData, hostname, remoteIp, userAgent, env, ctx);
 
+  const totalDuration = Date.now() - startedAt;
+  recordConversionMetric(env, {
+    hostname,
+    site_id: siteConfig.site_id,
+    event_name: payload.event_name,
+    accepted: true,
+    total_duration_ms: totalDuration
+  });
+
   logStructured({
     level: 'info',
     message: 'Conversion event accepted',
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
-    duration_ms: Date.now() - startedAt
+    duration_ms: totalDuration
   });
 
   return new Response(null, { status: 204, headers: cors });
@@ -274,25 +285,54 @@ function fanOut(
     postal_code: payload.user_data?.postal_code
   };
 
+  const metaStart = Date.now();
   const metaPromise = sendToMetaCAPI(siteConfig, metaPayload, hashedUserData);
+  const ga4Start = Date.now();
   const ga4Promise = sendToGA4MP(siteConfig, ga4Payload);
+  const gadsStart = Date.now();
   const gadsPromise = sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData);
 
   const fanout = Promise.allSettled([metaPromise, ga4Promise, gadsPromise]).then(
     async (results) => {
       const [metaResult, ga4Result, gadsResult] = results;
-      const nowIso = new Date().toISOString();
+      const completedAt = Date.now();
+      const nowIso = new Date(completedAt).toISOString();
       const dlqWrites: Promise<void>[] = [];
+      const alerts: Promise<void>[] = [];
 
-      const enqueueIfFailed = (
+      const handleResult = (
         platform: Platform,
         result: (typeof results)[number],
         platformPayload: Record<string, unknown>,
-        includeUserData: boolean
+        includeUserData: boolean,
+        platformStart: number
       ) => {
-        const failed =
-          result.status === 'rejected' || (result.status === 'fulfilled' && !result.value.success);
-        if (!failed) return;
+        const success =
+          result.status === 'fulfilled' && result.value.success;
+        const errorCode =
+          result.status === 'fulfilled' ? result.value.error_code : undefined;
+
+        recordFanoutMetric(env, {
+          site_id: siteConfig.site_id,
+          event_name: payload.event_name,
+          platform,
+          success,
+          duration_ms: completedAt - platformStart,
+          error_code: errorCode
+        });
+
+        if (errorCode && ERROR_SEVERITY[errorCode] === 'critical') {
+          alerts.push(
+            sendAlert(env, errorCode, {
+              site_id: siteConfig.site_id,
+              hostname,
+              platform,
+              event_name: payload.event_name
+            })
+          );
+        }
+
+        if (success) return;
         const reason =
           result.status === 'rejected'
             ? String(result.reason)
@@ -314,11 +354,29 @@ function fanOut(
         );
       };
 
-      enqueueIfFailed('meta', metaResult, metaPayload as unknown as Record<string, unknown>, true);
-      enqueueIfFailed('ga4', ga4Result, ga4Payload as unknown as Record<string, unknown>, false);
-      enqueueIfFailed('gads', gadsResult, gadsPayload as unknown as Record<string, unknown>, true);
+      handleResult(
+        'meta',
+        metaResult,
+        metaPayload as unknown as Record<string, unknown>,
+        true,
+        metaStart
+      );
+      handleResult(
+        'ga4',
+        ga4Result,
+        ga4Payload as unknown as Record<string, unknown>,
+        false,
+        ga4Start
+      );
+      handleResult(
+        'gads',
+        gadsResult,
+        gadsPayload as unknown as Record<string, unknown>,
+        true,
+        gadsStart
+      );
 
-      await Promise.allSettled(dlqWrites);
+      await Promise.allSettled([...dlqWrites, ...alerts]);
 
       logStructured({
         level: 'info',

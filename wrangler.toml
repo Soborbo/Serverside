@@ -8,9 +8,24 @@ account_id = "075668606da58c5b96a45a075f1ca99c"
 enabled = true
 head_sampling_rate = 1.0
 
-# Cron Trigger — DLQ retry, óránként
+# Cron Triggers — DLQ retry, daily digest, SLO check
 [triggers]
-crons = ["0 * * * *"]
+crons = [
+  "0 8 * * *",        # Daily digest at 8 AM GMT
+  "*/30 * * * *",     # SLO check every 30 min
+  "0 * * * *"         # DLQ retry every hour
+]
+
+# Analytics Engine dataset for metrics
+[[analytics_engine_datasets]]
+binding = "TRACKING_METRICS"
+
+# Email binding — Cloudflare Email Routing setup szükséges (lásd 00-pre-sprint-setup.md).
+# Ha nincs domain konfigurálva, deploy ezzel a blokkkal fail-elhet — ilyenkor
+# kommentezd ki és használd a kódbeli soft-skip-et.
+[[send_email]]
+name = "ADMIN_EMAIL"
+destination_address = "laszlo@soborbo.com"
 
 # KV namespaces (created via Cloudflare MCP, 2026-04-29)
 [[kv_namespaces]]
