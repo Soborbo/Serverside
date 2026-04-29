@@ -17,6 +17,15 @@ id = "edd34e28eee847c09c26f9d9e3ea04ab"
 binding = "OAUTH_TOKENS"
 id = "f464647802e24a5dac60cacd66a9876a"
 
+# Durable Objects — quote state (60-min upgrade window, strong consistency)
+[[durable_objects.bindings]]
+name = "QUOTE_STATE"
+class_name = "QuoteStateObject"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["QuoteStateObject"]
+
 # R2 bucket for dead-letter queue
 # NOTE: created with default jurisdiction (ENAM). Spec calls for EU (Belgium)
 # for GDPR. If a re-creation is performed in the dashboard with eu jurisdiction,

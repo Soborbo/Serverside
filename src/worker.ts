@@ -6,6 +6,9 @@ import { handleOAuthCallback } from './routes/oauth-callback';
 import { handleOAuthDebug } from './routes/oauth-debug';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
+import { QuoteStateObject } from './durable-objects/quote-state';
+
+export { QuoteStateObject };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
