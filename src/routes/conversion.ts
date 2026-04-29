@@ -3,12 +3,14 @@ import { logStructured, isValidConversionPayload } from '../types';
 import { corsHeaders } from '../worker';
 import { getSiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
+import { hashUserData, type CountryCode } from '../lib/hash';
+import { sendToMetaCAPI } from '../lib/meta';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 export async function handleConversion(
   request: Request,
   env: Env,
-  _ctx: ExecutionContext
+  ctx: ExecutionContext
 ): Promise<Response> {
   const startedAt = Date.now();
   const url = new URL(request.url);
@@ -55,7 +57,6 @@ export async function handleConversion(
 
   const remoteIp = request.headers.get('CF-Connecting-IP') || undefined;
   const turnstileResult = await validateTurnstile(payload.turnstile_token, remoteIp, env);
-
   if (!turnstileResult.valid) {
     const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
     const errorCode = isMissing
@@ -74,16 +75,38 @@ export async function handleConversion(
     return new Response('Invalid token', { status: 403, headers: cors });
   }
 
+  const hashedUserData = await hashUserData(
+    payload.user_data || {},
+    siteConfig.country_code as CountryCode
+  );
+
+  const userAgent = request.headers.get('User-Agent') || undefined;
+  const metaPromise = sendToMetaCAPI(
+    siteConfig,
+    {
+      event_name: payload.event_name,
+      event_id: payload.event_id,
+      event_time: payload.event_time,
+      value: payload.value,
+      currency: payload.currency,
+      source: payload.source,
+      event_source_url: payload.event_source_url,
+      fbp: payload.fbp,
+      fbc: payload.fbc,
+      client_ip: remoteIp,
+      client_user_agent: userAgent
+    },
+    hashedUserData
+  );
+
+  ctx.waitUntil(metaPromise);
+
   logStructured({
     level: 'info',
-    message: 'Conversion event validated (Sprint 2 — placeholder)',
+    message: 'Conversion event accepted',
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
-    turnstile_warnings:
-      turnstileResult.errorCodes && turnstileResult.errorCodes.length > 0
-        ? turnstileResult.errorCodes.join(',')
-        : undefined,
     duration_ms: Date.now() - startedAt
   });
 

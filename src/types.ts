@@ -19,11 +19,32 @@ export function logStructured(log: StructuredLog): void {
   fn(JSON.stringify(log));
 }
 
+export interface PlainUserDataPayload {
+  email?: string;
+  phone_number?: string;
+  first_name?: string;
+  last_name?: string;
+  city?: string;
+  postal_code?: string;
+  country?: string;
+}
+
 export interface ConversionRequestPayload {
   event_name: string;
   event_id: string;
   event_time: number;
   turnstile_token: string;
+
+  value?: number;
+  currency?: string;
+  source?: string;
+  service?: string;
+  event_source_url?: string;
+  user_data?: PlainUserDataPayload;
+  fbp?: string;
+  fbc?: string;
+  client_id?: string;
+
   [key: string]: unknown;
 }
 
