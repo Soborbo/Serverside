@@ -1,5 +1,6 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 
 const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
@@ -33,7 +34,8 @@ export async function validateTurnstile(
     if (!response.ok) {
       logStructured({
         level: 'warn',
-        message: 'Turnstile verify API returned non-2xx',
+        error_code: TrackingErrorCode.TURNSTILE_API_UNAVAILABLE,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.TURNSTILE_API_UNAVAILABLE],
         status: response.status
       });
       return { valid: true, errorCodes: ['service_unavailable'] };
@@ -47,7 +49,8 @@ export async function validateTurnstile(
   } catch (err) {
     logStructured({
       level: 'warn',
-      message: 'Turnstile verify network error',
+      error_code: TrackingErrorCode.TURNSTILE_API_UNAVAILABLE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.TURNSTILE_API_UNAVAILABLE],
       error: err instanceof Error ? err.message : String(err)
     });
     return { valid: true, errorCodes: ['service_unavailable'] };

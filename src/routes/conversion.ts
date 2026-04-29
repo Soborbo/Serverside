@@ -3,6 +3,7 @@ import { logStructured, isValidConversionPayload } from '../types';
 import { corsHeaders } from '../worker';
 import { getSiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 export async function handleConversion(
   request: Request,
@@ -19,8 +20,9 @@ export async function handleConversion(
     payload = await request.json();
   } catch {
     logStructured({
-      level: 'warn',
-      message: 'Invalid JSON in conversion request',
+      level: 'info',
+      error_code: TrackingErrorCode.INVALID_JSON,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.INVALID_JSON],
       hostname,
       duration_ms: Date.now() - startedAt
     });
@@ -29,8 +31,9 @@ export async function handleConversion(
 
   if (!isValidConversionPayload(payload)) {
     logStructured({
-      level: 'warn',
-      message: 'Invalid conversion payload structure',
+      level: 'info',
+      error_code: TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE],
       hostname,
       duration_ms: Date.now() - startedAt
     });
@@ -41,7 +44,8 @@ export async function handleConversion(
   if (!siteConfig) {
     logStructured({
       level: 'warn',
-      message: 'No site config found for hostname',
+      error_code: TrackingErrorCode.NO_SITE_CONFIG,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.NO_SITE_CONFIG],
       hostname,
       event_name: payload.event_name,
       duration_ms: Date.now() - startedAt
@@ -53,9 +57,14 @@ export async function handleConversion(
   const turnstileResult = await validateTurnstile(payload.turnstile_token, remoteIp, env);
 
   if (!turnstileResult.valid) {
+    const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
+    const errorCode = isMissing
+      ? TrackingErrorCode.MISSING_TURNSTILE_TOKEN
+      : TrackingErrorCode.INVALID_TURNSTILE_TOKEN;
     logStructured({
-      level: 'warn',
-      message: 'Turnstile validation failed',
+      level: 'info',
+      error_code: errorCode,
+      message: ERROR_DESCRIPTIONS[errorCode],
       hostname,
       site_id: siteConfig.site_id,
       event_name: payload.event_name,

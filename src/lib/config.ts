@@ -1,5 +1,6 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 
 export interface SiteConfig {
   site_id: string;
@@ -42,7 +43,8 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
   } catch (err) {
     logStructured({
       level: 'error',
-      message: 'KV read failed in getSiteConfig',
+      error_code: TrackingErrorCode.KV_READ_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.KV_READ_FAILED],
       hostname,
       error: err instanceof Error ? err.message : String(err)
     });

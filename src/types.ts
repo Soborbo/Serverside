@@ -1,6 +1,9 @@
+import type { TrackingErrorCode } from './lib/error-codes';
+
 export type StructuredLog = {
   level: 'info' | 'warn' | 'error';
   message: string;
+  error_code?: TrackingErrorCode | string;
   hostname?: string;
   event_name?: string;
   site_id?: string;

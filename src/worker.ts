@@ -2,6 +2,7 @@ import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
 import { handleHealth } from './routes/health';
 import { logStructured } from './types';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -28,7 +29,8 @@ export default {
     } catch (err) {
       logStructured({
         level: 'error',
-        message: 'Unhandled exception in fetch handler',
+        error_code: TrackingErrorCode.UNHANDLED_EXCEPTION,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.UNHANDLED_EXCEPTION],
         hostname: url.hostname,
         error: err instanceof Error ? err.message : String(err),
         duration_ms: Date.now() - startedAt
