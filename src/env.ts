@@ -6,9 +6,9 @@ export interface Env {
 
   // Secrets (set via `wrangler secret put`)
   TURNSTILE_SECRET_KEY: string;
+  GADS_OAUTH_CLIENT_ID: string;
+  GADS_OAUTH_CLIENT_SECRET: string;
 
-  // Sprint 6-7 secrets, declared in later sprints:
-  //   GADS_OAUTH_CLIENT_ID: string;
-  //   GADS_OAUTH_CLIENT_SECRET: string;
+  // Sprint 7 secret, declared later:
   //   GADS_DEVELOPER_TOKEN: string;
 }
