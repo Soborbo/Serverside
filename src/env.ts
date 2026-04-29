@@ -10,7 +10,5 @@ export interface Env {
   TURNSTILE_SECRET_KEY: string;
   GADS_OAUTH_CLIENT_ID: string;
   GADS_OAUTH_CLIENT_SECRET: string;
-
-  // Sprint 7 secret, declared later:
-  //   GADS_DEVELOPER_TOKEN: string;
+  GADS_DEVELOPER_TOKEN: string;
 }

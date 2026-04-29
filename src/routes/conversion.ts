@@ -6,6 +6,7 @@ import { validateTurnstile } from '../lib/turnstile';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
 import { sendToMetaCAPI } from '../lib/meta';
 import { sendToGA4MP } from '../lib/ga4';
+import { sendToGoogleAdsCAPI } from '../lib/gads';
 import {
   setQuoteState,
   getQuoteState,
@@ -146,7 +147,7 @@ export async function handleConversion(
     }
   }
 
-  fanOutMetaGA4(effectivePayload, siteConfig, hashedUserData, remoteIp, userAgent, ctx);
+  fanOut(effectivePayload, siteConfig, hashedUserData, remoteIp, userAgent, env, ctx);
 
   logStructured({
     level: 'info',
@@ -226,12 +227,13 @@ async function handleQuoteCompletion(
   return new Response(null, { status: 204, headers: cors });
 }
 
-function fanOutMetaGA4(
+function fanOut(
   payload: ConversionRequestPayload,
   siteConfig: SiteConfig,
   hashedUserData: HashedUserData,
   remoteIp: string | undefined,
   userAgent: string | undefined,
+  env: Env,
   ctx: ExecutionContext
 ): void {
   const metaPromise = sendToMetaCAPI(
@@ -264,15 +266,31 @@ function fanOutMetaGA4(
     user_agent: userAgent
   });
 
-  const fanout = Promise.allSettled([metaPromise, ga4Promise]).then((results) => {
-    const [metaResult, ga4Result] = results;
+  const gadsPromise = sendToGoogleAdsCAPI(
+    siteConfig,
+    env,
+    {
+      event_name: payload.event_name,
+      event_id: payload.event_id,
+      event_time: payload.event_time,
+      value: payload.value,
+      currency: payload.currency,
+      city: payload.user_data?.city,
+      postal_code: payload.user_data?.postal_code
+    },
+    hashedUserData
+  );
+
+  const fanout = Promise.allSettled([metaPromise, ga4Promise, gadsPromise]).then((results) => {
+    const [metaResult, ga4Result, gadsResult] = results;
     logStructured({
       level: 'info',
       message: 'Fan-out completed',
       site_id: siteConfig.site_id,
       event_name: payload.event_name,
       meta_success: metaResult.status === 'fulfilled' && metaResult.value.success,
-      ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success
+      ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success,
+      gads_success: gadsResult.status === 'fulfilled' && gadsResult.value.success
     });
   });
 
