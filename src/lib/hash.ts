@@ -45,6 +45,26 @@ export function normalizeEmail(email: string | null | undefined): string | undef
   return trimmed;
 }
 
+// Country dialing-codes that use a leading `0` as a national trunk prefix.
+// When the international `+CC` prefix is already present, the trunk `0` must
+// be dropped (e.g. `+44 (0)7123 456 789` → `+447123456789`).
+//
+// IMPORTANT: only countries that ACTUALLY use a trunk-0 in their national
+// numbering plan are listed here. Italy, Spain, Czechia, Slovakia, Poland
+// keep their leading 0 in international format (or have no trunk 0 at all),
+// so they MUST NOT be in this list.
+const TRUNK_PREFIX_COUNTRIES: Record<string, string> = {
+  '44': 'gb',
+  '36': 'hu',
+  '49': 'de',
+  '33': 'fr',
+  '31': 'nl',
+  '32': 'be',
+  '43': 'at',
+  '41': 'ch',
+  '40': 'ro'
+};
+
 export function normalizePhone(
   phone: string | null | undefined,
   countryCode: CountryCode = 'GB'
@@ -54,12 +74,10 @@ export function normalizePhone(
   if (cleaned.length === 0) return undefined;
 
   if (cleaned.startsWith('+')) {
-    // Drop UK trunk prefix `(0)` when the international code is already present
-    // (e.g. `+44 (0)7123 456 789` strips to `+4407123456789`, which is invalid;
-    // CLAUDE.md mandates the result to be `+447123456789`).
-    if (cleaned.startsWith('+440')) {
-      cleaned = '+44' + cleaned.slice(4);
-    }
+    // Generalized trunk-prefix repair: if `+CC0` matches a known dialing
+    // code that uses a trunk `0`, strip the trunk. Covers UK, HU, DE, FR
+    // and other EU countries that share this convention.
+    cleaned = stripTrunkPrefix(cleaned);
     if (/^\+\d{8,15}$/.test(cleaned)) return cleaned;
     return undefined;
   }
@@ -94,6 +112,21 @@ export function normalizePhone(
 
   if (!/^\+\d{8,15}$/.test(cleaned)) return undefined;
   return cleaned;
+}
+
+function stripTrunkPrefix(plus: string): string {
+  // Try 3-digit dialing codes first (longer match wins).
+  for (const codeLen of [3, 2]) {
+    const candidate = plus.slice(1, 1 + codeLen);
+    if (
+      TRUNK_PREFIX_COUNTRIES[candidate] !== undefined &&
+      plus.length > 1 + codeLen &&
+      plus[1 + codeLen] === '0'
+    ) {
+      return '+' + candidate + plus.slice(2 + codeLen);
+    }
+  }
+  return plus;
 }
 
 export function normalizePostalCode(postal: string | null | undefined): string | undefined {

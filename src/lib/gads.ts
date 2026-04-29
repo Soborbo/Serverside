@@ -4,6 +4,7 @@ import type { HashedUserData } from './hash';
 import { getAccessToken } from './gads-oauth';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
+import { sanitizeErrorMessage } from './log-sanitize';
 
 const GADS_API_VERSION = 'v24';
 const GADS_API_TIMEOUT_MS = 5000;
@@ -63,11 +64,7 @@ export async function sendToGoogleAdsCAPI(
       site_id: siteConfig.site_id,
       event_name: payload.event_name
     });
-    return {
-      success: false,
-      error_code: TrackingErrorCode.MISSING_CONVERSION_ACTION,
-      error: 'No conversion action configured'
-    };
+    return { success: true };
   }
 
   const accessToken = await getAccessToken(siteConfig.gads.customer_id, env);
@@ -101,7 +98,9 @@ export async function sendToGoogleAdsCAPI(
     conversionDateTime,
     orderId: payload.event_id.slice(0, 64)
   };
-  if (typeof payload.value === 'number') conversion.conversionValue = payload.value;
+  if (typeof payload.value === 'number' && payload.value > 0) {
+    conversion.conversionValue = payload.value;
+  }
   if (payload.currency) conversion.currencyCode = payload.currency;
   if (userIdentifiers.length > 0) conversion.userIdentifiers = userIdentifiers;
 
@@ -145,6 +144,7 @@ export async function sendToGoogleAdsCAPI(
         responseBody.error?.code,
         responseBody.error?.message
       );
+      const sanitizedError = sanitizeErrorMessage(responseBody.error?.message);
       logStructured({
         level:
           errorCode === TrackingErrorCode.GADS_AUTH_REJECTED ||
@@ -156,32 +156,33 @@ export async function sendToGoogleAdsCAPI(
         site_id: siteConfig.site_id,
         event_name: payload.event_name,
         status: response.status,
-        gads_error: responseBody.error?.message || `HTTP ${response.status}`,
+        gads_error: sanitizedError,
         gads_error_code: responseBody.error?.code,
         duration_ms: Date.now() - startedAt
       });
       return {
         success: false,
         error_code: errorCode,
-        error: responseBody.error?.message || `HTTP ${response.status}`,
+        error: sanitizedError,
         status: response.status
       };
     }
 
     if (responseBody.partialFailureError) {
+      const sanitizedPartial = sanitizeErrorMessage(responseBody.partialFailureError.message);
       logStructured({
         level: 'warn',
         error_code: TrackingErrorCode.GADS_PARTIAL_FAILURE,
         message: ERROR_DESCRIPTIONS[TrackingErrorCode.GADS_PARTIAL_FAILURE],
         site_id: siteConfig.site_id,
         event_name: payload.event_name,
-        partial_error: responseBody.partialFailureError.message,
+        partial_error: sanitizedPartial,
         duration_ms: Date.now() - startedAt
       });
       return {
         success: false,
         error_code: TrackingErrorCode.GADS_PARTIAL_FAILURE,
-        partial_failure_error: responseBody.partialFailureError.message,
+        partial_failure_error: sanitizedPartial,
         status: response.status
       };
     }

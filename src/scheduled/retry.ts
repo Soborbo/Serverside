@@ -48,12 +48,17 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         await deleteDeadLetter(env, key);
         succeeded++;
       } else {
-        await deleteDeadLetter(env, key);
+        // Atomicity: write the new (incremented) record FIRST, then delete the
+        // old one. If the Worker is killed between the two ops, worst case is
+        // a duplicate retry (idempotent via event_id dedup downstream).
+        // The previous order (delete-then-write) silently lost the event on
+        // a crash window.
         await writeDeadLetter(env, {
           ...record,
           retry_count: record.retry_count + 1,
           last_attempted_at: new Date().toISOString()
         });
+        await deleteDeadLetter(env, key);
         failed++;
       }
     } catch (err) {

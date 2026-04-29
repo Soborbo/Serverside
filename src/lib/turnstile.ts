@@ -38,7 +38,7 @@ export async function validateTurnstile(
         message: ERROR_DESCRIPTIONS[TrackingErrorCode.TURNSTILE_API_UNAVAILABLE],
         status: response.status
       });
-      return { valid: true, errorCodes: ['service_unavailable'] };
+      return failOpenOrClosed(env);
     }
 
     const result = (await response.json()) as { success: boolean; 'error-codes'?: string[] };
@@ -53,6 +53,13 @@ export async function validateTurnstile(
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.TURNSTILE_API_UNAVAILABLE],
       error: err instanceof Error ? err.message : String(err)
     });
-    return { valid: true, errorCodes: ['service_unavailable'] };
+    return failOpenOrClosed(env);
   }
+}
+
+function failOpenOrClosed(env: Env): TurnstileResult {
+  if (env.TURNSTILE_FAILOPEN === '1') {
+    return { valid: true, errorCodes: ['service_unavailable_failopen'] };
+  }
+  return { valid: false, errorCodes: ['service_unavailable'] };
 }

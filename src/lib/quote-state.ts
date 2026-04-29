@@ -9,7 +9,7 @@ function getQuoteStateDO(env: Env, clientId: string): DurableObjectStub {
 export async function setQuoteState(
   env: Env,
   clientId: string,
-  state: Omit<QuoteStateData, 'upgraded' | 'view_content_fired'>
+  state: Omit<QuoteStateData, 'upgraded' | 'view_content_fired' | 'fired_at'>
 ): Promise<QuoteStateData> {
   const stub = getQuoteStateDO(env, clientId);
   const response = await stub.fetch('https://internal/?op=set', {

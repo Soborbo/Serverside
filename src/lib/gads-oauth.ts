@@ -151,7 +151,7 @@ export async function getAccessToken(customerId: string, env: Env): Promise<stri
     return null;
   }
 
-  const ttl = Math.min(result.expiresIn - 300, ACCESS_TOKEN_TTL_SECONDS);
+  const ttl = Math.max(60, Math.min(result.expiresIn - 300, ACCESS_TOKEN_TTL_SECONDS));
   await env.OAUTH_TOKENS.put(accessKey, result.accessToken, { expirationTtl: ttl });
 
   logStructured({

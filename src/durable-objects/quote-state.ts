@@ -7,15 +7,25 @@ export interface QuoteStateData {
   currency: string;
   service: string;
   completed_at: number;
+  event_time: number;
   event_id: string;
   upgraded: boolean;
+  fired_at: number | null;
   user_data?: HashedUserData;
   hostname: string;
   view_content_fired: boolean;
 }
 
 const STORAGE_KEY = 'quote';
-const ALARM_DURATION_MS = 60 * 60 * 1000;
+const DEFAULT_ALARM_DURATION_MS = 60 * 60 * 1000;
+
+function getAlarmDurationMs(env: Env): number {
+  const override = env.QUOTE_ALARM_SECONDS;
+  if (!override) return DEFAULT_ALARM_DURATION_MS;
+  const seconds = parseInt(override, 10);
+  if (!Number.isFinite(seconds) || seconds < 1) return DEFAULT_ALARM_DURATION_MS;
+  return seconds * 1000;
+}
 
 export class QuoteStateObject implements DurableObject {
   state: DurableObjectState;
@@ -49,29 +59,33 @@ export class QuoteStateObject implements DurableObject {
     if (
       typeof newQuote.client_id !== 'string' ||
       typeof newQuote.value !== 'number' ||
+      newQuote.value <= 0 ||
       typeof newQuote.currency !== 'string' ||
       typeof newQuote.service !== 'string' ||
       typeof newQuote.event_id !== 'string' ||
       typeof newQuote.hostname !== 'string'
     ) {
-      return new Response('Missing required fields', { status: 400 });
+      return new Response('Missing or invalid required fields', { status: 400 });
     }
 
+    const completed_at = newQuote.completed_at || Date.now();
     const quote: QuoteStateData = {
       client_id: newQuote.client_id,
       value: newQuote.value,
       currency: newQuote.currency,
       service: newQuote.service,
-      completed_at: newQuote.completed_at || Date.now(),
+      completed_at,
+      event_time: newQuote.event_time || Math.floor(completed_at / 1000),
       event_id: newQuote.event_id,
       upgraded: false,
+      fired_at: null,
       user_data: newQuote.user_data,
       hostname: newQuote.hostname,
       view_content_fired: previous?.view_content_fired ?? false
     };
 
     await this.state.storage.put(STORAGE_KEY, quote);
-    await this.state.storage.setAlarm(Date.now() + ALARM_DURATION_MS);
+    await this.state.storage.setAlarm(Date.now() + getAlarmDurationMs(this.env));
 
     return new Response(JSON.stringify(quote), {
       status: 200,
@@ -81,13 +95,13 @@ export class QuoteStateObject implements DurableObject {
 
   private async handleGet(): Promise<Response> {
     const quote = await this.state.storage.get<QuoteStateData>(STORAGE_KEY);
-    if (!quote || quote.upgraded) {
+    if (!quote || quote.upgraded || quote.fired_at !== null) {
       return new Response('null', {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
     }
-    if (Date.now() - quote.completed_at > ALARM_DURATION_MS) {
+    if (Date.now() - quote.completed_at > getAlarmDurationMs(this.env)) {
       return new Response('null', {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -122,13 +136,23 @@ export class QuoteStateObject implements DurableObject {
   /**
    * Alarm: 60 perccel a quote completion után tüzel a 3-way fan-out
    * (Meta + GA4 + Google Ads). Failure → DLQ.
+   *
+   * Idempotency: CF DOs guarantee at-least-once alarm delivery (max 6 retries
+   * on throw). We set `fired_at` BEFORE fan-out to ensure double-firing
+   * doesn't duplicate conversions across all 3 platforms.
    */
   async alarm(): Promise<void> {
     const quote = await this.state.storage.get<QuoteStateData>(STORAGE_KEY);
-    if (!quote || quote.upgraded) return;
+    if (!quote || quote.upgraded || quote.fired_at !== null) return;
 
-    await this.fireDelayedConversion(quote);
-    await this.state.storage.deleteAll();
+    quote.fired_at = Date.now();
+    await this.state.storage.put(STORAGE_KEY, quote);
+
+    try {
+      await this.fireDelayedConversion(quote);
+    } finally {
+      await this.state.storage.deleteAll();
+    }
   }
 
   private async fireDelayedConversion(quote: QuoteStateData): Promise<void> {
@@ -152,7 +176,7 @@ export class QuoteStateObject implements DurableObject {
     }
 
     const event_name = 'quote_calculator_conversion';
-    const event_time = Math.floor(Date.now() / 1000);
+    const event_time = quote.event_time;
     const userData = quote.user_data || {};
 
     const metaPayload = {

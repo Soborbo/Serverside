@@ -2,6 +2,14 @@ import type { Env } from '../env';
 
 export type MetricPlatform = 'meta' | 'ga4' | 'gads';
 
+// Defensive clamp to prevent Analytics Engine cardinality explosion if any
+// caller bypasses the upstream allowlist validation.
+const MAX_BLOB_LENGTH = 64;
+
+function clamp(s: string): string {
+  return s.length > MAX_BLOB_LENGTH ? s.slice(0, MAX_BLOB_LENGTH) : s;
+}
+
 export function recordFanoutMetric(
   env: Env,
   data: {
@@ -16,9 +24,9 @@ export function recordFanoutMetric(
   if (!env.TRACKING_METRICS) return;
   try {
     env.TRACKING_METRICS.writeDataPoint({
-      blobs: [data.site_id, data.event_name, data.platform, data.error_code || 'none'],
+      blobs: [clamp(data.site_id), clamp(data.event_name), data.platform, clamp(data.error_code || 'none')],
       doubles: [data.success ? 1 : 0, data.duration_ms],
-      indexes: [data.site_id]
+      indexes: [clamp(data.site_id)]
     });
   } catch (err) {
     console.warn('Failed to record fan-out metric', err);
@@ -39,7 +47,7 @@ export function recordConversionMetric(
   if (!env.TRACKING_METRICS) return;
   try {
     env.TRACKING_METRICS.writeDataPoint({
-      blobs: [data.site_id, data.hostname, data.event_name, data.error_code || 'none'],
+      blobs: [clamp(data.site_id), clamp(data.hostname), clamp(data.event_name), clamp(data.error_code || 'none')],
       doubles: [data.accepted ? 1 : 0, data.total_duration_ms],
       indexes: ['conversion_total']
     });

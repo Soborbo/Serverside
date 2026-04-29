@@ -22,21 +22,42 @@ export interface SiteConfig {
   };
 }
 
-const negativeCache = new Set<string>();
-const NEGATIVE_CACHE_MAX_SIZE = 1000;
+// LRU negative cache with TTL. Bounded size prevents memory growth from
+// scanner traffic; TTL ensures newly-added sites are picked up within ~60s.
+const NEGATIVE_CACHE_MAX_SIZE = 256;
+const NEGATIVE_CACHE_TTL_MS = 60_000;
+const negativeCache = new Map<string, number>();
+
+function negativeCacheHit(hostname: string): boolean {
+  const expiresAt = negativeCache.get(hostname);
+  if (expiresAt === undefined) return false;
+  if (expiresAt < Date.now()) {
+    negativeCache.delete(hostname);
+    return false;
+  }
+  // Refresh LRU position
+  negativeCache.delete(hostname);
+  negativeCache.set(hostname, expiresAt);
+  return true;
+}
+
+function negativeCachePut(hostname: string): void {
+  if (negativeCache.size >= NEGATIVE_CACHE_MAX_SIZE) {
+    const oldest = negativeCache.keys().next().value;
+    if (oldest !== undefined) negativeCache.delete(oldest);
+  }
+  negativeCache.set(hostname, Date.now() + NEGATIVE_CACHE_TTL_MS);
+}
 
 export async function getSiteConfig(hostname: string, env: Env): Promise<SiteConfig | null> {
-  if (negativeCache.has(hostname)) {
+  if (negativeCacheHit(hostname)) {
     return null;
   }
 
   try {
     const raw = await env.SITE_CONFIG.get(hostname, 'json');
     if (!raw) {
-      if (negativeCache.size >= NEGATIVE_CACHE_MAX_SIZE) {
-        negativeCache.clear();
-      }
-      negativeCache.add(hostname);
+      negativeCachePut(hostname);
       return null;
     }
     return raw as SiteConfig;

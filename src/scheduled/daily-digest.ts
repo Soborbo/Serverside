@@ -9,10 +9,23 @@ export async function handleDailyDigest(env: Env): Promise<void> {
 
   let totalDlqRecords = 0;
   let totalDeadRecords = 0;
+  let truncated = false;
   try {
-    const dlqList = await env.DEAD_LETTER.list({ limit: 1000 });
-    totalDlqRecords = dlqList.objects.filter((o) => !o.key.includes('/dead/')).length;
-    totalDeadRecords = dlqList.objects.filter((o) => o.key.includes('/dead/')).length;
+    let cursor: string | undefined;
+    let pages = 0;
+    const MAX_PAGES = 10;
+    while (pages < MAX_PAGES) {
+      const list = await env.DEAD_LETTER.list({ cursor, limit: 1000 });
+      for (const obj of list.objects) {
+        const segments = obj.key.split('/');
+        if (segments.length >= 4 && segments[2] === 'dead') totalDeadRecords++;
+        else totalDlqRecords++;
+      }
+      if (!list.truncated) break;
+      cursor = list.cursor;
+      pages++;
+    }
+    if (pages >= MAX_PAGES) truncated = true;
   } catch (err) {
     logStructured({
       level: 'warn',
@@ -30,7 +43,7 @@ export async function handleDailyDigest(env: Env): Promise<void> {
 
     <h3>Dead Letter Queue</h3>
     <ul>
-      <li>Pending retries: ${totalDlqRecords}</li>
+      <li>Pending retries: ${totalDlqRecords}${truncated ? ' (≥10000 — list truncated)' : ''}</li>
       <li>Dead (max retries reached): ${totalDeadRecords}</li>
     </ul>
 

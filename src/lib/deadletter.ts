@@ -61,9 +61,18 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
   }
 }
 
+export function isDeadKey(key: string): boolean {
+  // Key format: {site_id}/{platform}/{date_or_dead}/{filename}.json
+  // Use segment-match instead of substring to avoid false positives if a
+  // site_id ever contained "/dead/" in its name.
+  const segments = key.split('/');
+  return segments.length >= 4 && segments[2] === 'dead';
+}
+
 export async function listPendingRetries(
   env: Env,
-  sitePrefix?: string
+  sitePrefix?: string,
+  maxResults = 100
 ): Promise<{ key: string; record: DeadLetterRecord }[]> {
   const now = Date.now();
   const cutoffMs = RETRY_WINDOW_HOURS * 60 * 60 * 1000;
@@ -81,7 +90,8 @@ export async function listPendingRetries(
     });
 
     for (const obj of listResult.objects) {
-      if (obj.key.includes('/dead/')) continue;
+      if (isDeadKey(obj.key)) continue;
+      if (results.length >= maxResults) break;
 
       try {
         const body = await env.DEAD_LETTER.get(obj.key);
@@ -104,8 +114,9 @@ export async function listPendingRetries(
       }
     }
 
+    if (results.length >= maxResults) break;
     if (!listResult.truncated) break;
-    cursor = listResult.truncated ? listResult.cursor : undefined;
+    cursor = listResult.cursor;
     iterations++;
   }
 

@@ -2,6 +2,7 @@ import type { SiteConfig } from './config';
 import type { HashedUserData } from './hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
+import { sanitizeErrorMessage } from './log-sanitize';
 
 const META_API_VERSION = 'v25.0';
 const META_API_TIMEOUT_MS = 5000;
@@ -73,7 +74,7 @@ export async function sendToMetaCAPI(
   if (payload.client_user_agent) user_data.client_user_agent = payload.client_user_agent;
 
   const custom_data: Record<string, unknown> = {};
-  if (typeof payload.value === 'number' && payload.currency) {
+  if (typeof payload.value === 'number' && payload.value > 0 && payload.currency) {
     custom_data.value = payload.value;
     custom_data.currency = payload.currency;
   }
@@ -165,7 +166,7 @@ export async function sendToMetaCAPI(
       site_id: siteConfig.site_id,
       event_name: payload.event_name,
       status: response.status,
-      meta_error: responseBody.error?.message || 'unknown',
+      meta_error: sanitizeErrorMessage(responseBody.error?.message),
       meta_error_code: responseBody.error?.code,
       fbtrace_id: responseBody.fbtrace_id,
       duration_ms: Date.now() - startedAt

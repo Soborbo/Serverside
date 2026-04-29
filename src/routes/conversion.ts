@@ -33,7 +33,18 @@ export async function handleConversion(
   const startedAt = Date.now();
   const url = new URL(request.url);
   const hostname = url.hostname;
-  const cors = corsHeaders(request);
+  const cors = corsHeaders(request, env);
+
+  // Reject oversized bodies before parsing — guards against DLQ/AE flooding
+  // via large user_data payloads.
+  const MAX_BODY_BYTES = 16 * 1024;
+  const contentLength = request.headers.get('Content-Length');
+  if (contentLength) {
+    const len = parseInt(contentLength, 10);
+    if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
+      return new Response(null, { status: 204, headers: cors });
+    }
+  }
 
   let payload: unknown;
   try {
@@ -198,6 +209,7 @@ async function handleQuoteCompletion(
     currency: payload.currency,
     service: payload.service,
     completed_at: Date.now(),
+    event_time: payload.event_time,
     event_id: payload.event_id,
     user_data: hashedUserData,
     hostname
@@ -220,7 +232,19 @@ async function handleQuoteCompletion(
         client_user_agent: userAgent
       },
       hashedUserData
-    ).then(() => markViewContentFired(env, payload.client_id));
+    ).then(async (result) => {
+      if (result.success) {
+        await markViewContentFired(env, payload.client_id);
+      } else {
+        logStructured({
+          level: 'warn',
+          message: 'ViewContent Meta call failed; not marking view_content_fired (will retry on next quote)',
+          site_id: siteConfig.site_id,
+          client_id: payload.client_id,
+          error_code: result.error_code
+        });
+      }
+    });
 
     ctx.waitUntil(viewContentPromise);
   }

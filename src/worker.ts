@@ -4,6 +4,7 @@ import { handleHealth } from './routes/health';
 import { handleDebugGA4 } from './routes/debug-ga4';
 import { handleOAuthCallback } from './routes/oauth-callback';
 import { handleOAuthDebug } from './routes/oauth-debug';
+import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import { QuoteStateObject } from './durable-objects/quote-state';
@@ -27,6 +28,10 @@ export default {
         return handleDebugGA4(request, env);
       }
 
+      if (request.method === 'GET' && url.pathname === '/api/event/oauth-init') {
+        return handleOAuthInit(request, env);
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/event/oauth-callback') {
         return handleOAuthCallback(request, env);
       }
@@ -42,7 +47,7 @@ export default {
       if (request.method === 'OPTIONS') {
         return new Response(null, {
           status: 204,
-          headers: corsHeaders(request)
+          headers: corsHeaders(request, env)
         });
       }
 
@@ -71,12 +76,42 @@ export default {
   }
 };
 
-export function corsHeaders(request: Request): HeadersInit {
-  const origin = request.headers.get('Origin') || '*';
+export function corsHeaders(request: Request, env?: Env): HeadersInit {
+  const origin = request.headers.get('Origin');
+  const allowedOrigin = resolveAllowedOrigin(origin, request, env);
   return {
-    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400'
   };
+}
+
+function resolveAllowedOrigin(
+  origin: string | null,
+  request: Request,
+  env?: Env
+): string {
+  const requestHost = new URL(request.url).hostname;
+  // Test/dev mode: workers.dev hostname → allow any origin (for curl testing)
+  if (requestHost.endsWith('.workers.dev')) {
+    return origin || '*';
+  }
+  if (!origin || origin === 'null') {
+    return 'https://' + requestHost;
+  }
+  let originHost: string;
+  try {
+    originHost = new URL(origin).hostname;
+  } catch {
+    return 'https://' + requestHost;
+  }
+  // Same-origin or matching configured site: allow
+  if (originHost === requestHost) return origin;
+  if (env?.ALLOWED_ORIGINS) {
+    const allowed = env.ALLOWED_ORIGINS.split(',').map((s) => s.trim());
+    if (allowed.includes(originHost)) return origin;
+  }
+  return 'https://' + requestHost;
 }

@@ -56,6 +56,13 @@ export interface ConversionPayload {
 
 let cachedTurnstileToken: string | undefined;
 let cachedTokenExpiresAt = 0;
+let turnstileWidgetId: string | undefined;
+// A single widget is rendered once. Subsequent calls reset it and route the
+// resolution through this pending pointer, so the original callbacks (which
+// closed over the first call) can still resolve later promises.
+let pendingResolver:
+  | { resolve: (v: string | undefined) => void; timeout: ReturnType<typeof setTimeout> }
+  | undefined;
 
 export async function getTurnstileToken(): Promise<string | undefined> {
   if (cachedTurnstileToken && Date.now() < cachedTokenExpiresAt) {
@@ -75,35 +82,54 @@ export async function getTurnstileToken(): Promise<string | undefined> {
       return;
     }
 
-    let resolved = false;
+    // If a previous request is still pending, resolve it as undefined
+    // (we'll start a fresh challenge).
+    if (pendingResolver) {
+      clearTimeout(pendingResolver.timeout);
+      pendingResolver.resolve(undefined);
+    }
+
     const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
+      if (pendingResolver) {
+        const r = pendingResolver;
+        pendingResolver = undefined;
         console.warn('[tracking] Turnstile timeout');
-        resolve(undefined);
+        r.resolve(undefined);
       }
     }, 10000);
+    pendingResolver = { resolve, timeout };
 
-    window.turnstile!.render(container, {
-      sitekey: import.meta.env.PUBLIC_TURNSTILE_SITE_KEY,
-      size: 'invisible',
-      callback: (token: string) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeout);
-        cachedTurnstileToken = token;
-        cachedTokenExpiresAt = Date.now() + 4 * 60 * 1000;
-        resolve(token);
-      },
-      'error-callback': () => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeout);
-        resolve(undefined);
-      }
-    });
+    const onCallback = (token: string) => {
+      if (!pendingResolver) return;
+      const r = pendingResolver;
+      pendingResolver = undefined;
+      clearTimeout(r.timeout);
+      cachedTurnstileToken = token;
+      cachedTokenExpiresAt = Date.now() + 4 * 60 * 1000;
+      r.resolve(token);
+    };
+    const onError = () => {
+      if (!pendingResolver) return;
+      const r = pendingResolver;
+      pendingResolver = undefined;
+      clearTimeout(r.timeout);
+      r.resolve(undefined);
+    };
 
-    window.turnstile!.execute(container);
+    if (turnstileWidgetId !== undefined) {
+      // Subsequent calls — reset and re-execute the existing widget.
+      // The original callbacks delegate to the current pendingResolver above.
+      window.turnstile!.reset(turnstileWidgetId);
+      window.turnstile!.execute(container);
+    } else {
+      turnstileWidgetId = window.turnstile!.render(container, {
+        sitekey: import.meta.env.PUBLIC_TURNSTILE_SITE_KEY,
+        size: 'invisible',
+        callback: onCallback,
+        'error-callback': onError
+      });
+      window.turnstile!.execute(container);
+    }
   });
 }
 

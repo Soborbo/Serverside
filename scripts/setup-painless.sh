@@ -90,9 +90,11 @@ ask_secret() {
 
 run_or_print() {
   if [ "$DRY_RUN" = "1" ]; then
-    echo "[dry-run] $*"
+    printf '[dry-run]'
+    printf ' %q' "$@"
+    printf '\n'
   else
-    eval "$@"
+    "$@"
   fi
 }
 
@@ -177,11 +179,19 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "kv" ]; then
   printf 'Feltöltöd a SITE_CONFIG KV-be a(z) "%s" kulcs alá? [y/N] ' "$HOSTNAME"
   read -r confirm
   if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-    run_or_print "wrangler kv key put --binding=SITE_CONFIG \"$HOSTNAME\" '$CONFIG_JSON' --remote"
+    # Pass the config JSON via a 0600-perm temp file (NOT argv) to avoid
+    # leaking the Meta CAPI token + GA4 API secret to ps/proc/cmdline.
+    CONFIG_TMP=$(mktemp)
+    chmod 600 "$CONFIG_TMP"
+    trap 'rm -f "$CONFIG_TMP"' EXIT INT TERM
+    printf '%s' "$CONFIG_JSON" > "$CONFIG_TMP"
+    run_or_print wrangler kv key put --binding=SITE_CONFIG "$HOSTNAME" --path="$CONFIG_TMP" --remote
+    rm -f "$CONFIG_TMP"
+    trap - EXIT INT TERM
     echo "KV feltöltés kész."
     if [ "$DRY_RUN" = "0" ]; then
       echo "Visszaolvasás:"
-      wrangler kv key get --binding=SITE_CONFIG "$HOSTNAME" --remote | jq .
+      wrangler kv key get --binding=SITE_CONFIG "$HOSTNAME" --remote --text | jq .
     fi
   else
     echo "KV feltöltés kihagyva."
@@ -224,9 +234,14 @@ echo
 echo "Setup kész. Következő lépések:"
 echo "  1) wrangler deploy"
 echo "  2) curl https://$HOSTNAME/api/event/health  (200 OK)"
-echo "  3) Browser OAuth flow Painless customer_id-vel (Sprint 6 spec):"
-echo "     https://accounts.google.com/o/oauth2/v2/auth?client_id=\$CLIENT_ID&redirect_uri=https%3A%2F%2F$HOSTNAME%2Fapi%2Ftrack%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fadwords&access_type=offline&prompt=consent&state=\$GADS_CUSTOMER_ID"
-echo "  4) curl 'https://$HOSTNAME/api/event/oauth-debug?customer_id=\$GADS_CUSTOMER_ID'"
+echo "  3) ADMIN_API_TOKEN secret beállítása (oauth-init + debug routes-hoz):"
+echo "     openssl rand -hex 32 | wrangler secret put ADMIN_API_TOKEN"
+echo "  4) Browser OAuth flow indítása (admin-only):"
+echo "     curl -L -H \"X-Admin-Token: \$ADMIN_API_TOKEN\" \\"
+echo "       \"https://$HOSTNAME/api/event/oauth-init?customer_id=\$GADS_CUSTOMER_ID\""
+echo "     (a Worker generál nonce-t és redirect-el Google consent oldalra)"
+echo "  5) curl -H \"X-Admin-Token: \$ADMIN_API_TOKEN\" \\"
+echo "       \"https://$HOSTNAME/api/event/oauth-debug?customer_id=\$GADS_CUSTOMER_ID\""
 echo "     -> {\"access_token_received\": true}"
-echo "  5) Sprint 9 előtt: ./scripts/setup-painless.sh --production --only=kv"
+echo "  6) Sprint 9 előtt: ./scripts/setup-painless.sh --production --only=kv"
 echo "     (test_event_code-ot kiveszi)"

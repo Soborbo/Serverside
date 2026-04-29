@@ -48,15 +48,51 @@ export interface ConversionRequestPayload {
   [key: string]: unknown;
 }
 
+// Allowlist of internal event names accepted by /api/event/conversion.
+// New events MUST be added here AND to lib/meta.ts EVENT_NAME_MAP.
+// Rejecting unknown event_names prevents Analytics Engine cardinality
+// explosion via attacker-controlled strings.
+export const ALLOWED_EVENT_NAMES: ReadonlySet<string> = new Set([
+  'quote_calculator_conversion',
+  'callback_conversion',
+  'contact_form_submit',
+  'phone_conversion',
+  'email_conversion',
+  'whatsapp_conversion',
+  'quote_calculator_first_view',
+  'video_play'
+]);
+
+const MAX_EVENT_ID_LENGTH = 60;
+const MIN_EVENT_TIME = 1_500_000_000; // 2017-07-14
+const MAX_VALUE = 1_000_000_000;
+
 export function isValidConversionPayload(payload: unknown): payload is ConversionRequestPayload {
   if (typeof payload !== 'object' || payload === null) return false;
   const p = payload as Record<string, unknown>;
-  return (
-    typeof p.event_name === 'string' &&
-    p.event_name.length > 0 &&
-    typeof p.event_id === 'string' &&
-    p.event_id.length > 0 &&
-    typeof p.event_time === 'number' &&
-    typeof p.turnstile_token === 'string'
-  );
+  if (typeof p.event_name !== 'string' || !ALLOWED_EVENT_NAMES.has(p.event_name)) return false;
+  if (
+    typeof p.event_id !== 'string' ||
+    p.event_id.length === 0 ||
+    p.event_id.length > MAX_EVENT_ID_LENGTH ||
+    !/^[a-zA-Z0-9_-]+$/.test(p.event_id)
+  ) {
+    return false;
+  }
+  if (
+    typeof p.event_time !== 'number' ||
+    !Number.isFinite(p.event_time) ||
+    p.event_time < MIN_EVENT_TIME ||
+    p.event_time > Math.floor(Date.now() / 1000) + 600
+  ) {
+    return false;
+  }
+  if (typeof p.turnstile_token !== 'string') return false;
+  if (
+    p.value !== undefined &&
+    (typeof p.value !== 'number' || !Number.isFinite(p.value) || p.value < 0 || p.value > MAX_VALUE)
+  ) {
+    return false;
+  }
+  return true;
 }

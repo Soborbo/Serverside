@@ -2,11 +2,16 @@ import type { Env } from '../env';
 import { corsHeaders } from '../worker';
 import { getSiteConfig } from '../lib/config';
 import { sendToGA4MP } from '../lib/ga4';
+import { authenticateAdmin } from '../lib/admin-auth';
 
 export async function handleDebugGA4(request: Request, env: Env): Promise<Response> {
+  if (!authenticateAdmin(request, env)) {
+    return new Response('Not found', { status: 404 });
+  }
+
   const url = new URL(request.url);
   const hostname = url.searchParams.get('host') || url.hostname;
-  const cors = corsHeaders(request);
+  const cors = corsHeaders(request, env);
 
   const siteConfig = await getSiteConfig(hostname, env);
   if (!siteConfig) {
