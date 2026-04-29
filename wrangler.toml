@@ -53,7 +53,12 @@ new_classes = ["QuoteStateObject"]
 binding = "DEAD_LETTER"
 bucket_name = "soborbo-tracking-dlq"
 
-# Routes — Sprint 1: only Painless. Multi-tenant rollout in Sprint 10.
+# Routes — Sprint 9: Painless live, Sprint 10: 14 másik site rollout-tal.
+# A Worker-kód már multi-tenant (hostname → SiteConfig KV); itt csak a
+# Cloudflare zone routing van. Új site felvételekor 3 lépés:
+#   1) Új KV-bejegyzés: wrangler kv:key put --binding=SITE_CONFIG "<host>" '...'
+#   2) Új [[routes]] blokk itt + redeploy
+#   3) Astro projekt: client-lib/ másolás + Turnstile widget + GTM tisztítás
 [[routes]]
 pattern = "painlessremovals.com/api/track/*"
 zone_name = "painlessremovals.com"
@@ -61,3 +66,64 @@ zone_name = "painlessremovals.com"
 [[routes]]
 pattern = "www.painlessremovals.com/api/track/*"
 zone_name = "painlessremovals.com"
+
+# Sprint 10 ütemezett rollout — uncomment ahogy haladsz site-onként.
+# (Spec: 10-sprint-multi-tenant-rollout.md táblázat)
+#
+# Hét 2-3: HU Tier 2
+# [[routes]]
+# pattern = "nemesventilatorhaz.hu/api/track/*"
+# zone_name = "nemesventilatorhaz.hu"
+# [[routes]]
+# pattern = "www.nemesventilatorhaz.hu/api/track/*"
+# zone_name = "nemesventilatorhaz.hu"
+#
+# [[routes]]
+# pattern = "trapezlemezes.hu/api/track/*"
+# zone_name = "trapezlemezes.hu"
+# [[routes]]
+# pattern = "www.trapezlemezes.hu/api/track/*"
+# zone_name = "trapezlemezes.hu"
+#
+# Hét 4-5: BeautyFlow + szelloztessokosan + olcsokontenerhaz
+# [[routes]]
+# pattern = "beautyflow.pro/api/track/*"
+# zone_name = "beautyflow.pro"
+# [[routes]]
+# pattern = "www.beautyflow.pro/api/track/*"
+# zone_name = "beautyflow.pro"
+#
+# [[routes]]
+# pattern = "szelloztessokosan.hu/api/track/*"
+# zone_name = "szelloztessokosan.hu"
+# [[routes]]
+# pattern = "www.szelloztessokosan.hu/api/track/*"
+# zone_name = "szelloztessokosan.hu"
+#
+# [[routes]]
+# pattern = "olcsokontenerhaz.hu/api/track/*"
+# zone_name = "olcsokontenerhaz.hu"
+# [[routes]]
+# pattern = "www.olcsokontenerhaz.hu/api/track/*"
+# zone_name = "olcsokontenerhaz.hu"
+#
+# Hét 6-7: SkinLab + Life Story Video
+# [[routes]]
+# pattern = "skinlab.hu/api/track/*"
+# zone_name = "skinlab.hu"
+#
+# Hét 8-9: Bristol-i site-ok
+# [[routes]]
+# pattern = "bristolheatpump.co.uk/api/track/*"
+# zone_name = "bristolheatpump.co.uk"
+# [[routes]]
+# pattern = "bristolhouseclearances.co.uk/api/track/*"
+# zone_name = "bristolhouseclearances.co.uk"
+# [[routes]]
+# pattern = "bristolcleaningheroes.co.uk/api/track/*"
+# zone_name = "bristolcleaningheroes.co.uk"
+#
+# Hét 10: Egyéb (femkeriteslechu, ballaconsulting, painlessb2b, stb.)
+# [[routes]]
+# pattern = "femkeriteslechu.hu/api/track/*"
+# zone_name = "femkeriteslechu.hu"
