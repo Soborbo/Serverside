@@ -43,7 +43,7 @@ A v1-hez képest **3 új sprint** beépítve a kezdeti specbe:
 Astro site (Painless, NemesVent, stb.)
   ├─ Kliensoldali GTM (változatlan): GA4 page_view, Meta Pixel base, scroll
   └─ sendToWorker() helper konverziós eventekhez
-       ↓ POST /api/track/conversion
+       ↓ POST /api/event/conversion
 Cloudflare Worker (multi-tenant)
   ├─ Hostname → site_id (KV: SITE_CONFIG)
   ├─ Turnstile validate

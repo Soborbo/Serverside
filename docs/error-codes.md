@@ -182,7 +182,7 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 
 **Severity**: Critical
 **Action**:
-1. Test: `curl '/api/track/oauth-debug?customer_id=...'`
+1. Test: `curl '/api/event/oauth-debug?customer_id=...'`
 2. Refresh token revoked? Run OAuth flow again
 3. New refresh token KV-be
 
@@ -191,7 +191,7 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Severity**: Critical
 **Description**: OAuth refresh token exchange failed.
 **Action**:
-1. Test: `curl '/api/track/oauth-debug?customer_id=...'`
+1. Test: `curl '/api/event/oauth-debug?customer_id=...'`
 2. Ha `access_token_received: false`: refresh token revoked
 3. Run OAuth flow again from browser
 4. New refresh token saved to KV

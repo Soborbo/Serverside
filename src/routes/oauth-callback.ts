@@ -12,7 +12,7 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
   }
 
   const customerId = state;
-  const redirectUri = `${url.origin}/api/track/oauth-callback`;
+  const redirectUri = `${url.origin}/api/event/oauth-callback`;
 
   const result = await exchangeCodeForTokens(code, redirectUri, env);
   if (result.error) {

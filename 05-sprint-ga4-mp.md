@@ -215,7 +215,7 @@ export async function handleDebugGA4(request: Request, env: Env): Promise<Respon
 Add hozzá az új route-ot:
 
 ```typescript
-if (request.method === 'GET' && url.pathname === '/api/track/debug-ga4') {
+if (request.method === 'GET' && url.pathname === '/api/event/debug-ga4') {
   const { handleDebugGA4 } = await import('./routes/debug-ga4');
   return handleDebugGA4(request, env);
 }
@@ -265,7 +265,7 @@ ctx.waitUntil(fanout);
 
 ### A. Debug endpoint
 ```bash
-curl 'https://painlessremovals.com/api/track/debug-ga4?host=painlessremovals.com'
+curl 'https://painlessremovals.com/api/event/debug-ga4?host=painlessremovals.com'
 ```
 → JSON `{ success: true, validation_messages: [] }`
 
@@ -273,7 +273,7 @@ curl 'https://painlessremovals.com/api/track/debug-ga4?host=painlessremovals.com
 GA4 Admin → DebugView megnyitva.
 
 ```bash
-curl -X POST https://painlessremovals.com/api/track/conversion \
+curl -X POST https://painlessremovals.com/api/event/conversion \
   -H "Content-Type: application/json" \
   -d '{
     "event_name": "callback_conversion",

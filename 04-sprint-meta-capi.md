@@ -339,7 +339,7 @@ export async function handleConversion(
 3. Curl-lel küldj egy konverziós event-et:
 
 ```bash
-curl -X POST https://painlessremovals.com/api/track/conversion \
+curl -X POST https://painlessremovals.com/api/event/conversion \
   -H "Content-Type: application/json" \
   -d '{
     "event_name": "callback_conversion",

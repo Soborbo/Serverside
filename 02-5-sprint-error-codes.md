@@ -243,7 +243,7 @@ Minden error code-hoz dokumentáció:
 **Severity**: Critical
 **Description**: OAuth refresh token exchange failed
 **Action**:
-1. Test: `curl '/api/track/oauth-debug?customer_id=...'`
+1. Test: `curl '/api/event/oauth-debug?customer_id=...'`
 2. If `access_token_received: false`, the refresh token is revoked
 3. Run OAuth flow again from browser
 4. New refresh token will be saved to KV

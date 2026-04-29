@@ -141,7 +141,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   if (typeof navigator.sendBeacon === 'function') {
     try {
       const blob = new Blob([body], { type: 'application/json' });
-      const queued = navigator.sendBeacon('/api/track/conversion', blob);
+      const queued = navigator.sendBeacon('/api/event/conversion', blob);
       if (queued) return true;
     } catch {
       // Fall through to fetch
@@ -149,7 +149,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   }
 
   try {
-    await fetch('/api/track/conversion', {
+    await fetch('/api/event/conversion', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,

@@ -55,8 +55,8 @@ Aztán: APIs & Services → Credentials → Create Credentials → OAuth client 
 - **Application type**: Web application
 - **Name**: `Soborbo Tracking Worker`
 - **Authorized redirect URIs**:
-  - `https://painlessremovals.com/api/track/oauth-callback`
-  - `https://beautyflow.pro/api/track/oauth-callback`
+  - `https://painlessremovals.com/api/event/oauth-callback`
+  - `https://beautyflow.pro/api/event/oauth-callback`
   - (Add hozzá minden további site-ot, ahol Google Ads CAPI lesz)
 
 Mentsd el:

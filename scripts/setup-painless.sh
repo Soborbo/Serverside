@@ -223,10 +223,10 @@ fi
 echo
 echo "Setup kész. Következő lépések:"
 echo "  1) wrangler deploy"
-echo "  2) curl https://$HOSTNAME/api/track/health  (200 OK)"
+echo "  2) curl https://$HOSTNAME/api/event/health  (200 OK)"
 echo "  3) Browser OAuth flow Painless customer_id-vel (Sprint 6 spec):"
 echo "     https://accounts.google.com/o/oauth2/v2/auth?client_id=\$CLIENT_ID&redirect_uri=https%3A%2F%2F$HOSTNAME%2Fapi%2Ftrack%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fadwords&access_type=offline&prompt=consent&state=\$GADS_CUSTOMER_ID"
-echo "  4) curl 'https://$HOSTNAME/api/track/oauth-debug?customer_id=\$GADS_CUSTOMER_ID'"
+echo "  4) curl 'https://$HOSTNAME/api/event/oauth-debug?customer_id=\$GADS_CUSTOMER_ID'"
 echo "     -> {\"access_token_received\": true}"
 echo "  5) Sprint 9 előtt: ./scripts/setup-painless.sh --production --only=kv"
 echo "     (test_event_code-ot kiveszi)"

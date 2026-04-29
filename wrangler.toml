@@ -1,4 +1,4 @@
-name = "soborbo-tracking"
+name = "event-gateway"
 main = "src/worker.ts"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
@@ -8,24 +8,27 @@ account_id = "075668606da58c5b96a45a075f1ca99c"
 enabled = true
 head_sampling_rate = 1.0
 
-# Cron Triggers — DLQ retry, daily digest, SLO check
-[triggers]
-crons = [
-  "0 8 * * *",        # Daily digest at 8 AM GMT
-  "*/30 * * * *",     # SLO check every 30 min
-  "0 * * * *"         # DLQ retry every hour
-]
+# Cron Triggers — DLQ retry, daily digest, SLO check.
+# Sprint 1 test-deploy alatt kikommentezve (Email binding nélkül a daily-digest
+# úgyis soft-skip-pel megy). Sprint 8.5 production-előtt aktiváld újra.
+# [triggers]
+# crons = [
+#   "0 8 * * *",        # Daily digest at 8 AM GMT
+#   "*/30 * * * *",     # SLO check every 30 min
+#   "0 * * * *"         # DLQ retry every hour
+# ]
 
 # Analytics Engine dataset for metrics
 [[analytics_engine_datasets]]
 binding = "TRACKING_METRICS"
 
 # Email binding — Cloudflare Email Routing setup szükséges (lásd 00-pre-sprint-setup.md).
-# Ha nincs domain konfigurálva, deploy ezzel a blokkkal fail-elhet — ilyenkor
-# kommentezd ki és használd a kódbeli soft-skip-et.
-[[send_email]]
-name = "ADMIN_EMAIL"
-destination_address = "laszlo@soborbo.com"
+# Sprint 1 test-deploy alatt kikommentezve — destination verify (laszlo@soborbo.com)
+# nélkül a deploy fail-elne. A kódbeli notify.ts soft-skip-pel megy ha nincs binding.
+# Sprint 8.5-ben aktiváld vissza.
+# [[send_email]]
+# name = "ADMIN_EMAIL"
+# destination_address = "laszlo@soborbo.com"
 
 # KV namespaces (created via Cloudflare MCP, 2026-04-29)
 [[kv_namespaces]]
@@ -59,71 +62,75 @@ bucket_name = "soborbo-tracking-dlq"
 #   1) Új KV-bejegyzés: wrangler kv:key put --binding=SITE_CONFIG "<host>" '...'
 #   2) Új [[routes]] blokk itt + redeploy
 #   3) Astro projekt: client-lib/ másolás + Turnstile widget + GTM tisztítás
-[[routes]]
-pattern = "painlessremovals.com/api/track/*"
-zone_name = "painlessremovals.com"
-
-[[routes]]
-pattern = "www.painlessremovals.com/api/track/*"
-zone_name = "painlessremovals.com"
-
+#
+# Sprint 1 test-deploy alatt MIND kikommentezve — Worker workers.dev URL-en él.
+# Sprint 9 (Painless go-live) előtt aktiváld a Painless route-okat.
+#
+# [[routes]]
+# pattern = "painlessremovals.com/api/event/*"
+# zone_name = "painlessremovals.com"
+#
+# [[routes]]
+# pattern = "www.painlessremovals.com/api/event/*"
+# zone_name = "painlessremovals.com"
+#
 # Sprint 10 ütemezett rollout — uncomment ahogy haladsz site-onként.
 # (Spec: 10-sprint-multi-tenant-rollout.md táblázat)
 #
 # Hét 2-3: HU Tier 2
 # [[routes]]
-# pattern = "nemesventilatorhaz.hu/api/track/*"
+# pattern = "nemesventilatorhaz.hu/api/event/*"
 # zone_name = "nemesventilatorhaz.hu"
 # [[routes]]
-# pattern = "www.nemesventilatorhaz.hu/api/track/*"
+# pattern = "www.nemesventilatorhaz.hu/api/event/*"
 # zone_name = "nemesventilatorhaz.hu"
 #
 # [[routes]]
-# pattern = "trapezlemezes.hu/api/track/*"
+# pattern = "trapezlemezes.hu/api/event/*"
 # zone_name = "trapezlemezes.hu"
 # [[routes]]
-# pattern = "www.trapezlemezes.hu/api/track/*"
+# pattern = "www.trapezlemezes.hu/api/event/*"
 # zone_name = "trapezlemezes.hu"
 #
 # Hét 4-5: BeautyFlow + szelloztessokosan + olcsokontenerhaz
 # [[routes]]
-# pattern = "beautyflow.pro/api/track/*"
+# pattern = "beautyflow.pro/api/event/*"
 # zone_name = "beautyflow.pro"
 # [[routes]]
-# pattern = "www.beautyflow.pro/api/track/*"
+# pattern = "www.beautyflow.pro/api/event/*"
 # zone_name = "beautyflow.pro"
 #
 # [[routes]]
-# pattern = "szelloztessokosan.hu/api/track/*"
+# pattern = "szelloztessokosan.hu/api/event/*"
 # zone_name = "szelloztessokosan.hu"
 # [[routes]]
-# pattern = "www.szelloztessokosan.hu/api/track/*"
+# pattern = "www.szelloztessokosan.hu/api/event/*"
 # zone_name = "szelloztessokosan.hu"
 #
 # [[routes]]
-# pattern = "olcsokontenerhaz.hu/api/track/*"
+# pattern = "olcsokontenerhaz.hu/api/event/*"
 # zone_name = "olcsokontenerhaz.hu"
 # [[routes]]
-# pattern = "www.olcsokontenerhaz.hu/api/track/*"
+# pattern = "www.olcsokontenerhaz.hu/api/event/*"
 # zone_name = "olcsokontenerhaz.hu"
 #
 # Hét 6-7: SkinLab + Life Story Video
 # [[routes]]
-# pattern = "skinlab.hu/api/track/*"
+# pattern = "skinlab.hu/api/event/*"
 # zone_name = "skinlab.hu"
 #
 # Hét 8-9: Bristol-i site-ok
 # [[routes]]
-# pattern = "bristolheatpump.co.uk/api/track/*"
+# pattern = "bristolheatpump.co.uk/api/event/*"
 # zone_name = "bristolheatpump.co.uk"
 # [[routes]]
-# pattern = "bristolhouseclearances.co.uk/api/track/*"
+# pattern = "bristolhouseclearances.co.uk/api/event/*"
 # zone_name = "bristolhouseclearances.co.uk"
 # [[routes]]
-# pattern = "bristolcleaningheroes.co.uk/api/track/*"
+# pattern = "bristolcleaningheroes.co.uk/api/event/*"
 # zone_name = "bristolcleaningheroes.co.uk"
 #
 # Hét 10: Egyéb (femkeriteslechu, ballaconsulting, painlessb2b, stb.)
 # [[routes]]
-# pattern = "femkeriteslechu.hu/api/track/*"
+# pattern = "femkeriteslechu.hu/api/event/*"
 # zone_name = "femkeriteslechu.hu"

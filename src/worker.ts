@@ -19,23 +19,23 @@ export default {
     const url = new URL(request.url);
 
     try {
-      if (request.method === 'GET' && url.pathname === '/api/track/health') {
+      if (request.method === 'GET' && url.pathname === '/api/event/health') {
         return handleHealth(request, env);
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/track/debug-ga4') {
+      if (request.method === 'GET' && url.pathname === '/api/event/debug-ga4') {
         return handleDebugGA4(request, env);
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/track/oauth-callback') {
+      if (request.method === 'GET' && url.pathname === '/api/event/oauth-callback') {
         return handleOAuthCallback(request, env);
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/track/oauth-debug') {
+      if (request.method === 'GET' && url.pathname === '/api/event/oauth-debug') {
         return handleOAuthDebug(request, env);
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/track/conversion') {
+      if (request.method === 'POST' && url.pathname === '/api/event/conversion') {
         return handleConversion(request, env, ctx);
       }
 

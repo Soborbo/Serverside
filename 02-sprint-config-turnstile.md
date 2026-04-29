@@ -314,13 +314,13 @@ npm run dev
 
 **A. Health check (változatlan)**
 ```bash
-curl http://localhost:8787/api/track/health
+curl http://localhost:8787/api/event/health
 ```
 → `200 OK`
 
 **B. Hiányzó site config**
 ```bash
-curl -X POST http://localhost:8787/api/track/conversion \
+curl -X POST http://localhost:8787/api/event/conversion \
   -H "Content-Type: application/json" \
   -H "Host: nonexistent.example.com" \
   -d '{"event_name":"test","event_id":"abc-123","event_time":1714400000,"turnstile_token":"fake"}'
@@ -329,7 +329,7 @@ curl -X POST http://localhost:8787/api/track/conversion \
 
 **C. Hiányzó Turnstile token**
 ```bash
-curl -X POST http://localhost:8787/api/track/conversion \
+curl -X POST http://localhost:8787/api/event/conversion \
   -H "Content-Type: application/json" \
   -H "Host: painlessremovals.com" \
   -d '{"event_name":"test","event_id":"abc-123","event_time":1714400000,"turnstile_token":""}'
@@ -338,7 +338,7 @@ curl -X POST http://localhost:8787/api/track/conversion \
 
 **D. Érvénytelen JSON**
 ```bash
-curl -X POST http://localhost:8787/api/track/conversion \
+curl -X POST http://localhost:8787/api/event/conversion \
   -H "Content-Type: application/json" \
   -d 'not-json'
 ```
@@ -346,7 +346,7 @@ curl -X POST http://localhost:8787/api/track/conversion \
 
 **E. Érvénytelen payload struktúra**
 ```bash
-curl -X POST http://localhost:8787/api/track/conversion \
+curl -X POST http://localhost:8787/api/event/conversion \
   -H "Content-Type: application/json" \
   -d '{"foo":"bar"}'
 ```
@@ -359,12 +359,12 @@ npm run deploy
 ```
 
 ```bash
-curl https://painlessremovals.com/api/track/health
+curl https://painlessremovals.com/api/event/health
 ```
 → `200 OK`
 
 ```bash
-curl -X POST https://painlessremovals.com/api/track/conversion \
+curl -X POST https://painlessremovals.com/api/event/conversion \
   -H "Content-Type: application/json" \
   -d '{"event_name":"test","event_id":"abc-123","event_time":1714400000,"turnstile_token":""}'
 ```

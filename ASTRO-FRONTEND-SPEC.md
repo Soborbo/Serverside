@@ -92,7 +92,7 @@ src/lib/
 export const CURRENCY = 'GBP';
 export const QUOTE_TIMEOUT_MS = 60 * 60 * 1000;
 export const QUOTE_POST_WINDOW_MS = 24 * 60 * 60 * 1000;
-export const ABANDONMENT_BEACON_URL = '/api/track/abandonment';
+export const ABANDONMENT_BEACON_URL = '/api/event/abandonment';
 ```
 
 ## `src/lib/uuid.ts`

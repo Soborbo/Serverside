@@ -45,7 +45,7 @@ Painless EMQ score <8 → indokolt. EMQ score ≥8 → ne építsd.
 
 ### 2. Custom domain proxy ellenőrzés
 
-A Sprint 1-ben a Worker route-ot a fő domain alá tettük (`painlessremovals.com/api/track/*`). Ez **first-party**, **nem** `*.workers.dev`. Ellenőrizd Cloudflare dashboard-on.
+A Sprint 1-ben a Worker route-ot a fő domain alá tettük (`painlessremovals.com/api/event/*`). Ez **first-party**, **nem** `*.workers.dev`. Ellenőrizd Cloudflare dashboard-on.
 
 ### 3. Cloudflare zone IP alignment
 
@@ -159,7 +159,7 @@ return new Response(null, { status: 204, headers: responseHeaders });
 A `worker-tracking.ts` fetch-be kéri, hogy a server set-eljen cookie-kat:
 
 ```typescript
-await fetch('/api/track/conversion', {
+await fetch('/api/event/conversion', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body,

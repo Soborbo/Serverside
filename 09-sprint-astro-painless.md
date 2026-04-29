@@ -190,7 +190,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   if (typeof navigator.sendBeacon === 'function') {
     try {
       const blob = new Blob([body], { type: 'application/json' });
-      const queued = navigator.sendBeacon('/api/track/conversion', blob);
+      const queued = navigator.sendBeacon('/api/event/conversion', blob);
       if (queued) return true;
     } catch {
       // Fall through to fetch
@@ -198,7 +198,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   }
 
   try {
-    await fetch('/api/track/conversion', {
+    await fetch('/api/event/conversion', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
@@ -432,9 +432,9 @@ Ha hiányzik: Meta dupla Lead-et számol, EMQ torz, lookalike audience torz.
 ## Cloudflare Pages config
 
 Cloudflare Pages → Painless project → Functions → Routes:
-- `painlessremovals.com/api/track/*` → Worker `soborbo-tracking` szolgálja ki
+- `painlessremovals.com/api/event/*` → Worker `soborbo-tracking` szolgálja ki
 
-Az Astro projektben **NE legyen** `src/pages/api/track/` mappa (ütközne a Worker route-tal).
+Az Astro projektben **NE legyen** `src/pages/api/event/` mappa (ütközne a Worker route-tal).
 
 ## Manuális tesztelés
 
@@ -449,7 +449,7 @@ npm run build
 Staging URL-en:
 1. DevTools Network tab nyitva
 2. Töltsd ki a kalkulátort, kérj visszahívást
-3. Network tab: `POST /api/track/conversion` → 204
+3. Network tab: `POST /api/event/conversion` → 204
 4. Request payload: `event_name`, `event_id`, `turnstile_token`, `user_data`, `fbp`, `fbc`, `client_id`
 5. Console: `JSON.stringify(window.dataLayer)` — NINCS PII benne
 
@@ -496,7 +496,7 @@ wrangler tail --format pretty
 1. Painless GTM backup mentve?
 2. test_event_code kivéve KV-ből?
 3. Painless Astro deploy (worker-tracking-integration branch) sikeres staging-en?
-4. Network tab `POST /api/track/conversion` 204?
+4. Network tab `POST /api/event/conversion` 204?
 5. Meta Test Events: dual-source jelzés (Browser AND Server)?
 6. GA4 Realtime: server-side event-ek, NINCS duplikáció?
 7. GTM container: Google Ads + GA4 conversion tagek **eltávolítva**?

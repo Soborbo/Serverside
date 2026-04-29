@@ -109,7 +109,7 @@ bucket_name = "soborbo-tracking-dlq"
 
 # Routes — Sprint 1-ben CSAK Painless route, többi Sprint 10-ben jön
 [[routes]]
-pattern = "painlessremovals.com/api/track/*"
+pattern = "painlessremovals.com/api/event/*"
 zone_name = "painlessremovals.com"
 ```
 
@@ -168,11 +168,11 @@ export default {
     const url = new URL(request.url);
 
     try {
-      if (request.method === 'GET' && url.pathname === '/api/track/health') {
+      if (request.method === 'GET' && url.pathname === '/api/event/health') {
         return handleHealth(request, env);
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/track/conversion') {
+      if (request.method === 'POST' && url.pathname === '/api/event/conversion') {
         return handleConversion(request, env, ctx);
       }
 
@@ -304,13 +304,13 @@ Külön terminálban:
 
 **A. Health check**
 ```bash
-curl http://localhost:8787/api/track/health
+curl http://localhost:8787/api/event/health
 ```
 → `200 OK`, JSON `{"status":"ok",...}`
 
 **B. POST conversion endpoint**
 ```bash
-curl -X POST http://localhost:8787/api/track/conversion \
+curl -X POST http://localhost:8787/api/event/conversion \
   -H "Content-Type: application/json" \
   -d '{"event_name":"test"}'
 ```
@@ -319,7 +319,7 @@ curl -X POST http://localhost:8787/api/track/conversion \
 
 **C. CORS preflight**
 ```bash
-curl -X OPTIONS http://localhost:8787/api/track/conversion \
+curl -X OPTIONS http://localhost:8787/api/event/conversion \
   -H "Origin: https://painlessremovals.com" -i
 ```
 → `204` + CORS headers
@@ -338,7 +338,7 @@ npm run deploy
 
 **E. Production health**
 ```bash
-curl https://painlessremovals.com/api/track/health
+curl https://painlessremovals.com/api/event/health
 ```
 → `200 OK`
 
@@ -364,4 +364,4 @@ NINCS unhandled exception 5 perces rendes traffic alatt
 2. OAUTH_TOKENS KV namespace ID
 3. R2 bucket neve (alapértelmezett: `soborbo-tracking-dlq`)
 4. Cloudflare account ID
-5. Painless route megerősítése: `painlessremovals.com/api/track/*` — vagy `*.painlessremovals.com/api/track/*` (WWW és root mindkettő)?
+5. Painless route megerősítése: `painlessremovals.com/api/event/*` — vagy `*.painlessremovals.com/api/event/*` (WWW és root mindkettő)?

@@ -212,7 +212,7 @@ export async function handleOAuthCallback(
   }
 
   const customerId = state;
-  const redirectUri = `${url.origin}/api/track/oauth-callback`;
+  const redirectUri = `${url.origin}/api/event/oauth-callback`;
 
   const result = await exchangeCodeForTokens(code, redirectUri, env);
   if (result.error) {
@@ -286,12 +286,12 @@ export interface Env {
 ## Módosítandó fájl: `src/worker.ts`
 
 ```typescript
-if (request.method === 'GET' && url.pathname === '/api/track/oauth-callback') {
+if (request.method === 'GET' && url.pathname === '/api/event/oauth-callback') {
   const { handleOAuthCallback } = await import('./routes/oauth-callback');
   return handleOAuthCallback(request, env);
 }
 
-if (request.method === 'GET' && url.pathname === '/api/track/oauth-debug') {
+if (request.method === 'GET' && url.pathname === '/api/event/oauth-debug') {
   const { handleOAuthDebug } = await import('./routes/oauth-debug');
   return handleOAuthDebug(request, env);
 }
@@ -315,7 +315,7 @@ if (request.method === 'GET' && url.pathname === '/api/track/oauth-debug') {
 
 5. **Verify:**
    ```bash
-   curl 'https://painlessremovals.com/api/track/oauth-debug?customer_id=1234567890'
+   curl 'https://painlessremovals.com/api/event/oauth-debug?customer_id=1234567890'
    ```
    → `{"access_token_received":true, "access_token_preview":"ya29.A0..."}`
 

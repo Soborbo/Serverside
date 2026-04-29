@@ -57,11 +57,11 @@ wrangler kv:key put --binding=SITE_CONFIG "nemesventilatorhaz.hu" '{
 
 ```toml
 [[routes]]
-pattern = "nemesventilatorhaz.hu/api/track/*"
+pattern = "nemesventilatorhaz.hu/api/event/*"
 zone_name = "nemesventilatorhaz.hu"
 
 [[routes]]
-pattern = "www.nemesventilatorhaz.hu/api/track/*"
+pattern = "www.nemesventilatorhaz.hu/api/event/*"
 zone_name = "nemesventilatorhaz.hu"
 ```
 
@@ -76,7 +76,7 @@ https://accounts.google.com/o/oauth2/v2/auth?client_id=<CLIENT_ID>&redirect_uri=
 
 Sign in with the **Google Ads account owner email** (lehet Kelemen Zsolt account-ja). Approve.
 
-Verify: `curl 'https://nemesventilatorhaz.hu/api/track/oauth-debug?customer_id=<NEMESVENT_CUSTOMER_ID>'`
+Verify: `curl 'https://nemesventilatorhaz.hu/api/event/oauth-debug?customer_id=<NEMESVENT_CUSTOMER_ID>'`
 
 Ha az ügyfél **NEM használ** Google Ads-t (csak Meta + GA4): kihagyhatod, `gads.conversion_actions` üres `{}` map-pel marad.
 
@@ -101,7 +101,7 @@ f) **Backup**: a régi GTM container JSON exportja Sprint 10 elején.
 ### 5. Smoke test (15-30 perc)
 
 - Live form submission
-- Network tab: `/api/track/conversion` → 204
+- Network tab: `/api/event/conversion` → 204
 - Worker logs: "Fan-out completed" minden platformra
 - Meta Events Manager Test Events: új event "Browser AND Server"
 - GA4 Real-time: új event server-side
