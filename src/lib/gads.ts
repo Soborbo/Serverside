@@ -50,6 +50,10 @@ export async function sendToGoogleAdsCAPI(
 ): Promise<GAdsResult> {
   const startedAt = Date.now();
 
+  if (!siteConfig.gads.customer_id) {
+    return { success: true };
+  }
+
   const conversionActionId = siteConfig.gads.conversion_actions?.[payload.event_name];
   if (!conversionActionId) {
     logStructured({

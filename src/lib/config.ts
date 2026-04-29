@@ -16,7 +16,7 @@ export interface SiteConfig {
     api_secret: string;
   };
   gads: {
-    customer_id: string;
+    customer_id: string | null;
     login_customer_id: string | null;
     conversion_actions?: Record<string, string>;
   };
