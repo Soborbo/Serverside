@@ -7,6 +7,7 @@ import { handleOAuthDebug } from './routes/oauth-debug';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import { QuoteStateObject } from './durable-objects/quote-state';
+import { handleScheduledRetry } from './scheduled/retry';
 
 export { QuoteStateObject };
 
@@ -55,6 +56,10 @@ export default {
       });
       return new Response(null, { status: 204 });
     }
+  },
+
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(handleScheduledRetry(event, env));
   }
 };
 

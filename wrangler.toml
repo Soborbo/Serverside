@@ -8,6 +8,10 @@ account_id = "075668606da58c5b96a45a075f1ca99c"
 enabled = true
 head_sampling_rate = 1.0
 
+# Cron Trigger — DLQ retry, óránként
+[triggers]
+crons = ["0 * * * *"]
+
 # KV namespaces (created via Cloudflare MCP, 2026-04-29)
 [[kv_namespaces]]
 binding = "SITE_CONFIG"

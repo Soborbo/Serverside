@@ -4,9 +4,10 @@ import { corsHeaders } from '../worker';
 import { getSiteConfig, type SiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
-import { sendToMetaCAPI } from '../lib/meta';
-import { sendToGA4MP } from '../lib/ga4';
-import { sendToGoogleAdsCAPI } from '../lib/gads';
+import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
+import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
+import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
+import { writeDeadLetter, type Platform } from '../lib/deadletter';
 import {
   setQuoteState,
   getQuoteState,
@@ -147,7 +148,7 @@ export async function handleConversion(
     }
   }
 
-  fanOut(effectivePayload, siteConfig, hashedUserData, remoteIp, userAgent, env, ctx);
+  fanOut(effectivePayload, siteConfig, hashedUserData, hostname, remoteIp, userAgent, env, ctx);
 
   logStructured({
     level: 'info',
@@ -231,30 +232,27 @@ function fanOut(
   payload: ConversionRequestPayload,
   siteConfig: SiteConfig,
   hashedUserData: HashedUserData,
+  hostname: string,
   remoteIp: string | undefined,
   userAgent: string | undefined,
   env: Env,
   ctx: ExecutionContext
 ): void {
-  const metaPromise = sendToMetaCAPI(
-    siteConfig,
-    {
-      event_name: payload.event_name,
-      event_id: payload.event_id,
-      event_time: payload.event_time,
-      value: payload.value,
-      currency: payload.currency,
-      source: payload.source,
-      event_source_url: payload.event_source_url,
-      fbp: payload.fbp,
-      fbc: payload.fbc,
-      client_ip: remoteIp,
-      client_user_agent: userAgent
-    },
-    hashedUserData
-  );
+  const metaPayload: MetaCAPIPayload = {
+    event_name: payload.event_name,
+    event_id: payload.event_id,
+    event_time: payload.event_time,
+    value: payload.value,
+    currency: payload.currency,
+    source: payload.source,
+    event_source_url: payload.event_source_url,
+    fbp: payload.fbp,
+    fbc: payload.fbc,
+    client_ip: remoteIp,
+    client_user_agent: userAgent
+  };
 
-  const ga4Promise = sendToGA4MP(siteConfig, {
+  const ga4Payload: GA4Payload = {
     event_name: payload.event_name,
     event_id: payload.event_id,
     client_id: payload.client_id,
@@ -264,35 +262,76 @@ function fanOut(
     service: payload.service,
     page_location: payload.event_source_url,
     user_agent: userAgent
-  });
+  };
 
-  const gadsPromise = sendToGoogleAdsCAPI(
-    siteConfig,
-    env,
-    {
-      event_name: payload.event_name,
-      event_id: payload.event_id,
-      event_time: payload.event_time,
-      value: payload.value,
-      currency: payload.currency,
-      city: payload.user_data?.city,
-      postal_code: payload.user_data?.postal_code
-    },
-    hashedUserData
+  const gadsPayload: GAdsPayload = {
+    event_name: payload.event_name,
+    event_id: payload.event_id,
+    event_time: payload.event_time,
+    value: payload.value,
+    currency: payload.currency,
+    city: payload.user_data?.city,
+    postal_code: payload.user_data?.postal_code
+  };
+
+  const metaPromise = sendToMetaCAPI(siteConfig, metaPayload, hashedUserData);
+  const ga4Promise = sendToGA4MP(siteConfig, ga4Payload);
+  const gadsPromise = sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData);
+
+  const fanout = Promise.allSettled([metaPromise, ga4Promise, gadsPromise]).then(
+    async (results) => {
+      const [metaResult, ga4Result, gadsResult] = results;
+      const nowIso = new Date().toISOString();
+      const dlqWrites: Promise<void>[] = [];
+
+      const enqueueIfFailed = (
+        platform: Platform,
+        result: (typeof results)[number],
+        platformPayload: Record<string, unknown>,
+        includeUserData: boolean
+      ) => {
+        const failed =
+          result.status === 'rejected' || (result.status === 'fulfilled' && !result.value.success);
+        if (!failed) return;
+        const reason =
+          result.status === 'rejected'
+            ? String(result.reason)
+            : result.value.error || 'unknown';
+        dlqWrites.push(
+          writeDeadLetter(env, {
+            platform,
+            site_id: siteConfig.site_id,
+            hostname,
+            event_payload: platformPayload,
+            hashed_user_data: includeUserData
+              ? (hashedUserData as unknown as Record<string, unknown>)
+              : undefined,
+            failure_reason: reason,
+            retry_count: 0,
+            first_failed_at: nowIso,
+            last_attempted_at: nowIso
+          })
+        );
+      };
+
+      enqueueIfFailed('meta', metaResult, metaPayload as unknown as Record<string, unknown>, true);
+      enqueueIfFailed('ga4', ga4Result, ga4Payload as unknown as Record<string, unknown>, false);
+      enqueueIfFailed('gads', gadsResult, gadsPayload as unknown as Record<string, unknown>, true);
+
+      await Promise.allSettled(dlqWrites);
+
+      logStructured({
+        level: 'info',
+        message: 'Fan-out completed',
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        meta_success: metaResult.status === 'fulfilled' && metaResult.value.success,
+        ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success,
+        gads_success: gadsResult.status === 'fulfilled' && gadsResult.value.success,
+        platforms_failed: dlqWrites.length
+      });
+    }
   );
-
-  const fanout = Promise.allSettled([metaPromise, ga4Promise, gadsPromise]).then((results) => {
-    const [metaResult, ga4Result, gadsResult] = results;
-    logStructured({
-      level: 'info',
-      message: 'Fan-out completed',
-      site_id: siteConfig.site_id,
-      event_name: payload.event_name,
-      meta_success: metaResult.status === 'fulfilled' && metaResult.value.success,
-      ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success,
-      gads_success: gadsResult.status === 'fulfilled' && gadsResult.value.success
-    });
-  });
 
   ctx.waitUntil(fanout);
 }

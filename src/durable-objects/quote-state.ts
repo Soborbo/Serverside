@@ -120,8 +120,8 @@ export class QuoteStateObject implements DurableObject {
   }
 
   /**
-   * Alarm: 60 perccel a quote completion után tüzel a kalkulátor conversion fan-out.
-   * Sprint 6.5: Meta + GA4. Sprint 7-8 után GAds + DLQ is hozzáadódik.
+   * Alarm: 60 perccel a quote completion után tüzel a 3-way fan-out
+   * (Meta + GA4 + Google Ads). Failure → DLQ.
    */
   async alarm(): Promise<void> {
     const quote = await this.state.storage.get<QuoteStateData>(STORAGE_KEY);
@@ -135,6 +135,8 @@ export class QuoteStateObject implements DurableObject {
     const { getSiteConfig } = await import('../lib/config');
     const { sendToMetaCAPI } = await import('../lib/meta');
     const { sendToGA4MP } = await import('../lib/ga4');
+    const { sendToGoogleAdsCAPI } = await import('../lib/gads');
+    const { writeDeadLetter } = await import('../lib/deadletter');
     const { logStructured } = await import('../types');
     const { TrackingErrorCode, ERROR_DESCRIPTIONS } = await import('../lib/error-codes');
 
@@ -151,39 +153,81 @@ export class QuoteStateObject implements DurableObject {
 
     const event_name = 'quote_calculator_conversion';
     const event_time = Math.floor(Date.now() / 1000);
+    const userData = quote.user_data || {};
 
-    const fanout = await Promise.allSettled([
-      sendToMetaCAPI(
-        siteConfig,
-        {
-          event_name,
-          event_id: quote.event_id,
-          event_time,
-          value: quote.value,
-          currency: quote.currency,
-          source: 'delayed_60min',
-          event_source_url: `https://${quote.hostname}/quote`
-        },
-        quote.user_data || {}
-      ),
-      sendToGA4MP(siteConfig, {
-        event_name,
-        event_id: quote.event_id,
-        client_id: quote.client_id,
-        value: quote.value,
-        currency: quote.currency,
-        source: 'delayed_60min',
-        service: quote.service
-      })
+    const metaPayload = {
+      event_name,
+      event_id: quote.event_id,
+      event_time,
+      value: quote.value,
+      currency: quote.currency,
+      source: 'delayed_60min',
+      event_source_url: `https://${quote.hostname}/quote`
+    };
+    const ga4Payload = {
+      event_name,
+      event_id: quote.event_id,
+      client_id: quote.client_id,
+      value: quote.value,
+      currency: quote.currency,
+      source: 'delayed_60min',
+      service: quote.service
+    };
+    const gadsPayload = {
+      event_name,
+      event_id: quote.event_id,
+      event_time,
+      value: quote.value,
+      currency: quote.currency
+    };
+
+    const results = await Promise.allSettled([
+      sendToMetaCAPI(siteConfig, metaPayload, userData),
+      sendToGA4MP(siteConfig, ga4Payload),
+      sendToGoogleAdsCAPI(siteConfig, this.env, gadsPayload, userData)
     ]);
+
+    const nowIso = new Date().toISOString();
+    const platforms = ['meta', 'ga4', 'gads'] as const;
+    const payloads: Record<string, unknown>[] = [
+      metaPayload as unknown as Record<string, unknown>,
+      ga4Payload as unknown as Record<string, unknown>,
+      gadsPayload as unknown as Record<string, unknown>
+    ];
+    const userDataMap = [true, false, true];
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const failed =
+        result.status === 'rejected' || (result.status === 'fulfilled' && !result.value.success);
+      if (!failed) continue;
+      const reason =
+        result.status === 'rejected'
+          ? String(result.reason)
+          : result.value.error || 'unknown';
+      await writeDeadLetter(this.env, {
+        platform: platforms[i],
+        site_id: siteConfig.site_id,
+        hostname: quote.hostname,
+        event_payload: payloads[i],
+        hashed_user_data: userDataMap[i]
+          ? (userData as unknown as Record<string, unknown>)
+          : undefined,
+        failure_reason: reason,
+        retry_count: 0,
+        first_failed_at: nowIso,
+        last_attempted_at: nowIso
+      });
+    }
 
     logStructured({
       level: 'info',
       message: 'Delayed quote conversion fired (60min alarm)',
       site_id: siteConfig.site_id,
       event_name,
-      meta_success: fanout[0].status === 'fulfilled' && fanout[0].value.success,
-      ga4_success: fanout[1].status === 'fulfilled' && fanout[1].value.success
+      meta_success: results[0].status === 'fulfilled' && results[0].value.success,
+      ga4_success: results[1].status === 'fulfilled' && results[1].value.success,
+      gads_success: results[2].status === 'fulfilled' && results[2].value.success
     });
   }
 }
