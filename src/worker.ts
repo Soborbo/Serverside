@@ -1,6 +1,7 @@
 import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
 import { handleHealth } from './routes/health';
+import { handleDebugGA4 } from './routes/debug-ga4';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 
@@ -12,6 +13,10 @@ export default {
     try {
       if (request.method === 'GET' && url.pathname === '/api/track/health') {
         return handleHealth(request, env);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/track/debug-ga4') {
+        return handleDebugGA4(request, env);
       }
 
       if (request.method === 'POST' && url.pathname === '/api/track/conversion') {

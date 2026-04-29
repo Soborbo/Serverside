@@ -5,6 +5,7 @@ import { getSiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
 import { hashUserData, type CountryCode } from '../lib/hash';
 import { sendToMetaCAPI } from '../lib/meta';
+import { sendToGA4MP } from '../lib/ga4';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 export async function handleConversion(
@@ -99,7 +100,31 @@ export async function handleConversion(
     hashedUserData
   );
 
-  ctx.waitUntil(metaPromise);
+  const ga4Promise = sendToGA4MP(siteConfig, {
+    event_name: payload.event_name,
+    event_id: payload.event_id,
+    client_id: payload.client_id,
+    value: payload.value,
+    currency: payload.currency,
+    source: payload.source,
+    service: payload.service,
+    page_location: payload.event_source_url,
+    user_agent: userAgent
+  });
+
+  const fanout = Promise.allSettled([metaPromise, ga4Promise]).then((results) => {
+    const [metaResult, ga4Result] = results;
+    logStructured({
+      level: 'info',
+      message: 'Fan-out completed',
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      meta_success: metaResult.status === 'fulfilled' && metaResult.value.success,
+      ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success
+    });
+  });
+
+  ctx.waitUntil(fanout);
 
   logStructured({
     level: 'info',
