@@ -1,0 +1,40 @@
+{
+  "_comment_root": "Painless KV config template a Soborbo Tracking Worker-hez. Lásd 02-sprint-config-turnstile.md, 04-sprint-meta-capi.md, 05-sprint-ga4-mp.md, 07-sprint-gads-conversion.md.",
+  "_comment_usage": "A scripts/setup-painless.sh ezt a sablont kéri ki interaktívan és tölti fel a SITE_CONFIG KV-be 'painlessremovals.com' kulcs alatt. Te magad is feltöltheted: wrangler kv key put --binding=SITE_CONFIG painlessremovals.com '<json>'.",
+
+  "site_id": "painless",
+  "country_code": "GB",
+  "currency": "GBP",
+
+  "meta": {
+    "_comment": "Meta Events Manager → Painless Pixel. pixel_id 16-jegyű, access_token NEM személyes user — System User token KÖTELEZŐ.",
+    "pixel_id": "REPLACE_ME_16_DIGIT_PIXEL_ID",
+    "access_token": "REPLACE_ME_META_CAPI_SYSTEM_USER_TOKEN",
+    "_comment_test_event_code": "Sprint 4-8 alatt TEST_PAINLESS legyen. Sprint 9-ben (production) ez a mező KIVÉTELRE KERÜL — különben minden valós konverzió Test stream-be megy. Lásd CLAUDE.md #17.",
+    "test_event_code": "TEST_PAINLESS"
+  },
+
+  "ga4": {
+    "_comment": "GA4 Admin → Data Streams → Painless web stream → Measurement Protocol API secrets. measurement_id formátum: G-XXXXXXXXXX.",
+    "measurement_id": "REPLACE_ME_GA4_MEASUREMENT_ID",
+    "api_secret": "REPLACE_ME_GA4_API_SECRET"
+  },
+
+  "gads": {
+    "_comment_customer_id": "10 digit, dashe nélkül. Google Ads UI a 123-456-7890 formátumot mutatja, de itt 1234567890 kell.",
+    "customer_id": "REPLACE_ME_10_DIGIT_CUSTOMER_ID",
+
+    "_comment_login_customer_id": "Csak ha Painless MCC alatt van, akkor az MCC ID; egyébként null.",
+    "login_customer_id": null,
+
+    "_comment_conversion_actions": "Painless 6 conversion action ID. Google Ads → Goals → Conversions → minden action → Tag setup → 'send_to: AW-XXX/<ACTION_ID>' második része.",
+    "conversion_actions": {
+      "quote_calculator_conversion": "REPLACE_ME_ACTION_ID_1",
+      "callback_conversion": "REPLACE_ME_ACTION_ID_2",
+      "contact_form_submit": "REPLACE_ME_ACTION_ID_3",
+      "phone_conversion": "REPLACE_ME_ACTION_ID_4",
+      "email_conversion": "REPLACE_ME_ACTION_ID_5",
+      "whatsapp_conversion": "REPLACE_ME_ACTION_ID_6"
+    }
+  }
+}
