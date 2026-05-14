@@ -1,0 +1,39 @@
+{
+  "_comment_root": "trapezlemezes.hu KV config a Soborbo Tracking Worker-hez. Sprint 10 multi-tenant rollout. Lásd 10-sprint-multi-tenant-rollout.md.",
+  "_comment_usage": "Feltöltés: wrangler kv key put --binding=SITE_CONFIG trapezlemezes.hu --path=<ez a fájl>. (A setup-painless.sh egyelőre painless-specifikus — generikus setup-site.sh még nincs.)",
+  "_comment_status": "Az ID-ket (pixel_id, gads.customer_id, conversion_actions) MCP-ből (Meta Ads + Google Ads API) töltöttem ki 2026-05-14-én. A REPLACE_ME mezők valódi titkok / data-stream értékek — ezeket NEM lehet API-ból kiolvasni, kézzel kell pótolni a megfelelő dashboardról.",
+
+  "site_id": "trapezlemezes",
+  "country_code": "HU",
+  "currency": "HUF",
+
+  "meta": {
+    "_comment": "Meta Events Manager → Trapézlemezes.hu Pixel. A pixel_id MCP-ből megvan (Soborbo Ltd. ad account). Az access_token System User token — Meta Business Settings → System Users → Generate token.",
+    "pixel_id": "1190487559035660",
+    "access_token": "REPLACE_ME_META_CAPI_SYSTEM_USER_TOKEN",
+    "_comment_test_event_code": "Sprint 4-8 / rollout-tesztelés alatt TEST_TRAPEZ legyen. Production go-live előtt KIVÉTELRE KERÜL — különben minden valós konverzió Test stream-be megy. Lásd CLAUDE.md #17.",
+    "test_event_code": "TEST_TRAPEZ"
+  },
+
+  "ga4": {
+    "_comment": "GA4 property: properties/449987171 (Trapezlemezes.hu, account 321514977). A measurement_id (G-XXXXXXXXXX) a web Data Stream-en van — GA4 Admin → Data Streams → Trapezlemezes.hu → Stream details. Az api_secret ugyanitt: Measurement Protocol API secrets → Create. Egyiket sem adja vissza API.",
+    "measurement_id": "REPLACE_ME_GA4_MEASUREMENT_ID",
+    "api_secret": "REPLACE_ME_GA4_API_SECRET"
+  },
+
+  "gads": {
+    "_comment_customer_id": "MCP-ből: Google Ads 'trapezlemezes.hu' account, 10 digit dashes nélkül.",
+    "customer_id": "3415114700",
+
+    "_comment_login_customer_id": "Ellenőrizve MCP-vel: az account nem a Soborbo MCC (3063851682) alatt van, standalone — ezért null.",
+    "login_customer_id": null,
+
+    "_comment_conversion_actions": "Kulcs = a kliens által küldött event_name (lásd src/routes/conversion.ts). Érték = conversion action ID. Az ENABLED, WEBSITE-origin akciókat rendeltem hozzá MCP-ből. FIGYELEM: email_conversion és whatsapp_conversion akció NEM létezik ENABLED státuszban a fiókban — kimaradtak, a Worker csendben skip-eli. FIGYELEM: phone_conversion = WEBSITE_CALL típusú akció — ezt a uploadClickConversions API elutasíthatja; ellenőrizd. MEGJEGYZÉS: létezik egy 'Purchase' (7592047156, WEBPAGE) akció is, ha lesz purchase event.",
+    "conversion_actions": {
+      "quote_calculator_conversion": "6926598604",
+      "callback_conversion": "7176297115",
+      "contact_form_submit": "7591648016",
+      "phone_conversion": "6926366138"
+    }
+  }
+}

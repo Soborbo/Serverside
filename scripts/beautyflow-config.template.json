@@ -1,0 +1,37 @@
+{
+  "_comment_root": "beautyflow.pro KV config a Soborbo Tracking Worker-hez. Sprint 10 multi-tenant rollout. Lásd 10-sprint-multi-tenant-rollout.md.",
+  "_comment_usage": "Feltöltés: wrangler kv key put --binding=SITE_CONFIG beautyflow.pro --path=<ez a fájl>. (A setup-painless.sh egyelőre painless-specifikus — generikus setup-site.sh még nincs.)",
+  "_comment_status": "A gads.customer_id és conversion_actions MCP-ből (Google Ads API) megvan 2026-05-14-én. A meta.pixel_id NEM volt kiolvasható — lásd a meta blokk kommentjét. A REPLACE_ME mezők valódi titkok / data-stream / hiányzó értékek.",
+
+  "site_id": "beautyflow",
+  "country_code": "HU",
+  "currency": "HUF",
+
+  "meta": {
+    "_comment": "FIGYELEM: a beautyflow.pro Meta Pixel NEM volt megtalálható egyetlen csatlakoztatott Meta ad accountban sem (Soborbo Ltd., Barbara Konya, Painless Removals). Valószínűleg másik Business Manager alatt van, amit a connected token nem lát. A pixel_id-t a Meta Events Manager-ből kell kimásolni. Az access_token System User token.",
+    "pixel_id": "REPLACE_ME_16_DIGIT_PIXEL_ID",
+    "access_token": "REPLACE_ME_META_CAPI_SYSTEM_USER_TOKEN",
+    "_comment_test_event_code": "Rollout-tesztelés alatt TEST_BEAUTYFLOW legyen. Production go-live előtt KIVÉTELRE KERÜL — különben minden valós konverzió Test stream-be megy. Lásd CLAUDE.md #17.",
+    "test_event_code": "TEST_BEAUTYFLOW"
+  },
+
+  "ga4": {
+    "_comment": "GA4 property: properties/495936197 (Beautyflow.pro, account 360721407). A measurement_id (G-XXXXXXXXXX) a web Data Stream-en van — GA4 Admin → Data Streams → Beautyflow.pro → Stream details. Az api_secret ugyanitt: Measurement Protocol API secrets → Create. Egyiket sem adja vissza API.",
+    "measurement_id": "REPLACE_ME_GA4_MEASUREMENT_ID",
+    "api_secret": "REPLACE_ME_GA4_API_SECRET"
+  },
+
+  "gads": {
+    "_comment_customer_id": "MCP-ből: Google Ads 'Beautyflow' account, 10 digit dashes nélkül.",
+    "customer_id": "9796138635",
+
+    "_comment_login_customer_id": "Ellenőrizve MCP-vel: az account nem a Soborbo MCC (3063851682) alatt van, standalone — ezért null.",
+    "login_customer_id": null,
+
+    "_comment_conversion_actions": "Kulcs = a kliens által küldött event_name (lásd src/routes/conversion.ts). Érték = conversion action ID. FIGYELEM: a Beautyflow fiókban nagyon kevés használható WEBSITE conversion action van — csak a 'Thank you page visited' (7335562213, WEBPAGE/SUBMIT_LEAD_FORM) és 'Click to call' (7335759042, CLICK_TO_CALL). quote_calculator_conversion / callback_conversion / email_conversion / whatsapp_conversion akció NEM létezik — ezeket vagy létre kell hozni a Google Ads-ban, vagy a Worker csendben skip-eli. phone_conversion = CLICK_TO_CALL típus, a uploadClickConversions API elutasíthatja.",
+    "conversion_actions": {
+      "contact_form_submit": "7335562213",
+      "phone_conversion": "7335759042"
+    }
+  }
+}
