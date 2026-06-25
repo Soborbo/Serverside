@@ -1,11 +1,15 @@
 import type { Env } from '../env';
 import type { SiteConfig } from './config';
 import type { HashedUserData } from './hash';
+import type { ConsentState } from './consent';
 import { getAccessToken } from './gads-oauth';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import { sanitizeErrorMessage } from './log-sanitize';
 
+// Google Ads API major verzió. A REST-útvonal csak a MAJOR verziót tartalmazza
+// (`/v24/`); a v24.x minor kiadások ugyanezen az úton mennek. 2026-06: v24 a
+// legfrissebb major (v24.2 a legújabb minor), sunset ~2027 közepe.
 const GADS_API_VERSION = 'v24';
 const GADS_API_TIMEOUT_MS = 5000;
 
@@ -17,6 +21,9 @@ export interface GAdsPayload {
   currency?: string;
   city?: string;
   postal_code?: string;
+  // Consent Mode v2 — EEA-attribúcióhoz erősen ajánlott. Ha hiányzik, a
+  // konverzió lehet, hogy nem attribútálódik.
+  consent?: ConsentState;
 }
 
 export interface GAdsResult {
@@ -103,6 +110,16 @@ export async function sendToGoogleAdsCAPI(
   }
   if (payload.currency) conversion.currencyCode = payload.currency;
   if (userIdentifiers.length > 0) conversion.userIdentifiers = userIdentifiers;
+
+  // Consent Mode v2 jelek (GRANTED/DENIED/UNSPECIFIED → UNKNOWN).
+  if (payload.consent && (payload.consent.ad_user_data || payload.consent.ad_personalization)) {
+    const toGads = (s?: string): string =>
+      s === 'GRANTED' ? 'GRANTED' : s === 'DENIED' ? 'DENIED' : 'UNKNOWN';
+    conversion.consent = {
+      adUserData: toGads(payload.consent.ad_user_data),
+      adPersonalization: toGads(payload.consent.ad_personalization)
+    };
+  }
 
   const body = {
     conversions: [conversion],

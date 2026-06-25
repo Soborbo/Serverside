@@ -1,5 +1,6 @@
 import type { Env } from '../env';
 import type { HashedUserData } from '../lib/hash';
+import type { ConsentState } from '../lib/consent';
 
 export interface QuoteStateData {
   client_id: string;
@@ -14,6 +15,12 @@ export interface QuoteStateData {
   user_data?: HashedUserData;
   hostname: string;
   view_content_fired: boolean;
+  // Consent a quote időpontjában rögzítve — a 60 perces alarm-tüzeléskor a
+  // request-kontextus (és így a friss consent) már nem elérhető.
+  consent?: ConsentState;
+  // false → ad-platform (Meta + Google Ads) konverzió tiltva. undefined/true →
+  // engedett (backward-compat).
+  ad_allowed?: boolean;
 }
 
 const STORAGE_KEY = 'quote';
@@ -81,7 +88,9 @@ export class QuoteStateObject implements DurableObject {
       fired_at: null,
       user_data: newQuote.user_data,
       hostname: newQuote.hostname,
-      view_content_fired: previous?.view_content_fired ?? false
+      view_content_fired: previous?.view_content_fired ?? false,
+      consent: newQuote.consent,
+      ad_allowed: newQuote.ad_allowed
     };
 
     await this.state.storage.put(STORAGE_KEY, quote);
@@ -160,7 +169,7 @@ export class QuoteStateObject implements DurableObject {
     const { sendToMetaCAPI } = await import('../lib/meta');
     const { sendToGA4MP } = await import('../lib/ga4');
     const { sendToGoogleAdsCAPI } = await import('../lib/gads');
-    const { writeDeadLetter } = await import('../lib/deadletter');
+    const { enqueueFailure } = await import('../lib/deadletter');
     const { logStructured } = await import('../types');
     const { TrackingErrorCode, ERROR_DESCRIPTIONS } = await import('../lib/error-codes');
 
@@ -178,6 +187,9 @@ export class QuoteStateObject implements DurableObject {
     const event_name = 'quote_calculator_conversion';
     const event_time = quote.event_time;
     const userData = quote.user_data || {};
+    // Consent gating: ha az ad-platform tiltott, a Meta + Google Ads hívást
+    // teljesen kihagyjuk (no-op success, nincs DLQ). GA4 mindig megy.
+    const adAllowed = quote.ad_allowed !== false;
 
     const metaPayload = {
       event_name,
@@ -195,20 +207,25 @@ export class QuoteStateObject implements DurableObject {
       value: quote.value,
       currency: quote.currency,
       source: 'delayed_60min',
-      service: quote.service
+      service: quote.service,
+      consent: quote.consent
     };
     const gadsPayload = {
       event_name,
       event_id: quote.event_id,
       event_time,
       value: quote.value,
-      currency: quote.currency
+      currency: quote.currency,
+      consent: quote.consent
     };
 
+    const noopSuccess: Promise<{ success: true; error?: string }> = Promise.resolve({
+      success: true
+    });
     const results = await Promise.allSettled([
-      sendToMetaCAPI(siteConfig, metaPayload, userData),
+      adAllowed ? sendToMetaCAPI(siteConfig, metaPayload, userData) : noopSuccess,
       sendToGA4MP(siteConfig, ga4Payload),
-      sendToGoogleAdsCAPI(siteConfig, this.env, gadsPayload, userData)
+      adAllowed ? sendToGoogleAdsCAPI(siteConfig, this.env, gadsPayload, userData) : noopSuccess
     ]);
 
     const nowIso = new Date().toISOString();
@@ -229,7 +246,7 @@ export class QuoteStateObject implements DurableObject {
         result.status === 'rejected'
           ? String(result.reason)
           : result.value.error || 'unknown';
-      await writeDeadLetter(this.env, {
+      await enqueueFailure(this.env, {
         platform: platforms[i],
         site_id: siteConfig.site_id,
         hostname: quote.hostname,

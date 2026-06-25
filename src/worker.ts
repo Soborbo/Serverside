@@ -8,9 +8,15 @@ import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import { QuoteStateObject } from './durable-objects/quote-state';
-import { handleScheduledRetry } from './scheduled/retry';
+import { handleScheduledRetry, retrySingle } from './scheduled/retry';
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
+import {
+  writeDeadLetter,
+  backoffSeconds,
+  MAX_RETRIES,
+  type DeadLetterRecord
+} from './lib/deadletter';
 
 export { QuoteStateObject };
 
@@ -71,7 +77,57 @@ export default {
     } else if (event.cron === '*/30 * * * *') {
       ctx.waitUntil(handleSloCheck(env));
     } else if (event.cron === '0 * * * *') {
+      // Csak akkor releváns, ha NINCS Queues binding (R2-fallback üzemmód).
+      // Queues-módban a consumer (queue handler) végzi az újrapróbálkozást.
       ctx.waitUntil(handleScheduledRetry(event, env));
+    }
+  },
+
+  /**
+   * Cloudflare Queues consumer (H1) — sikertelen platform-hívások
+   * újrapróbálkozása natív retry + backoff segítségével. Csak akkor fut, ha a
+   * `DLQ` queue consumer be van kötve (lásd wrangler.toml).
+   *
+   * Idempotencia: az újraküldés event_id/orderId alapján dedup-ol downstream
+   * (Meta 48h ablak, Google Ads orderId), így a Queues at-least-once kézbesítése
+   * nem okoz dupla konverziót.
+   */
+  async queue(batch: MessageBatch<DeadLetterRecord>, env: Env): Promise<void> {
+    for (const msg of batch.messages) {
+      const record = msg.body;
+      try {
+        const ok = await retrySingle(env, record);
+        if (ok) {
+          msg.ack();
+          continue;
+        }
+        // attempts a Queues által számolt kézbesítési kísérlet (1-től).
+        if (msg.attempts >= MAX_RETRIES) {
+          // Kimerült retry → R2 'dead' archívum (SLO-check / daily-digest látja).
+          await writeDeadLetter(env, {
+            ...record,
+            retry_count: MAX_RETRIES,
+            last_attempted_at: new Date().toISOString()
+          });
+          msg.ack();
+        } else {
+          msg.retry({ delaySeconds: backoffSeconds(msg.attempts) });
+        }
+      } catch (err) {
+        logStructured({
+          level: 'warn',
+          error_code: TrackingErrorCode.CRON_RETRY_FAILED,
+          message: 'Queue consumer retry threw',
+          platform: record?.platform,
+          site_id: record?.site_id,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        if (msg.attempts >= MAX_RETRIES) {
+          msg.ack();
+        } else {
+          msg.retry({ delaySeconds: backoffSeconds(msg.attempts) });
+        }
+      }
     }
   }
 };

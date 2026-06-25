@@ -83,7 +83,7 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
   });
 }
 
-async function retrySingle(env: Env, record: DeadLetterRecord): Promise<boolean> {
+export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<boolean> {
   const siteConfig = await getSiteConfig(record.hostname, env);
   if (!siteConfig) return false;
 

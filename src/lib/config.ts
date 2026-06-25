@@ -20,7 +20,16 @@ export interface SiteConfig {
     login_customer_id: string | null;
     conversion_actions?: Record<string, string>;
   };
+  // Ha true: explicit kliens-consent hiányában az ad-platform (Meta + Google
+  // Ads) konverziók NEM mennek el (GDPR fail-closed). Default (hiányzó/false):
+  // backward-compat, ad-platform engedett. EEA-site-okon ajánlott true-ra állítani.
+  require_consent?: boolean;
 }
+
+// KV edge-cache TTL másodpercben. A config a forró úton minden requesten olvas;
+// a cacheTtl csökkenti a KV-olvasásokat és a latenciát. Trade-off: új/módosított
+// config legfeljebb ennyi ideig propagál (a negatív cache 60s-en marad).
+const CONFIG_CACHE_TTL_SECONDS = 300;
 
 // LRU negative cache with TTL. Bounded size prevents memory growth from
 // scanner traffic; TTL ensures newly-added sites are picked up within ~60s.
@@ -55,7 +64,10 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
   }
 
   try {
-    const raw = await env.SITE_CONFIG.get(hostname, 'json');
+    const raw = await env.SITE_CONFIG.get(hostname, {
+      type: 'json',
+      cacheTtl: CONFIG_CACHE_TTL_SECONDS
+    });
     if (!raw) {
       negativeCachePut(hostname);
       return null;

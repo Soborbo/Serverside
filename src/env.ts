@@ -1,8 +1,29 @@
+import type { DeadLetterRecord } from './lib/deadletter';
+
+/**
+ * Cloudflare Workers Rate Limiting binding (GA 2025-09).
+ * A @cloudflare/workers-types nem feltétlenül exportálja a típust, ezért itt
+ * definiáljuk a használt felületet.
+ */
+export interface RateLimitBinding {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 export interface Env {
   SITE_CONFIG: KVNamespace;
   OAUTH_TOKENS: KVNamespace;
 
   DEAD_LETTER: R2Bucket;
+
+  // Cloudflare Queues alapú újrapróbálkozás (H1). Ha NINCS bekötve, a kód
+  // visszaesik a régi R2-alapú DLQ-ra (graceful fallback) — így fokozatosan
+  // élesíthető. A terminális (kimerült retry) rekordok R2-be archiválódnak,
+  // hogy az SLO-check / daily-digest továbbra is lássa őket.
+  DLQ?: Queue<DeadLetterRecord>;
+
+  // Natív rate limiter az ingestion végponton (H2). Ha nincs bekötve, a
+  // rate-limit lépés kimarad (csak Turnstile véd).
+  INGEST_LIMITER?: RateLimitBinding;
 
   QUOTE_STATE: DurableObjectNamespace;
 

@@ -1,12 +1,51 @@
 name = "event-gateway"
 main = "src/worker.ts"
-compatibility_date = "2026-04-01"
+compatibility_date = "2026-06-25"
 compatibility_flags = ["nodejs_compat"]
 account_id = "075668606da58c5b96a45a075f1ca99c"
 
 [observability]
 enabled = true
 head_sampling_rate = 1.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kötelező secret-ek (dokumentáció). Állítsd be: `wrangler secret put <NAME>`
+#   TURNSTILE_SECRET_KEY, GADS_OAUTH_CLIENT_ID, GADS_OAUTH_CLIENT_SECRET,
+#   GADS_DEVELOPER_TOKEN, ADMIN_API_TOKEN
+# Opcionális: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER,
+#   ALLOWED_ORIGINS, TURNSTILE_FAILOPEN (prod-ban NE legyen "1"), QUOTE_ALARM_SECONDS
+# Megjegyzés: a GAds OAuth access/refresh tokenek dinamikusan frissülnek →
+# szándékosan KV-ben (OAUTH_TOKENS) maradnak, NEM Secrets Store-ban.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── H1: Cloudflare Queues alapú DLQ retry ───────────────────────────────────
+# A kód guardolt: amíg ezek kommentben vannak (nincs DLQ binding), az
+# újrapróbálkozás az R2-fallbackre + óránkénti cronra esik vissza. Élesítés:
+#   1) wrangler queues create event-gateway-dlq
+#   2) wrangler queues create event-gateway-dlq-dead
+#   3) vedd ki a kommentből az alábbi 3 blokkot + redeploy
+#   4) (opcionális) a lenti [triggers] cron DLQ-sora elhagyható Queues-módban
+#
+# [[queues.producers]]
+# binding = "DLQ"
+# queue = "event-gateway-dlq"
+#
+# [[queues.consumers]]
+# queue = "event-gateway-dlq"
+# max_batch_size = 10
+# max_batch_timeout = 30
+# max_retries = 3
+# dead_letter_queue = "event-gateway-dlq-dead"
+
+# ── H2: natív Rate Limiting binding az ingestion végponton ───────────────────
+# A kód guardolt: binding nélkül a rate-limit lépés kimarad (csak Turnstile véd).
+# 100 kérés / 60s, IP+hostname kulcsra. Élesítés: vedd ki a kommentből + redeploy.
+# (A `period` csak 10 vagy 60 lehet; a limiter per-location, eventually consistent.)
+#
+# [[ratelimits]]
+# name = "INGEST_LIMITER"
+# namespace_id = "1001"
+# simple = { limit = 100, period = 60 }
 
 # Cron Triggers — DLQ retry, daily digest, SLO check.
 # Sprint 1 test-deploy alatt kikommentezve (Email binding nélkül a daily-digest

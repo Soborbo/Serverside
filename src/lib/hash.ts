@@ -16,6 +16,7 @@ export interface PlainUserData {
   city?: string | null;
   postal_code?: string | null;
   country?: string | null;
+  external_id?: string | null;
 }
 
 export interface HashedUserData {
@@ -26,6 +27,9 @@ export interface HashedUserData {
   ct?: string;
   zp?: string;
   country?: string;
+  // Meta external_id (SHA-256). Meta a hash-elt változatot is elfogadja és
+  // ajánlja; emeli az EMQ-t. Google Ads/GA4 NEM használja.
+  external_id?: string;
 }
 
 export async function sha256Hex(input: string): Promise<string> {
@@ -218,6 +222,12 @@ export async function hashUserData(
 
   const country = normalizeCountry(input.country) || normalizeCountry(countryCode);
   if (country) result.country = await sha256Hex(country);
+
+  // external_id: trim + lowercase, majd SHA-256. A kliens Pixelnek UGYANEZT a
+  // hash-elt értéket kell küldenie a match/dedup-fallback működéséhez.
+  const externalId =
+    typeof input.external_id === 'string' ? input.external_id.trim().toLowerCase() : '';
+  if (externalId.length > 0) result.external_id = await sha256Hex(externalId);
 
   return result;
 }

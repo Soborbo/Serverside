@@ -27,6 +27,9 @@ export interface PlainUserDataPayload {
   city?: string;
   postal_code?: string;
   country?: string;
+  // Stabil, alkalmazás/CRM/cookie-szintű azonosító. Meta CAPI external_id-ként
+  // megy (hash-elve) → javítja az Event Match Quality-t és dedup-fallback.
+  external_id?: string;
 }
 
 export interface ConversionRequestPayload {
@@ -44,6 +47,12 @@ export interface ConversionRequestPayload {
   fbp?: string;
   fbc?: string;
   client_id?: string;
+  // GA4 session azonosító a `_ga_<container>` cookie-ból (GS1.1.<session_id>...).
+  // Nélküle az MP-event elfogadódik, de nem jelenik meg rendesen a riportokban.
+  session_id?: string;
+  // Google Consent Mode v2 jelek (ad_user_data, ad_personalization, ad_storage,
+  // analytics_storage). Lásd lib/consent.ts.
+  consent?: unknown;
 
   [key: string]: unknown;
 }
