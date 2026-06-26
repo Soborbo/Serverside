@@ -91,6 +91,12 @@ export default {
    * Idempotencia: az újraküldés event_id/orderId alapján dedup-ol downstream
    * (Meta 48h ablak, Google Ads orderId), így a Queues at-least-once kézbesítése
    * nem okoz dupla konverziót.
+   *
+   * Exhaustion ownership: a WORKER kezeli a kimerülést. `msg.attempts` 1-alapú,
+   * ezért `> MAX_RETRIES` (=3) → a 4. kézbesítés után (3 retry) R2 'dead'
+   * archívumba írunk + ack. Hogy a platform ne előzze meg ezt, a wrangler
+   * `max_retries`-t MAGASABBRA kell állítani (lásd wrangler.toml), és a
+   * `dead_letter_queue` opcionális (a worker R2-archívuma a kanonikus dead store).
    */
   async queue(batch: MessageBatch<DeadLetterRecord>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -102,7 +108,7 @@ export default {
           continue;
         }
         // attempts a Queues által számolt kézbesítési kísérlet (1-től).
-        if (msg.attempts >= MAX_RETRIES) {
+        if (msg.attempts > MAX_RETRIES) {
           // Kimerült retry → R2 'dead' archívum (SLO-check / daily-digest látja).
           await writeDeadLetter(env, {
             ...record,
@@ -111,7 +117,7 @@ export default {
           });
           msg.ack();
         } else {
-          msg.retry({ delaySeconds: backoffSeconds(msg.attempts) });
+          msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
         }
       } catch (err) {
         logStructured({
@@ -122,10 +128,10 @@ export default {
           site_id: record?.site_id,
           error: err instanceof Error ? err.message : String(err)
         });
-        if (msg.attempts >= MAX_RETRIES) {
+        if (msg.attempts > MAX_RETRIES) {
           msg.ack();
         } else {
-          msg.retry({ delaySeconds: backoffSeconds(msg.attempts) });
+          msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
         }
       }
     }

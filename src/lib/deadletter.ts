@@ -5,12 +5,15 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 export const MAX_RETRIES = 3;
 const RETRY_WINDOW_HOURS = 24;
 
-// Queues delivery-delay backoff retry_count szerint (másodperc). Cloudflare
-// Queues max delaySeconds = 43200 (12h).
+// Queues delivery-delay backoff 0-alapú index szerint (másodperc). Cloudflare
+// Queues max delaySeconds = 86400 (24h) — a lenti értékek bőven belül vannak.
+// HÍVÁSI KONVENCIÓ: a paraméter 0-ALAPÚ (0 = első késleltetés). A consumer a
+// 1-alapú `msg.attempts`-ből `msg.attempts - 1`-et ad át, hogy a 60s-os fok is
+// ténylegesen használatba kerüljön.
 const QUEUE_BACKOFF_SECONDS = [60, 300, 1800];
 
-export function backoffSeconds(retryCount: number): number {
-  const idx = Math.min(Math.max(retryCount, 0), QUEUE_BACKOFF_SECONDS.length - 1);
+export function backoffSeconds(zeroBasedIndex: number): number {
+  const idx = Math.min(Math.max(zeroBasedIndex, 0), QUEUE_BACKOFF_SECONDS.length - 1);
   return QUEUE_BACKOFF_SECONDS[idx];
 }
 

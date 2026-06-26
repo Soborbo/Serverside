@@ -157,10 +157,14 @@ function extractGAClientId(gaCookie: string | undefined): string | undefined {
   return parts.length >= 4 ? `${parts[2]}.${parts[3]}` : undefined;
 }
 
-// GA4 session id a `_ga_<STREAM>` cookie-ból (formátum: GS1.1.<session_id>.<...>).
-// Nélküle az MP-event nem jelenik meg rendesen a GA4 riportokban.
+// GA4 session id a `_ga_<STREAM>` cookie-ból. Két formátumot kell kezelni:
+//   GS1: `GS1.1.<session_id>.<...>`
+//   GS2: `GS2.1.s<session_id>$o..$g..`  ← 2025-05-06 óta az új session-ök defaultja
+// A GS2-nél a session_id elé egy literál `s` kerül. Az opcionális `s`-t és a
+// több jegyű verzió/slot szegmenseket is kezeljük. Nélküle az MP-event nem
+// jelenik meg rendesen a GA4 riportokban.
 function extractGASessionId(): string | undefined {
-  const match = document.cookie.match(/_ga_[A-Z0-9]+=GS\d\.\d\.(\d+)/);
+  const match = document.cookie.match(/_ga_[A-Z0-9]+=GS\d+\.\d+\.s?(\d+)/);
   return match ? match[1] : undefined;
 }
 

@@ -133,7 +133,12 @@ export async function handleConversion(
   // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
   const consentState = parseConsent(payload.consent);
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
-  const sessionId = typeof payload.session_id === 'string' ? payload.session_id : undefined;
+  // session_id a GA4 numerikus session timestamp — bound + charset check, hogy
+  // ne továbbítsunk korlátlan attacker-stringet a GA4 MP felé.
+  const sessionId =
+    typeof payload.session_id === 'string' && /^\d{1,20}$/.test(payload.session_id)
+      ? payload.session_id
+      : undefined;
 
   if (
     payload.event_name === 'quote_calculator_conversion' &&

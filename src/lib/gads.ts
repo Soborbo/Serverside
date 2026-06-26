@@ -111,14 +111,22 @@ export async function sendToGoogleAdsCAPI(
   if (payload.currency) conversion.currencyCode = payload.currency;
   if (userIdentifiers.length > 0) conversion.userIdentifiers = userIdentifiers;
 
-  // Consent Mode v2 jelek (GRANTED/DENIED/UNSPECIFIED → UNKNOWN).
-  if (payload.consent && (payload.consent.ad_user_data || payload.consent.ad_personalization)) {
-    const toGads = (s?: string): string =>
-      s === 'GRANTED' ? 'GRANTED' : s === 'DENIED' ? 'DENIED' : 'UNKNOWN';
-    conversion.consent = {
-      adUserData: toGads(payload.consent.ad_user_data),
-      adPersonalization: toGads(payload.consent.ad_personalization)
-    };
+  // Consent Mode v2 jelek. FONTOS: a Google Ads API a consent mezőkre CSAK
+  // GRANTED / DENIED bemenetet fogad el — az `UNKNOWN`/`UNSPECIFIED` érték
+  // INVALID_ENUM_VALUE hibát ad (a sor partialFailure-rel csendben elbukik).
+  // Ezért a nem-egyértelmű jeleket KIHAGYJUK (a hiányzó mező = UNSPECIFIED default).
+  if (payload.consent) {
+    const consent: Record<string, string> = {};
+    if (payload.consent.ad_user_data === 'GRANTED' || payload.consent.ad_user_data === 'DENIED') {
+      consent.adUserData = payload.consent.ad_user_data;
+    }
+    if (
+      payload.consent.ad_personalization === 'GRANTED' ||
+      payload.consent.ad_personalization === 'DENIED'
+    ) {
+      consent.adPersonalization = payload.consent.ad_personalization;
+    }
+    if (Object.keys(consent).length > 0) conversion.consent = consent;
   }
 
   const body = {

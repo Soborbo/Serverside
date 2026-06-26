@@ -34,7 +34,11 @@ head_sampling_rate = 1.0
 # queue = "event-gateway-dlq"
 # max_batch_size = 10
 # max_batch_timeout = 30
-# max_retries = 3
+# # A worker.ts queue() handler maga kezeli a kimerülést (R2 'dead' archívum a
+# # MAX_RETRIES=3 utáni 4. kézbesítésnél). Ezért a platform max_retries-t
+# # MAGASABBRA állítjuk (>=4), hogy ne előzze meg a worker logikáját; a
+# # dead_letter_queue csak végső biztonsági háló (a kanonikus dead store az R2).
+# max_retries = 5
 # dead_letter_queue = "event-gateway-dlq-dead"
 
 # ── H2: natív Rate Limiting binding az ingestion végponton ───────────────────

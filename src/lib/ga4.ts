@@ -61,12 +61,19 @@ export async function sendToGA4MP(
     events: [{ name: payload.event_name, params }]
   };
 
-  // Consent Mode v2 — top-level consent objektum (GRANTED/DENIED).
+  // Consent Mode v2 — top-level consent objektum. A GA4 MP CSAK GRANTED/DENIED-et
+  // dokumentál; az UNSPECIFIED-et kihagyjuk (a hiányzó mező a default).
   if (payload.consent) {
     const consent: Record<string, string> = {};
-    if (payload.consent.ad_user_data) consent.ad_user_data = payload.consent.ad_user_data;
-    if (payload.consent.ad_personalization)
+    if (payload.consent.ad_user_data === 'GRANTED' || payload.consent.ad_user_data === 'DENIED') {
+      consent.ad_user_data = payload.consent.ad_user_data;
+    }
+    if (
+      payload.consent.ad_personalization === 'GRANTED' ||
+      payload.consent.ad_personalization === 'DENIED'
+    ) {
       consent.ad_personalization = payload.consent.ad_personalization;
+    }
     if (Object.keys(consent).length > 0) body.consent = consent;
   }
 

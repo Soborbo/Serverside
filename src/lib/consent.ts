@@ -66,10 +66,17 @@ export function resolveConsent(
   consent: ConsentState | undefined,
   requireConsent: boolean
 ): ConsentDecision {
-  if (!consent) {
-    // Nincs explicit consent jel a kliensről.
-    return { adAllowed: !requireConsent, analyticsAllowed: true, consent: undefined };
+  // Fail-closed (require_consent=true): ad-platform CSAK explicit
+  //   ad_user_data === 'GRANTED' esetén. Hiányzó/UNSPECIFIED/DENIED → tiltva.
+  //   FONTOS: ez akkor is érvényes, ha a kliens részleges consent objektumot
+  //   küld (pl. csak analytics_storage) — különben a require_consent kapu
+  //   megkerülhető lenne.
+  // Fail-open (require_consent=false, backward-compat): csak az explicit
+  //   ad_user_data === 'DENIED' tilt; minden más enged.
+  if (requireConsent) {
+    const adAllowed = consent?.ad_user_data === 'GRANTED';
+    return { adAllowed, analyticsAllowed: true, consent };
   }
-  const adAllowed = consent.ad_user_data !== 'DENIED';
+  const adAllowed = consent?.ad_user_data !== 'DENIED';
   return { adAllowed, analyticsAllowed: true, consent };
 }

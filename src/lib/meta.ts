@@ -91,20 +91,22 @@ export async function sendToMetaCAPI(
     custom_data
   };
 
-  // CCPA Limited Data Use — kötelező US-traffic opt-out kezeléséhez.
-  // country/state = 0,0 → Meta geolokáció dönti el, hogy alkalmazza-e.
-  // (EU/GDPR-gating NEM itt történik: nem-konszenzuáló EU usernél a hívás
-  //  fel sem indul — lásd routes/conversion.ts + lib/consent.ts.)
-  if (siteConfig.country_code === 'US') {
-    event.data_processing_options = ['LDU'];
-    event.data_processing_options_country = 0;
-    event.data_processing_options_state = 0;
-  }
-
   const body: Record<string, unknown> = {
     data: [event],
     access_token: siteConfig.meta.access_token
   };
+
+  // CCPA Limited Data Use — kötelező US-traffic opt-out kezeléséhez.
+  // FONTOS: a Meta ezeket a REQUEST TOP-LEVEL-jén várja (a `data` tömb MELLETT),
+  // NEM az event objektumon belül — különben csendben figyelmen kívül hagyja.
+  // country/state = 0,0 → Meta geolokáció dönti el, hogy alkalmazza-e.
+  // (EU/GDPR-gating NEM itt történik: nem-konszenzuáló EU usernél a hívás
+  //  fel sem indul — lásd routes/conversion.ts + lib/consent.ts.)
+  if (siteConfig.country_code === 'US') {
+    body.data_processing_options = ['LDU'];
+    body.data_processing_options_country = 0;
+    body.data_processing_options_state = 0;
+  }
 
   if (siteConfig.meta.test_event_code) {
     body.test_event_code = siteConfig.meta.test_event_code;

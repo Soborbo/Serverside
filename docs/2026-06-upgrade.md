@@ -75,7 +75,28 @@ a deploy pillanatában.
 - `external_id`: `user_data.external_id` — add ugyanezt a böngésző Pixelnek is.
 - `session_id`: automatikusan a `_ga_<stream>` cookie-ból.
 
+## Audit-javítások (adversariális kód-audit + bug hunt után)
+
+A 4-ügynökös audit több **csendes adatvesztést** okozó hibát talált; mind javítva:
+
+| Súly | Hiba | Javítás |
+|---|---|---|
+| 🔴 | Meta `data_processing_options` az **event**-en volt (Meta a **request top-level**-en várja) → US LDU csendben elveszett | `body`-ra mozgatva (`meta.ts`) |
+| 🔴 | Google Ads consent `UNKNOWN` enum → `INVALID_ENUM_VALUE`, a sor partialFailure-rel csendben elbukik | csak `GRANTED`/`DENIED` megy, az UNSPECIFIED kihagyva (`gads.ts`) |
+| 🔴 | client `session_id` regex a **GS2** cookie-formátumon (2025-05-06 óta default) nem talált → soha nincs session_id | regex GS1+GS2-re (`worker-tracking.ts`) |
+| 🔴 | `resolveConsent`: `require_consent` megkerülhető részleges consent objektummal (GDPR fail-open) | fail-closed: `require_consent` esetén csak explicit `ad_user_data === 'GRANTED'` enged (`consent.ts`) |
+| 🟡 | Queues consumer off-by-one (`msg.attempts` 1-alapú) + backoff egység-eltérés | `> MAX_RETRIES` + `attempts-1` 0-alapú index; wrangler `max_retries=5` + komment-koherencia |
+| 🟡 | `session_id` / `external_id` validálatlan/korlátlan (attacker-string továbbítás/DoS) | `session_id` `^\d{1,20}$`, `external_id` ≤256 char |
+| 🟡 | GA4 csak `GRANTED`/`DENIED`-et dokumentál | UNSPECIFIED kihagyva (`ga4.ts`) |
+
+A bugot rögzítő tesztek (Meta LDU placement, Google Ads consent) is javítva.
+
+> **GDPR megjegyzés (akció a KV-configokban):** a `require_consent` **default opt-in**
+> (false = backward-compat, mint a `main`-en). A **magyar/EEA site-okon állítsd
+> `true`-ra** a KV configban, ÉS kösd be a CMP-t (`window.__trackingConsent`),
+> különben consent nélkül is mennek az ad-platform konverziók. A kód mostantól
+> helyesen fail-closed, ha bekapcsolod.
+
 ## Tesztek
 
-140 teszt zöld (124 eredeti + 16 új: consent parse/resolve, external_id hash,
-Meta LDU/external_id, GA4 session_id/consent, Google Ads consent). Typecheck tiszta.
+143 teszt zöld (124 eredeti + 19 új), typecheck tiszta.

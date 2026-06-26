@@ -225,9 +225,12 @@ export async function hashUserData(
 
   // external_id: trim + lowercase, majd SHA-256. A kliens Pixelnek UGYANEZT a
   // hash-elt értéket kell küldenie a match/dedup-fallback működéséhez.
+  // Hossz-korlát (256): ne hash-eljünk korlátlan attacker-stringet (DoS).
   const externalId =
     typeof input.external_id === 'string' ? input.external_id.trim().toLowerCase() : '';
-  if (externalId.length > 0) result.external_id = await sha256Hex(externalId);
+  if (externalId.length > 0 && externalId.length <= 256) {
+    result.external_id = await sha256Hex(externalId);
+  }
 
   return result;
 }

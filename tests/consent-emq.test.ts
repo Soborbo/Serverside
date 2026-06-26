@@ -62,6 +62,18 @@ describe('resolveConsent', () => {
     const d = resolveConsent({ ad_user_data: 'GRANTED' }, true);
     expect(d.adAllowed).toBe(true);
   });
+
+  it('require_consent + partial consent WITHOUT ad_user_data → blocked (no bypass)', () => {
+    // GDPR fail-closed: részleges consent objektum (csak analytics_storage)
+    // NEM kerülheti meg a require_consent kaput.
+    expect(resolveConsent({ analytics_storage: 'DENIED' }, true).adAllowed).toBe(false);
+    expect(resolveConsent({ ad_personalization: 'GRANTED' }, true).adAllowed).toBe(false);
+    expect(resolveConsent({ ad_user_data: 'UNSPECIFIED' }, true).adAllowed).toBe(false);
+  });
+
+  it('require_consent=false + UNSPECIFIED ad_user_data → allowed (fail-open)', () => {
+    expect(resolveConsent({ ad_user_data: 'UNSPECIFIED' }, false).adAllowed).toBe(true);
+  });
 });
 
 describe('hashUserData — external_id', () => {
@@ -109,8 +121,11 @@ describe('sendToMetaCAPI — external_id + LDU', () => {
       {}
     );
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.data[0].data_processing_options).toEqual(['LDU']);
-    expect(body.data[0].data_processing_options_country).toBe(0);
+    // Meta a LDU mezőket a REQUEST TOP-LEVEL-jén várja, NEM az event objektumon.
+    expect(body.data_processing_options).toEqual(['LDU']);
+    expect(body.data_processing_options_country).toBe(0);
+    expect(body.data_processing_options_state).toBe(0);
+    expect(body.data[0]).not.toHaveProperty('data_processing_options');
   });
 
   it('does NOT add LDU for non-US sites', async () => {
@@ -120,7 +135,7 @@ describe('sendToMetaCAPI — external_id + LDU', () => {
       {}
     );
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.data[0]).not.toHaveProperty('data_processing_options');
+    expect(body).not.toHaveProperty('data_processing_options');
   });
 });
 
@@ -202,7 +217,7 @@ describe('sendToGoogleAdsCAPI — consent', () => {
     vi.unstubAllGlobals();
   });
 
-  it('maps consent signals to GRANTED/DENIED/UNKNOWN on the conversion', async () => {
+  it('forwards only GRANTED/DENIED; omits UNSPECIFIED (no invalid UNKNOWN enum)', async () => {
     await sendToGoogleAdsCAPI(
       cfg,
       env,
@@ -215,10 +230,39 @@ describe('sendToGoogleAdsCAPI — consent', () => {
       {}
     );
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0].consent).toEqual({
-      adUserData: 'GRANTED',
-      adPersonalization: 'UNKNOWN'
-    });
+    // ad_personalization=UNSPECIFIED → kihagyva (UNKNOWN-t a Google elutasítaná).
+    expect(body.conversions[0].consent).toEqual({ adUserData: 'GRANTED' });
+  });
+
+  it('maps DENIED through and omits consent entirely when no GRANTED/DENIED present', async () => {
+    await sendToGoogleAdsCAPI(
+      cfg,
+      env,
+      {
+        event_name: 'callback_conversion',
+        event_id: 'e1b',
+        event_time: Math.floor(Date.now() / 1000),
+        consent: { ad_user_data: 'GRANTED', ad_personalization: 'DENIED' }
+      },
+      {}
+    );
+    let body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.conversions[0].consent).toEqual({ adUserData: 'GRANTED', adPersonalization: 'DENIED' });
+
+    fetchMock.mockClear();
+    await sendToGoogleAdsCAPI(
+      cfg,
+      env,
+      {
+        event_name: 'callback_conversion',
+        event_id: 'e1c',
+        event_time: Math.floor(Date.now() / 1000),
+        consent: { analytics_storage: 'DENIED' }
+      },
+      {}
+    );
+    body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.conversions[0]).not.toHaveProperty('consent');
   });
 
   it('omits consent when not provided', async () => {
