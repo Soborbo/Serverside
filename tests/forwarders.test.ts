@@ -148,12 +148,12 @@ describe('Microsoft Ads forwarder (scaffold)', () => {
 
   it('buildOfflineConversion returns null without config or msclkid', () => {
     expect(buildOfflineConversion(siteConfig(), payload)).toBeNull();
-    const cfg = siteConfig({ msads: { conversion_names: { phone_conversion: 'Phone' } } });
+    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_conversion: 'Phone' } } });
     expect(buildOfflineConversion(cfg, { ...payload, msclkid: undefined })).toBeNull();
   });
 
   it('buildOfflineConversion builds the canonical record (omits value:0)', () => {
-    const cfg = siteConfig({ msads: { conversion_names: { phone_conversion: 'Phone Lead' } } });
+    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_conversion: 'Phone Lead' } } });
     const rec = buildOfflineConversion(cfg, payload);
     expect(rec).toEqual({
       microsoftClickId: 'MS-123',
@@ -165,7 +165,7 @@ describe('Microsoft Ads forwarder (scaffold)', () => {
 
   it('sendToMsAds never fires a live call; returns scaffolded+skipped when configured', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const cfg = siteConfig({ msads: { conversion_names: { phone_conversion: 'Phone' } } });
+    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_conversion: 'Phone' } } });
     const r = await sendToMsAds(cfg, payload, HASHED);
     expect(r.success).toBe(true);
     expect(r.scaffolded).toBe(true);
