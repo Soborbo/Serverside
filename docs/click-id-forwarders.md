@@ -36,7 +36,7 @@ Optional blocks in the `SITE_CONFIG` KV JSON (see `scripts/painless-config.templ
 ```jsonc
 "tiktok":   { "pixel_code": "...", "access_token": "...", "event_names": { /* optional override */ } },
 "linkedin": { "access_token": "...", "conversion_rules": { "contact_form_submit": "urn:lla:llaPartnerConversion:123" }, "api_version": "202401" },
-"msads":    { "customer_id": "...", "conversion_names": { "phone_conversion": "Phone Lead" } }
+"microsoft_ads": { "customer_id": "...", "conversion_names": { "phone_conversion": "Phone Lead" } }
 ```
 
 ## Live-call TODOs (before enabling per platform)

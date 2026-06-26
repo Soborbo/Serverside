@@ -55,7 +55,7 @@ export function buildOfflineConversion(
   siteConfig: SiteConfig,
   payload: MsAdsPayload
 ): MsAdsOfflineConversion | null {
-  const cfg = siteConfig.msads;
+  const cfg = siteConfig.microsoft_ads;
   const conversionName = cfg?.conversion_names?.[payload.event_name];
   if (!cfg || !conversionName || !payload.msclkid) return null;
   const rec: MsAdsOfflineConversion = {

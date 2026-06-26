@@ -22,7 +22,9 @@ export interface SiteConfig {
   };
   // Opcionális extra platformok (TASK 3 — click-ID forwarderek). Mind nullable;
   // hiányzó/null blokk → az adott forwarder no-op (skip), nem hiba.
-  msads?: MsAdsConfig | null;
+  // A blokk-kulcs a kliens SERVERSIDE-FOLLOWUP.md §2 szerződését követi:
+  // microsoft_ads / tiktok / linkedin.
+  microsoft_ads?: MsAdsConfig | null;
   tiktok?: TikTokConfig | null;
   linkedin?: LinkedInConfig | null;
   // Ha true: explicit kliens-consent hiányában az ad-platform (Meta + Google

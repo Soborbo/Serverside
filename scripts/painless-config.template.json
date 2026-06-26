@@ -46,6 +46,6 @@
   "_comment_linkedin": "LinkedIn Conversions API (li_fat_id + hashed email). access_token + conversion_rules: event_name -> 'urn:lla:llaPartnerConversion:<id>'; api_version pl. '202401'.",
   "linkedin": null,
 
-  "_comment_msads": "Microsoft Ads offline conversions (msclkid). SCAFFOLD: a live transport (Bing Ads ApplyOfflineConversions, SOAP+OAuth) MÉG NINCS implementálva — lásd lib/msads.ts TODO. conversion_names: event_name -> Microsoft conversion goal name.",
-  "msads": null
+  "_comment_microsoft_ads": "Microsoft Ads offline conversions (msclkid). SCAFFOLD: a live transport (Bing Ads ApplyOfflineConversions, SOAP+OAuth) MÉG NINCS implementálva — lásd lib/msads.ts TODO. conversion_names: event_name -> Microsoft conversion goal name.",
+  "microsoft_ads": null
 }
