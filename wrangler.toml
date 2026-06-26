@@ -105,17 +105,14 @@ bucket_name = "soborbo-tracking-dlq"
 # A kód guardolt: amíg ez kommentben van (nincs LEDGER binding), a ledger-írás
 # + idempotencia no-op (a Worker D1 nélkül is teljesen működik). Az offline-loop
 # (/api/event/lead-status) D1 nélkül is feltölt Google Ads-be, csak nem naplóz.
-# Élesítés:
-#   1) wrangler d1 create event-gateway-ledger
-#   2) másold be a kiírt database_id-t alább
-#   3) wrangler d1 migrations apply event-gateway-ledger --remote
-#   4) vedd ki a kommentből ezt a blokkot + redeploy
-#
-# [[d1_databases]]
-# binding = "LEDGER"
-# database_name = "event-gateway-ledger"
-# database_id = "<wrangler d1 create kiírja>"
-# migrations_dir = "migrations"
+# Élesítve 2026-06-26 (Cloudflare MCP): DB létrehozva (weur, EU-jurisdikció a
+# GDPR-hez) + a migrations/0001_ledger.sql séma alkalmazva (5 tábla + 10 index).
+# A binding a következő `wrangler deploy`-jal lép életbe.
+[[d1_databases]]
+binding = "LEDGER"
+database_name = "event-gateway-ledger"
+database_id = "8c7774d1-2eea-40ba-b99c-92e73055460f"
+migrations_dir = "migrations"
 
 # Routes — Sprint 9: Painless live, Sprint 10: 14 másik site rollout-tal.
 # A Worker-kód már multi-tenant (hostname → SiteConfig KV); itt csak a
