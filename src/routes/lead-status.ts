@@ -2,11 +2,12 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { getSiteConfig } from '../lib/config';
 import { authenticateAdmin } from '../lib/admin-auth';
-import { hashUserData, type CountryCode, type PlainUserData } from '../lib/hash';
+import { hashUserData, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
 import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   isValidLeadId,
+  isOfflineUploadBlocked,
   mapLeadStatusToEventName,
   VALID_LEAD_STATUSES,
   getLatestConsentForLead,
@@ -55,16 +56,24 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
   if (p.currency !== undefined && (typeof p.currency !== 'string' || !/^[A-Za-z]{3}$/.test(p.currency))) {
     return null;
   }
-  if (p.user_data !== undefined && (typeof p.user_data !== 'object' || p.user_data === null)) {
+  // user_data: objektum, de NEM tömb (typeof [] === 'object') — a tömb junk
+  // kulcsokkal jutna a hash-előhöz.
+  if (
+    p.user_data !== undefined &&
+    (typeof p.user_data !== 'object' || p.user_data === null || Array.isArray(p.user_data))
+  ) {
     return null;
   }
 
   return {
     lead_id: p.lead_id as string,
     status: p.status,
-    occurred_at: p.occurred_at as string | undefined,
+    // UTC ISO-ra normalizálva → konzisztens lexikális rendezés a ledgerben.
+    occurred_at:
+      typeof p.occurred_at === 'string' ? new Date(p.occurred_at).toISOString() : undefined,
     value: p.value as number | undefined,
-    currency: p.currency as string | undefined,
+    // 3-betűs ISO uppercase (a Google Ads/Meta nagybetűt vár).
+    currency: typeof p.currency === 'string' ? p.currency.toUpperCase() : undefined,
     user_data: p.user_data as PlainUserData | undefined
   };
 }
@@ -120,11 +129,11 @@ export async function handleLeadStatus(
   const occurredAtIso = body.occurred_at ?? new Date().toISOString();
   const eventTimeSec = Math.floor(Date.parse(occurredAtIso) / 1000);
 
-  // GDPR-kapu: ha a lead capture-kor visszavonta az ad-consentet, NEM töltünk fel.
-  // null (nincs rekord / D1 nélkül) → engedjük (a CRM megbízható, a consent a
-  // business felelőssége — Enhanced Conversions for Leads követelmény).
+  // GDPR-kapu: explicit ad_allowed=false → tiltott. Fail-closed: ha a site
+  // require_consent ÉS nincs (vagy D1-hiba miatt nem olvasható) consent-rekord,
+  // szintén tiltott (egy D1-kiesés ne fordítsa „ismeretlen"→„megadott"-ra).
   const leadConsent = await getLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
-  const consentBlocked = leadConsent !== null && leadConsent.ad_allowed === false;
+  const consentBlocked = isOfflineUploadBlocked(leadConsent, siteConfig.require_consent === true);
 
   let uploadedToGads = false;
   let gadsErrorCode: string | undefined;
@@ -132,20 +141,24 @@ export async function handleLeadStatus(
   if (consentBlocked) {
     logStructured({
       level: 'info',
-      message: 'Offline conversion skipped — lead revoked ad consent at capture',
+      message: 'Offline conversion skipped — consent not satisfied',
       site_id: siteConfig.site_id,
       event_name: eventName,
-      lead_id_present: true
+      require_consent: siteConfig.require_consent === true,
+      has_consent_record: leadConsent !== null
     });
   } else if (siteConfig.gads.customer_id) {
     const hashed = await hashUserData(
       body.user_data ?? {},
       siteConfig.country_code as CountryCode
     );
+    // Ütközésbiztos, determinisztikus orderId: a (lead_id, status) SHA-256-ja.
+    // A naiv `${lead_id}_${status}`.slice(0,64) hosszú lead_id-knál csonkolt és
+    // ütközhetett (két különböző lead → egy orderId → Google Ads összevonja őket).
+    const orderId = (await sha256Hex(`${body.lead_id}_${body.status}`)).slice(0, 32);
     const gadsPayload: GAdsPayload = {
       event_name: eventName,
-      // Stabil orderId az offline-konverzióhoz (lead+status) → Google Ads dedup.
-      event_id: `${body.lead_id}_${body.status}`.slice(0, 64),
+      event_id: orderId,
       event_time: eventTimeSec,
       value: body.value,
       currency: body.currency ?? siteConfig.currency,

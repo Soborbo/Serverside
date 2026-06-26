@@ -147,9 +147,12 @@ async function handleDlqReplay(
 
   // Bulk replay (opcionálisan site_id prefixre szűrve).
   const max = Number.isFinite(body.max as number) ? Math.min(Math.max(body.max as number, 1), 100) : 50;
+  // Segment-prefix (`site_id/`), NEM substring — különben a `site_id: "a"`
+  // minden olyan tenant rekordját listázná, amelynek id-je `a`-val kezdődik.
+  const sitePrefix = typeof body.site_id === 'string' && body.site_id ? `${body.site_id}/` : undefined;
   let pending: { key: string; record: DeadLetterRecord }[];
   try {
-    pending = await listPendingRetries(env, body.site_id, max);
+    pending = await listPendingRetries(env, sitePrefix, max);
   } catch (err) {
     logStructured({
       level: 'error',
@@ -240,7 +243,14 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
       const token = await getAccessToken(siteConfig.gads.customer_id, env);
       add('gads_oauth', token ? 'PASS' : 'FAIL', token ? 'access token obtained' : 'no access token (run OAuth flow)');
     } catch (err) {
-      add('gads_oauth', 'FAIL', `token fetch threw: ${err instanceof Error ? err.message : String(err)}`);
+      // Ne szivárogtassunk OAuth-belső hibaüzenetet a válaszba — logba megy.
+      logStructured({
+        level: 'warn',
+        message: 'health-check gads_oauth token fetch threw',
+        site_id: siteConfig.site_id,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      add('gads_oauth', 'FAIL', 'token fetch failed (see Worker logs)');
     }
   } else {
     add('gads_customer_id', 'WARN', 'no customer_id — Google Ads dispatch is a no-op for this site');

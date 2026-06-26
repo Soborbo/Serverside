@@ -34,7 +34,9 @@ export interface Env {
   QUOTE_STATE: DurableObjectNamespace;
 
   TRACKING_METRICS: AnalyticsEngineDataset;
-  ADMIN_EMAIL: SendEmail;
+  // Email binding — a wrangler.toml-ban kommentben (destination verify nélkül a
+  // deploy elbukna). A notify.ts soft-skip-pel megy, ha hiányzik → opcionális.
+  ADMIN_EMAIL?: SendEmail;
 
   // Secrets (set via `wrangler secret put`)
   TURNSTILE_SECRET_KEY: string;

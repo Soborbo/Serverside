@@ -55,4 +55,18 @@ describe('validateLeadStatusBody', () => {
     expect(validateLeadStatusBody('string')).toBeNull();
     expect(validateLeadStatusBody({ ...base, user_data: 'nope' })).toBeNull();
   });
+
+  it('rejects user_data arrays (typeof [] === object)', () => {
+    expect(validateLeadStatusBody({ ...base, user_data: ['x'] })).toBeNull();
+  });
+
+  it('normalizes currency to uppercase', () => {
+    const r = validateLeadStatusBody({ ...base, currency: 'gbp' });
+    expect(r?.currency).toBe('GBP');
+  });
+
+  it('normalizes occurred_at to UTC ISO (Z)', () => {
+    const r = validateLeadStatusBody({ ...base, occurred_at: '2026-06-26T10:30:00+02:00' });
+    expect(r?.occurred_at).toBe('2026-06-26T08:30:00.000Z');
+  });
 });
