@@ -24,6 +24,12 @@ export interface GAdsPayload {
   // Consent Mode v2 — EEA-attribúcióhoz erősen ajánlott. Ha hiányzik, a
   // konverzió lehet, hogy nem attribútálódik.
   consent?: ConsentState;
+  // Google click ID-k. Pontosan EGY kerül a konverzióra (prioritás: gclid >
+  // gbraid > wbraid). Az Enhanced Conversions for Leads (userIdentifiers)
+  // emellett is mehet — a click ID a legerősebb attribúciós jel.
+  gclid?: string;
+  gbraid?: string;
+  wbraid?: string;
 }
 
 export interface GAdsResult {
@@ -105,6 +111,12 @@ export async function sendToGoogleAdsCAPI(
     conversionDateTime,
     orderId: payload.event_id.slice(0, 64)
   };
+
+  // Google click ID — pontosan egy, prioritás szerint. A legerősebb attribúciós
+  // jel; az userIdentifiers (EC for Leads) emellett is megy fallbacknek.
+  if (payload.gclid) conversion.gclid = payload.gclid;
+  else if (payload.gbraid) conversion.gbraid = payload.gbraid;
+  else if (payload.wbraid) conversion.wbraid = payload.wbraid;
   if (typeof payload.value === 'number' && payload.value > 0) {
     conversion.conversionValue = payload.value;
   }

@@ -54,6 +54,8 @@ export interface ConsentState {
   analytics_storage?: ConsentSignal;
 }
 
+export type AttributionParams = Record<string, string>;
+
 export interface ConversionPayload {
   event_name: string;
   event_id: string;
@@ -65,6 +67,7 @@ export interface ConversionPayload {
   user_data?: UserData;
   event_source_url?: string;
   consent?: ConsentState;
+  attribution?: AttributionParams;
 }
 
 let cachedTurnstileToken: string | undefined;
@@ -207,6 +210,97 @@ function getConsentState(): ConsentState | undefined {
   };
 }
 
+// ── Univerzális attribúció-gyűjtés ──────────────────────────────────────────
+// Minden bevett click ID + UTM, az URL-ből + `_gcl_aw` cookie fallbackkel,
+// localStorage-ban perzisztálva (a konverzió gyakran másik oldalon történik,
+// mint a landing). Last-touch nyer a click ID-knél/UTM-eknél; a landing-kontextus
+// (landing_page, referrer) first-touch.
+const ATTR_STORAGE_KEY = '__sb_attribution';
+const ATTR_CLICK_PARAMS = [
+  'gclid',
+  'gbraid',
+  'wbraid',
+  'gclsrc',
+  'gad_source',
+  'dclid',
+  'fbclid',
+  'msclkid',
+  'ttclid',
+  'li_fat_id',
+  'twclid'
+];
+const ATTR_UTM_PARAMS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'utm_id',
+  'utm_source_platform',
+  'utm_creative_format',
+  'utm_marketing_tactic'
+];
+
+function readStoredAttribution(): AttributionParams {
+  try {
+    const raw = localStorage.getItem(ATTR_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as AttributionParams) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredAttribution(a: AttributionParams): void {
+  try {
+    localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify(a));
+  } catch {
+    // localStorage tiltva (privacy mód) — best-effort, csendben kihagyjuk.
+  }
+}
+
+// gclid a `_gcl_aw` cookie-ból (formátum: GCL.<ts>.<gclid>) — fallback, ha az
+// URL-ben már nincs gclid (pl. a felhasználó belső oldalon konvertál).
+function gclidFromCookie(): string | undefined {
+  const c = getCookie('_gcl_aw');
+  if (!c) return undefined;
+  const parts = c.split('.');
+  return parts.length >= 3 ? parts.slice(2).join('.') : undefined;
+}
+
+export function collectAttribution(): AttributionParams {
+  const stored = readStoredAttribution();
+  const fresh: AttributionParams = {};
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    for (const k of ATTR_CLICK_PARAMS) {
+      const v = params.get(k);
+      if (v) fresh[k] = v;
+    }
+    for (const k of ATTR_UTM_PARAMS) {
+      const v = params.get(k);
+      if (v) fresh[k] = v;
+    }
+  } catch {
+    // no-op
+  }
+
+  if (!fresh.gclid) {
+    const g = gclidFromCookie();
+    if (g) fresh.gclid = g;
+  }
+
+  // Last-touch: a friss URL-jelek felülírják a tároltat.
+  const merged: AttributionParams = { ...stored, ...fresh };
+
+  // First-touch landing-kontextus (nem írjuk felül, ha már megvan).
+  if (!merged.landing_page) merged.landing_page = window.location.href;
+  if (!merged.referrer && document.referrer) merged.referrer = document.referrer;
+
+  writeStoredAttribution(merged);
+  return merged;
+}
+
 export async function sendToWorker(payload: ConversionPayload): Promise<boolean> {
   const turnstileToken = await getTurnstileToken();
   if (!turnstileToken) {
@@ -227,6 +321,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     client_id: clientId,
     session_id: sessionId,
     consent: payload.consent || getConsentState(),
+    attribution: payload.attribution || collectAttribution(),
     event_source_url: payload.event_source_url || location.href
   });
 

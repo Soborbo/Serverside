@@ -102,6 +102,26 @@ A bugot rögzítő tesztek (Meta LDU placement, Google Ads consent) is javítva.
 > (az csak opcionális override marad). Ha a felhasználó még nem döntött (nincs
 > cookie), a consent `undefined` → `require_consent:true` esetén fail-closed.
 
+## Univerzális attribúció (click ID-k + UTM-ek) — `lib/attribution.ts`
+
+A payload-kontraktus mostantól minden bevett attribúciós jelet hordoz, a kliens
+automatikusan gyűjti (URL + `_gcl_aw` cookie + localStorage perzisztencia,
+last-touch click ID / first-touch landing), a worker validál + bound-ol, és
+platformonként továbbít:
+
+| Mező | Forrás | Hova megy |
+|---|---|---|
+| `gclid` / `gbraid` / `wbraid` | URL + `_gcl_aw` cookie | **Google Ads** `ClickConversion` (1 db, prioritás; EC-for-Leads mellette marad) |
+| `fbclid` | URL | **Meta** — `fbc` épül belőle (`fb.1.<ms>.<fbclid>`), ha nincs `_fbc` cookie |
+| `utm_source/medium/campaign/term/content/id` | URL | **GA4** campaign event-paraméterek (a meglévő custom `source` nem íródik felül) |
+| `gclsrc`, `gad_source`, `dclid` | URL | capture-only (Google kontextus) |
+| `msclkid`, `ttclid`, `li_fat_id`, `twclid` | URL | **capture-only** — TikTok/Microsoft/LinkedIn/X CAPI plug-in pont (még nincs integráció) |
+| `referrer`, `landing_page` | böngésző | capture-only (nem továbbítjuk platformra, nem logoljuk) |
+
+A delayed (60 perc) quote-konverzió a DO-állapotba menti az attribúciót, és
+tüzeléskor használja (a click ID-k akkor is érvényesek a feltöltéshez).
+Validáció: click ID-k url-safe charset + ≤1024, UTM ≤512 + control-char strip.
+
 ## Tesztek
 
-143 teszt zöld (124 eredeti + 19 új), typecheck tiszta.
+154 teszt zöld (124 eredeti + 30 új), typecheck tiszta.

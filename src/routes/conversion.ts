@@ -8,6 +8,7 @@ import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../li
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
 import { sendToGoogleAdsCAPI, type GAdsPayload, type GAdsResult } from '../lib/gads';
 import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
+import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import {
   setQuoteState,
@@ -133,6 +134,7 @@ export async function handleConversion(
   // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
   const consentState = parseConsent(payload.consent);
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
+  const attribution = parseAttribution(payload.attribution);
   // session_id a GA4 numerikus session timestamp — bound + charset check, hogy
   // ne továbbítsunk korlátlan attacker-stringet a GA4 MP felé.
   const sessionId =
@@ -161,6 +163,7 @@ export async function handleConversion(
       remoteIp,
       userAgent,
       consentDecision,
+      attribution,
       env,
       ctx,
       cors,
@@ -200,6 +203,7 @@ export async function handleConversion(
     userAgent,
     consentDecision,
     sessionId,
+    attribution,
     env,
     ctx
   );
@@ -238,6 +242,7 @@ async function handleQuoteCompletion(
   remoteIp: string | undefined,
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
+  attribution: AttributionParams | undefined,
   env: Env,
   ctx: ExecutionContext,
   cors: HeadersInit,
@@ -256,7 +261,8 @@ async function handleQuoteCompletion(
     user_data: hashedUserData,
     hostname,
     consent: consentDecision.consent,
-    ad_allowed: consentDecision.adAllowed
+    ad_allowed: consentDecision.adAllowed,
+    attribution
   });
 
   // ViewContent csak akkor, ha az ad-platform engedett (Meta-only event).
@@ -272,7 +278,7 @@ async function handleQuoteCompletion(
         source: payload.source,
         event_source_url: payload.event_source_url,
         fbp: payload.fbp,
-        fbc: payload.fbc,
+        fbc: payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time),
         client_ip: remoteIp,
         client_user_agent: userAgent
       },
@@ -317,10 +323,14 @@ function fanOut(
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
   sessionId: string | undefined,
+  attribution: AttributionParams | undefined,
   env: Env,
   ctx: ExecutionContext
 ): void {
   const adAllowed = consentDecision.adAllowed;
+
+  // Meta fbc: a kliens _fbc cookie-ja elsődleges; ha nincs, fbclid-ből építjük.
+  const fbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
 
   const metaPayload: MetaCAPIPayload = {
     event_name: payload.event_name,
@@ -331,7 +341,7 @@ function fanOut(
     source: payload.source,
     event_source_url: payload.event_source_url,
     fbp: payload.fbp,
-    fbc: payload.fbc,
+    fbc,
     client_ip: remoteIp,
     client_user_agent: userAgent
   };
@@ -347,7 +357,8 @@ function fanOut(
     page_location: payload.event_source_url,
     user_agent: userAgent,
     session_id: sessionId,
-    consent: consentDecision.consent
+    consent: consentDecision.consent,
+    attribution
   };
 
   const gadsPayload: GAdsPayload = {
@@ -358,7 +369,10 @@ function fanOut(
     currency: payload.currency,
     city: payload.user_data?.city,
     postal_code: payload.user_data?.postal_code,
-    consent: consentDecision.consent
+    consent: consentDecision.consent,
+    gclid: attribution?.gclid,
+    gbraid: attribution?.gbraid,
+    wbraid: attribution?.wbraid
   };
 
   // adAllowed=false → Meta + Google Ads no-op success (nincs hívás, nincs DLQ).
