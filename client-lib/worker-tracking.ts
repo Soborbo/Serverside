@@ -168,14 +168,43 @@ function extractGASessionId(): string | undefined {
   return match ? match[1] : undefined;
 }
 
-// Consent Mode v2 állapot. A site beállítja a window.__trackingConsent-et a
-// CMP-jéből (vagy a Google Consent Mode-ból). Hiányában undefined → a Worker a
-// SiteConfig.require_consent szerint dönt.
+// Consent Mode v2 állapot. Forrás-sorrend:
+//   1) window.__trackingConsent (explicit override, pl. teszthez)
+//   2) CookieYes `cookieyes-consent` cookie (GTM-ből betöltött CMP)
+// Hiányában undefined → a Worker a SiteConfig.require_consent szerint dönt
+// (EEA-n állítsd require_consent:true-ra → fail-closed cookie/döntés hiányában).
+//
+// CookieYes cookie formátum:
+//   consentid:..,consent:yes,necessary:yes,functional:yes,analytics:yes,
+//   performance:yes,advertisement:yes,other:yes   (elutasításnál :no)
+// Consent Mode v2 leképezés (CookieYes hivatalos):
+//   advertisement → ad_storage + ad_user_data + ad_personalization
+//   analytics     → analytics_storage
 function getConsentState(): ConsentState | undefined {
   if (typeof window === 'undefined') return undefined;
-  const c = (window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent;
-  if (!c || typeof c !== 'object') return undefined;
-  return c;
+
+  const override = (window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent;
+  if (override && typeof override === 'object') return override;
+
+  const raw = getCookie('cookieyes-consent');
+  if (!raw) return undefined;
+
+  const map: Record<string, string> = {};
+  for (const part of raw.split(',')) {
+    const idx = part.indexOf(':');
+    if (idx > 0) map[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }
+  // Ha nincs kategória-kulcs, nem CookieYes-cookie → ne találgassunk.
+  if (map.advertisement === undefined && map.analytics === undefined) return undefined;
+
+  const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
+  const adGranted = map.advertisement === 'yes';
+  return {
+    ad_user_data: sig(adGranted),
+    ad_personalization: sig(adGranted),
+    ad_storage: sig(adGranted),
+    analytics_storage: sig(map.analytics === 'yes')
+  };
 }
 
 export async function sendToWorker(payload: ConversionPayload): Promise<boolean> {

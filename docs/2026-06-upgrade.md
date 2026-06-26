@@ -93,9 +93,14 @@ A bugot rögzítő tesztek (Meta LDU placement, Google Ads consent) is javítva.
 
 > **GDPR megjegyzés (akció a KV-configokban):** a `require_consent` **default opt-in**
 > (false = backward-compat, mint a `main`-en). A **magyar/EEA site-okon állítsd
-> `true`-ra** a KV configban, ÉS kösd be a CMP-t (`window.__trackingConsent`),
-> különben consent nélkül is mennek az ad-platform konverziók. A kód mostantól
-> helyesen fail-closed, ha bekapcsolod.
+> `true`-ra** a KV configban — a kód mostantól helyesen fail-closed, ha bekapcsolod.
+>
+> **CookieYes (GTM-ből) automatikus.** A client-lib `getConsentState()` mostantól
+> magától olvassa a `cookieyes-consent` cookie-t és leképezi Consent Mode v2-re
+> (advertisement → ad_storage/ad_user_data/ad_personalization, analytics →
+> analytics_storage). Nem kell `window.__trackingConsent`-et kézzel beállítani
+> (az csak opcionális override marad). Ha a felhasználó még nem döntött (nincs
+> cookie), a consent `undefined` → `require_consent:true` esetén fail-closed.
 
 ## Tesztek
 
