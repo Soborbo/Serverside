@@ -55,6 +55,14 @@ head_sampling_rate = 1.0
 # name = "INGEST_LIMITER"
 # namespace_id = "1001"
 # simple = { limit = 100, period = 60 }
+#
+# ── TASK 2: degradált-módú (token-nélküli low-risk) rate limiter ─────────────
+# Szűk budget IP+host kulcsra, mert ezek az eventek token nélkül jönnek. Ha nincs
+# bekötve, a degradált elfogadás a felső szintű INGEST_LIMITER-re támaszkodik.
+# [[ratelimits]]
+# name = "DEGRADED_LIMITER"
+# namespace_id = "1002"
+# simple = { limit = 10, period = 60 }
 
 # Cron Triggers — DLQ retry, daily digest, SLO check.
 # Sprint 1 test-deploy alatt kikommentezve (Email binding nélkül a daily-digest
@@ -87,6 +95,14 @@ id = "edd34e28eee847c09c26f9d9e3ea04ab"
 [[kv_namespaces]]
 binding = "OAUTH_TOKENS"
 id = "f464647802e24a5dac60cacd66a9876a"
+
+# Turnstile token-verdikt cache (TASK 1). A kliens 4 percig újrahasználja a
+# tokent; enélkül a binding nélkül a 2.+ event "timeout-or-duplicate"-tal 403-azna
+# (konverzió-vesztés). A kód guardolt: binding nélkül a régi per-request verify
+# marad. Élesítés: `wrangler kv namespace create TURNSTILE_CACHE` → id ide.
+# [[kv_namespaces]]
+# binding = "TURNSTILE_CACHE"
+# id = "<wrangler kv namespace create kiírja>"
 
 # Durable Objects — quote state (60-min upgrade window, strong consistency)
 [[durable_objects.bindings]]

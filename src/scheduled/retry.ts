@@ -8,6 +8,9 @@ import {
 import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
 import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
+import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
+import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
+import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
 import { getSiteConfig } from '../lib/config';
 import type { HashedUserData } from '../lib/hash';
 import { logStructured } from '../types';
@@ -109,6 +112,18 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<b
       eventPayload as unknown as GAdsPayload,
       hashedUserData
     );
+    return result.success;
+  }
+  if (record.platform === 'tiktok') {
+    const result = await sendToTikTok(siteConfig, eventPayload as unknown as TikTokPayload, hashedUserData);
+    return result.success;
+  }
+  if (record.platform === 'linkedin') {
+    const result = await sendToLinkedIn(siteConfig, eventPayload as unknown as LinkedInPayload, hashedUserData);
+    return result.success;
+  }
+  if (record.platform === 'msads') {
+    const result = await sendToMsAds(siteConfig, eventPayload as unknown as MsAdsPayload, hashedUserData);
     return result.success;
   }
   return false;

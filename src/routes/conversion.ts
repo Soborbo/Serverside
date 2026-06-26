@@ -7,8 +7,12 @@ import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash
 import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
 import { sendToGoogleAdsCAPI, type GAdsPayload, type GAdsResult } from '../lib/gads';
+import { sendToTikTok, type TikTokPayload, type TikTokResult } from '../lib/tiktok';
+import { sendToLinkedIn, type LinkedInPayload, type LinkedInResult } from '../lib/linkedin';
+import { sendToMsAds, type MsAdsPayload, type MsAdsResult } from '../lib/msads';
 import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
+import { isTokenlessLowRiskAcceptable, degradedRateLimit } from '../lib/degraded';
 import {
   setQuoteState,
   getQuoteState,
@@ -113,22 +117,54 @@ export async function handleConversion(
 
   const remoteIp = request.headers.get('CF-Connecting-IP') || undefined;
   const turnstileResult = await validateTurnstile(payload.turnstile_token, remoteIp, env);
+  let degraded = false;
   if (!turnstileResult.valid) {
-    const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
-    const errorCode = isMissing
-      ? TrackingErrorCode.MISSING_TURNSTILE_TOKEN
-      : TrackingErrorCode.INVALID_TURNSTILE_TOKEN;
-    logStructured({
-      level: 'info',
-      error_code: errorCode,
-      message: ERROR_DESCRIPTIONS[errorCode],
-      hostname,
-      site_id: siteConfig.site_id,
-      event_name: payload.event_name,
-      error: turnstileResult.errorCodes?.join(',') || 'unknown',
-      duration_ms: Date.now() - startedAt
-    });
-    return new Response('Invalid token', { status: 403, headers: cors });
+    // TASK 2 — degradált elfogadás: token-NÉLKÜLI (vagy Turnstile-elérhetetlen)
+    // ALACSONY-kockázatú event (tel:/mailto:/whatsapp) → rate-limitelt elfogadás,
+    // hogy a money-signal (köztük a phone) ne vesszen el. A token-nélküli
+    // form-submit + az ÉRVÉNYTELEN token továbbra is kemény 403.
+    if (isTokenlessLowRiskAcceptable(turnstileResult.errorCodes, payload.event_name)) {
+      const rlKey = `degraded:${hostname}:${remoteIp || 'unknown'}`;
+      if (!(await degradedRateLimit(env, rlKey))) {
+        logStructured({
+          level: 'info',
+          error_code: TrackingErrorCode.DEGRADED_RATE_LIMITED,
+          message: ERROR_DESCRIPTIONS[TrackingErrorCode.DEGRADED_RATE_LIMITED],
+          hostname,
+          site_id: siteConfig.site_id,
+          event_name: payload.event_name,
+          duration_ms: Date.now() - startedAt
+        });
+        return new Response(null, { status: 429, headers: cors });
+      }
+      degraded = true;
+      logStructured({
+        level: 'info',
+        error_code: TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        turnstile_codes: turnstileResult.errorCodes?.join(',') || 'unknown'
+      });
+      // tovább a normál feldolgozásra (consent + fan-out + Queues/DLQ)
+    } else {
+      const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
+      const errorCode = isMissing
+        ? TrackingErrorCode.MISSING_TURNSTILE_TOKEN
+        : TrackingErrorCode.INVALID_TURNSTILE_TOKEN;
+      logStructured({
+        level: 'info',
+        error_code: errorCode,
+        message: ERROR_DESCRIPTIONS[errorCode],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        error: turnstileResult.errorCodes?.join(',') || 'unknown',
+        duration_ms: Date.now() - startedAt
+      });
+      return new Response('Invalid token', { status: 403, headers: cors });
+    }
   }
 
   const hashedUserData = await hashUserData(
@@ -261,6 +297,7 @@ export async function handleConversion(
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
+    degraded,
     duration_ms: totalDuration
   });
 
@@ -432,7 +469,43 @@ function fanOut(
     consent: consentDecision.consent
   };
 
-  // adAllowed=false → Meta + Google Ads no-op success (nincs hívás, nincs DLQ).
+  // TASK 3 — click-ID forwarderek. A click ID-k a kliens `attribution` flat
+  // string-mapjéből jönnek. Mind opcionális; a forwarder no-op, ha a site nincs
+  // konfigurálva az adott platformra VAGY hiányzik a click ID.
+  const attribution =
+    payload.attribution && typeof payload.attribution === 'object'
+      ? (payload.attribution as Record<string, unknown>)
+      : {};
+  const pickClickId = (k: string): string | undefined =>
+    typeof attribution[k] === 'string' ? (attribution[k] as string) : undefined;
+
+  const tiktokPayload: TikTokPayload = {
+    event_name: payload.event_name,
+    event_id: payload.event_id,
+    event_time: payload.event_time,
+    value: payload.value,
+    currency: payload.currency,
+    event_source_url: payload.event_source_url,
+    ttclid: pickClickId('ttclid'),
+    client_ip: remoteIp,
+    client_user_agent: userAgent
+  };
+  const linkedinPayload: LinkedInPayload = {
+    event_name: payload.event_name,
+    event_time: payload.event_time,
+    value: payload.value,
+    currency: payload.currency,
+    li_fat_id: pickClickId('li_fat_id')
+  };
+  const msadsPayload: MsAdsPayload = {
+    event_name: payload.event_name,
+    event_time: payload.event_time,
+    value: payload.value,
+    currency: payload.currency,
+    msclkid: pickClickId('msclkid')
+  };
+
+  // adAllowed=false → minden ad-platform no-op success (nincs hívás, nincs DLQ).
   const metaStart = Date.now();
   const metaPromise: Promise<MetaCAPIResult> = adAllowed
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
@@ -443,10 +516,30 @@ function fanOut(
   const gadsPromise: Promise<GAdsResult> = adAllowed
     ? sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData)
     : Promise.resolve({ success: true });
+  const tiktokStart = Date.now();
+  const tiktokPromise: Promise<TikTokResult> = adAllowed
+    ? sendToTikTok(siteConfig, tiktokPayload, hashedUserData)
+    : Promise.resolve({ success: true });
+  const linkedinStart = Date.now();
+  const linkedinPromise: Promise<LinkedInResult> = adAllowed
+    ? sendToLinkedIn(siteConfig, linkedinPayload, hashedUserData)
+    : Promise.resolve({ success: true });
+  const msadsStart = Date.now();
+  const msadsPromise: Promise<MsAdsResult> = adAllowed
+    ? sendToMsAds(siteConfig, msadsPayload, hashedUserData)
+    : Promise.resolve({ success: true });
 
-  const fanout = Promise.allSettled([metaPromise, ga4Promise, gadsPromise]).then(
+  const fanout = Promise.allSettled([
+    metaPromise,
+    ga4Promise,
+    gadsPromise,
+    tiktokPromise,
+    linkedinPromise,
+    msadsPromise
+  ]).then(
     async (results) => {
-      const [metaResult, ga4Result, gadsResult] = results;
+      const [metaResult, ga4Result, gadsResult, tiktokResult, linkedinResult, msadsResult] =
+        results;
       const completedAt = Date.now();
       const nowIso = new Date(completedAt).toISOString();
       const dlqWrites: Promise<void>[] = [];
@@ -527,13 +620,22 @@ function fanOut(
         true,
         gadsStart
       );
+      // TASK 3 — extra platformok. TikTok/LinkedIn hashed user_data-t használ a
+      // matcheléshez → includeUserData=true (DLQ-retry-hoz). Microsoft csak
+      // msclkid → false.
+      handleResult('tiktok', tiktokResult, tiktokPayload as unknown as Record<string, unknown>, true, tiktokStart);
+      handleResult('linkedin', linkedinResult, linkedinPayload as unknown as Record<string, unknown>, true, linkedinStart);
+      handleResult('msads', msadsResult, msadsPayload as unknown as Record<string, unknown>, false, msadsStart);
 
-      // Normalizált vendor-kézbesítés a ledgerbe (#9). adAllowed=false → a Meta
-      // és a Google Ads 'skipped' (consent-tiltás, nem hiba); a GA4 mindig megy.
+      // Normalizált vendor-kézbesítés a ledgerbe (#9). adAllowed=false → minden
+      // ad-platform 'skipped' (consent-tiltás, nem hiba); a GA4 mindig megy.
       const deliveryRecords: DeliveryRecord[] = [
         normalizeDelivery('meta', metaResult, { skipped: !adAllowed }),
         normalizeDelivery('ga4', ga4Result),
-        normalizeDelivery('gads', gadsResult, { skipped: !adAllowed })
+        normalizeDelivery('gads', gadsResult, { skipped: !adAllowed }),
+        normalizeDelivery('tiktok', tiktokResult, { skipped: !adAllowed }),
+        normalizeDelivery('linkedin', linkedinResult, { skipped: !adAllowed }),
+        normalizeDelivery('msads', msadsResult, { skipped: !adAllowed })
       ];
 
       await Promise.allSettled([
@@ -561,6 +663,9 @@ function fanOut(
         meta_success: metaResult.status === 'fulfilled' && metaResult.value.success,
         ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success,
         gads_success: gadsResult.status === 'fulfilled' && gadsResult.value.success,
+        tiktok_success: tiktokResult.status === 'fulfilled' && tiktokResult.value.success,
+        linkedin_success: linkedinResult.status === 'fulfilled' && linkedinResult.value.success,
+        msads_success: msadsResult.status === 'fulfilled' && msadsResult.value.success,
         platforms_failed: dlqWrites.length
       });
     }

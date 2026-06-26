@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 
-export type MetricPlatform = 'meta' | 'ga4' | 'gads';
+export type MetricPlatform = 'meta' | 'ga4' | 'gads' | 'msads' | 'tiktok' | 'linkedin';
 
 // Defensive clamp to prevent Analytics Engine cardinality explosion if any
 // caller bypasses the upstream allowlist validation.

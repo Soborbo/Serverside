@@ -44,13 +44,17 @@ export interface DeliveryRecord {
   vendor_message?: string;
 }
 
-/** Egységes alak, amit mind a Meta/GA4/GAds eredmény kielégít. */
+/** Egységes alak, amit mind a Meta/GA4/GAds + extra platform eredmény kielégít. */
 export interface VendorResult {
   success: boolean;
   status?: number;
   error_code?: TrackingErrorCode;
   error?: string;
   partial_failure_error?: string;
+  // true → a hívás szándékosan kimaradt (nem konfigurált platform / scaffold-only
+  // transport). 'skipped'-ként kerül a ledgerbe, hogy ne torzítsa a reconciliation
+  // coverage-számítását valódi kézbesítésként.
+  skipped?: boolean;
 }
 
 /**
@@ -63,7 +67,7 @@ export function normalizeDelivery(
   settled: PromiseSettledResult<VendorResult>,
   opts?: { skipped?: boolean }
 ): DeliveryRecord {
-  if (opts?.skipped) {
+  if (opts?.skipped || (settled.status === 'fulfilled' && settled.value.skipped === true)) {
     return { platform, status: 'skipped' };
   }
   if (settled.status === 'rejected') {
