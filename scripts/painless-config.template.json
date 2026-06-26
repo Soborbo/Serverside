@@ -36,5 +36,16 @@
       "email_conversion": "REPLACE_ME_ACTION_ID_5",
       "whatsapp_conversion": "REPLACE_ME_ACTION_ID_6"
     }
-  }
+  },
+
+  "_comment_extra_platforms": "Opcionális click-ID forwarderek (TASK 3). Hagyd null-on, ha nem használod — a forwarder ilyenkor no-op skip. Lásd docs/click-id-forwarders.md.",
+
+  "_comment_tiktok": "TikTok Events API 2.0 (ttclid). pixel_code = event_source_id; access_token a TikTok Events Manager-ből; event_names opcionális override.",
+  "tiktok": null,
+
+  "_comment_linkedin": "LinkedIn Conversions API (li_fat_id + hashed email). access_token + conversion_rules: event_name -> 'urn:lla:llaPartnerConversion:<id>'; api_version pl. '202401'.",
+  "linkedin": null,
+
+  "_comment_msads": "Microsoft Ads offline conversions (msclkid). SCAFFOLD: a live transport (Bing Ads ApplyOfflineConversions, SOAP+OAuth) MÉG NINCS implementálva — lásd lib/msads.ts TODO. conversion_names: event_name -> Microsoft conversion goal name.",
+  "msads": null
 }

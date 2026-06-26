@@ -20,10 +20,41 @@ export interface SiteConfig {
     login_customer_id: string | null;
     conversion_actions?: Record<string, string>;
   };
+  // Opcionális extra platformok (TASK 3 — click-ID forwarderek). Mind nullable;
+  // hiányzó/null blokk → az adott forwarder no-op (skip), nem hiba.
+  msads?: MsAdsConfig | null;
+  tiktok?: TikTokConfig | null;
+  linkedin?: LinkedInConfig | null;
   // Ha true: explicit kliens-consent hiányában az ad-platform (Meta + Google
   // Ads) konverziók NEM mennek el (GDPR fail-closed). Default (hiányzó/false):
   // backward-compat, ad-platform engedett. EEA-site-okon ajánlott true-ra állítani.
   require_consent?: boolean;
+}
+
+/**
+ * Microsoft Advertising offline conversions (msclkid). Az auth (OAuth refresh +
+ * developer token) a Google Ads-hez hasonló; a live transport TODO (lásd lib/msads.ts).
+ */
+export interface MsAdsConfig {
+  customer_id?: string | null;
+  // internal event_name → Microsoft conversion goal NAME
+  conversion_names?: Record<string, string>;
+}
+
+/** TikTok Events API 2.0 (ttclid). */
+export interface TikTokConfig {
+  pixel_code: string; // event_source_id
+  access_token: string;
+  // internal event_name → TikTok standard event (default map a lib-ben)
+  event_names?: Record<string, string>;
+}
+
+/** LinkedIn Conversions API (li_fat_id + hashed email). */
+export interface LinkedInConfig {
+  access_token: string;
+  // internal event_name → LinkedIn conversion rule URN
+  conversion_rules: Record<string, string>;
+  api_version?: string; // pl. "202401"
 }
 
 // KV edge-cache TTL másodpercben. A config a forró úton minden requesten olvas;
