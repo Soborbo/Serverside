@@ -2,6 +2,7 @@ import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
 import { handleLeadStatus } from './routes/lead-status';
 import { handleAdmin } from './routes/admin';
+import { handleAdminUI } from './routes/admin-ui';
 import { handleHealth } from './routes/health';
 import { handleDebugGA4 } from './routes/debug-ga4';
 import { handleOAuthCallback } from './routes/oauth-callback';
@@ -57,6 +58,13 @@ export default {
       // Leads (admin-auth, server-to-server). Lásd routes/lead-status.ts.
       if (request.method === 'POST' && url.pathname === '/api/event/lead-status') {
         return handleLeadStatus(request, env, ctx);
+      }
+
+      // Admin UI — önálló dashboard-váz (nincs benne secret), a 4 admin-endpointot
+      // fogyasztja böngészőből. NEM az /api/event/admin/ prefix alatt, hogy ne
+      // legyen auth-gated (a token a fetch-headerben megy). Lásd routes/admin-ui.ts.
+      if (request.method === 'GET' && url.pathname === '/api/event/admin-ui') {
+        return handleAdminUI();
       }
 
       // Admin read/ops API (reconciliation, lead-trail, DLQ replay, health-check).

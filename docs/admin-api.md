@@ -12,6 +12,23 @@ Hostname-alapú tenant-scoping (CLAUDE.md 14.): a lekérdezések a host site_id-
 > Konstans idejű összehasonlítás (`admin-auth.ts`). A `health-check` SOHA nem ad vissza
 > secret-értéket, csak jelenlét/hiány boolean-t.
 
+## GET /api/event/admin-ui (vizuális dashboard)
+
+Önálló, build-mentes egylapos UI, ami a lenti 4 endpointot fogyasztja böngészőből
+(`src/routes/admin-ui.ts`). **NEM** az `/api/event/admin/` prefix alatt van, hogy ne
+legyen auth-gated — a váz nem tartalmaz secretet; a tokent te írod be, és minden
+adat-hívás az `X-Admin-Token` headerrel megy. A token a `sessionStorage`-ben marad
+(tab-záráskor törlődik), relatív URL-ek → azon a host-on dolgozik, ahol megnyitod.
+
+```
+https://<host>/api/event/admin-ui
+```
+
+Szigorú CSP (`default-src 'none'; connect-src 'self'`), minden ledger-adat
+`textContent`/DOM-API-val renderelve (XSS-védelem a vendor_message-szerű mezőkre).
+Funkciók: health-check (badge-elt tábla), reconciliation (statok + findings tábla),
+lead-trail (a 4 ledger-szekció), DLQ replay/discard (kulcs vagy bulk).
+
 ## GET /api/event/admin/reconciliation[?hours=24]
 
 On-demand drift-report (a napi cron interaktív megfelelője). `hours` 1..168, default 24.
