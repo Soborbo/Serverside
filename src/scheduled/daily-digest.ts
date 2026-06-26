@@ -1,11 +1,12 @@
 import type { Env } from '../env';
 import { sendAdminEmail } from '../lib/notify';
+import { countSiteConfigs } from '../lib/config';
 import { logStructured } from '../types';
 
 export async function handleDailyDigest(env: Env): Promise<void> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const sites = await env.SITE_CONFIG.list({ limit: 100 });
+  const siteCount = await countSiteConfigs(env);
 
   let totalDlqRecords = 0;
   let totalDeadRecords = 0;
@@ -39,7 +40,7 @@ export async function handleDailyDigest(env: Env): Promise<void> {
     <p><strong>Period:</strong> Last 24h (since ${since})</p>
 
     <h3>Active sites</h3>
-    <p>${sites.keys.length} sites configured</p>
+    <p>${siteCount} sites configured</p>
 
     <h3>Dead Letter Queue</h3>
     <ul>

@@ -67,6 +67,48 @@ describe('checkIdempotency — dispatched-flag gate (conversion-loss fix)', () =
   });
 });
 
+describe('checkIdempotency — GA4 suppress on in-flight duplicate (audit #2)', () => {
+  it('in-flight duplicate (seen>1, dispatched=0, fresh first_seen) → suppressGa4', async () => {
+    const env = envWith({
+      seen_count: 2,
+      dispatched: 0,
+      do_not_replay: 0,
+      first_seen_at: new Date().toISOString()
+    });
+    const d = await checkIdempotency(env, 's', 'callback_conversion', 'evt');
+    expect(d.shouldDispatch).toBe(true); // Meta/GAds still re-dispatch (vendor dedup)
+    expect(d.suppressGa4).toBe(true); // GA4 NOT (no event_id dedup → would double-count)
+  });
+
+  it('first sight → never suppress GA4', async () => {
+    const env = envWith({
+      seen_count: 1,
+      dispatched: 0,
+      do_not_replay: 0,
+      first_seen_at: new Date().toISOString()
+    });
+    const d = await checkIdempotency(env, 's', 'callback_conversion', 'evt');
+    expect(d.suppressGa4).toBe(false);
+  });
+
+  it('stale duplicate (first_seen > 60s ago → likely crashed, not in-flight) → re-send GA4', async () => {
+    const env = envWith({
+      seen_count: 2,
+      dispatched: 0,
+      do_not_replay: 0,
+      first_seen_at: new Date(Date.now() - 120_000).toISOString()
+    });
+    const d = await checkIdempotency(env, 's', 'callback_conversion', 'evt');
+    expect(d.shouldDispatch).toBe(true);
+    expect(d.suppressGa4).toBe(false); // crash recovery: GA4 hit was likely lost, resend
+  });
+
+  it('no LEDGER binding → suppressGa4 false (fail-open)', async () => {
+    const d = await checkIdempotency({} as any, 's', 'e', 'evt');
+    expect(d.suppressGa4).toBe(false);
+  });
+});
+
 describe('markDispatched', () => {
   it('issues an UPDATE on the ledger', async () => {
     const env = envWith({});

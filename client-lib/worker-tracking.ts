@@ -156,8 +156,11 @@ function getCookie(name: string): string | undefined {
 
 function extractGAClientId(gaCookie: string | undefined): string | undefined {
   if (!gaCookie) return undefined;
+  // _ga formátum: GA1.<domain-szint>.<clientid-1>.<clientid-2>. A client_id mindig
+  // az UTOLSÓ két szegmens (#8) — slice(-2) robusztus a GA1.1/GA1.2/GA1.3 prefix
+  // variánsokra, szemben a fix [2]/[3] indexszel.
   const parts = gaCookie.split('.');
-  return parts.length >= 4 ? `${parts[2]}.${parts[3]}` : undefined;
+  return parts.length >= 4 ? parts.slice(-2).join('.') : undefined;
 }
 
 // GA4 session id a `_ga_<STREAM>` cookie-ból. Két formátumot kell kezelni:

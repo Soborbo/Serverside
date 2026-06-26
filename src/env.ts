@@ -38,6 +38,12 @@ export interface Env {
   // rate-limit lépés kimarad (csak Turnstile véd).
   INGEST_LIMITER?: RateLimitBinding;
 
+  // Natív rate limiter az admin API-ra (/api/event/admin/*). A token-gate +
+  // timing-safe compare már védi a végpontot; ez defense-in-depth a token
+  // brute-force ellen (IP-kulcsos throttle az auth ELŐTT). Ha nincs bekötve,
+  // visszaesik az INGEST_LIMITER-re; ha az sincs, a throttle kimarad.
+  ADMIN_LIMITER?: RateLimitBinding;
+
   QUOTE_STATE: DurableObjectNamespace;
 
   TRACKING_METRICS: AnalyticsEngineDataset;

@@ -36,6 +36,30 @@ export async function handleAdmin(
   const url = new URL(request.url);
   const hostname = url.hostname;
 
+  // Defense-in-depth a token brute-force ellen: IP-kulcsos throttle az auth
+  // ELŐTT, hogy egy próbálkozó ne tudjon korlátlan tokent végigpróbálni. Külön
+  // ADMIN_LIMITER budget, fallback INGEST_LIMITER; binding nélkül kimarad.
+  // Fail-open: limiter-hiba nem zárhatja ki a legitim admin-műveletet.
+  const limiter = env.ADMIN_LIMITER || env.INGEST_LIMITER;
+  if (limiter) {
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    try {
+      const { success } = await limiter.limit({ key: `admin:${ip}` });
+      if (!success) {
+        logStructured({
+          level: 'warn',
+          error_code: TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED,
+          message: 'Admin API rate limited',
+          hostname,
+          path: url.pathname
+        });
+        return json({ error: 'rate_limited' }, 429);
+      }
+    } catch {
+      // fail-open — a limiter hibája nem blokkolhatja az admin-ops-ot.
+    }
+  }
+
   if (!authenticateAdmin(request, env)) {
     logStructured({
       level: 'warn',

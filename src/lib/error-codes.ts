@@ -20,6 +20,7 @@ export enum TrackingErrorCode {
   R2_WRITE_FAILED = 'TRK-000-005',
   DURABLE_OBJECT_FAILED = 'TRK-000-006',
   LEDGER_WRITE_FAILED = 'TRK-000-007',
+  FANOUT_SETUP_FAILED = 'TRK-000-008',
 
   INVALID_JSON = 'TRK-400-001',
   INVALID_PAYLOAD_STRUCTURE = 'TRK-400-002',
@@ -92,6 +93,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.R2_WRITE_FAILED]: 'R2 bucket write operation failed',
   [TrackingErrorCode.DURABLE_OBJECT_FAILED]: 'Durable Object operation failed',
   [TrackingErrorCode.LEDGER_WRITE_FAILED]: 'D1 ledger write operation failed',
+  [TrackingErrorCode.FANOUT_SETUP_FAILED]:
+    'fan-out setup threw before dispatch (payload build / synchronous error)',
   [TrackingErrorCode.INVALID_JSON]: 'Request body is not valid JSON',
   [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'Payload missing required fields',
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'Turnstile token absent from payload',
@@ -163,6 +166,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'critical',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'critical',
   [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'critical',
+  [TrackingErrorCode.FANOUT_SETUP_FAILED]: 'critical',
 
   [TrackingErrorCode.META_API_REJECTED]: 'warning',
   [TrackingErrorCode.META_API_TIMEOUT]: 'warning',

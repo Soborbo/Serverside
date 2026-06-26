@@ -44,12 +44,18 @@ describe('isValidConversionPayload — event_id', () => {
     expect(isValidConversionPayload({ ...validBase, event_id: '' })).toBe(false);
   });
 
-  it('rejects event_id over 60 chars (Google Ads orderId truncation collision risk)', () => {
-    expect(isValidConversionPayload({ ...validBase, event_id: 'a'.repeat(61) })).toBe(false);
+  it('rejects event_id over 40 chars (Meta CAPI event_id cap, CLAUDE.md #2/#16)', () => {
+    expect(isValidConversionPayload({ ...validBase, event_id: 'a'.repeat(41) })).toBe(false);
   });
 
-  it('accepts event_id at 60 chars boundary', () => {
-    expect(isValidConversionPayload({ ...validBase, event_id: 'a'.repeat(60) })).toBe(true);
+  it('accepts event_id at 40 chars boundary', () => {
+    expect(isValidConversionPayload({ ...validBase, event_id: 'a'.repeat(40) })).toBe(true);
+  });
+
+  it('accepts a standard 36-char UUID event_id', () => {
+    expect(
+      isValidConversionPayload({ ...validBase, event_id: '123e4567-e89b-42d3-a456-426614174000' })
+    ).toBe(true);
   });
 
   it('rejects event_id with special chars', () => {

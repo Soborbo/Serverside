@@ -34,6 +34,8 @@ export interface GA4Result {
   error?: string;
   error_code?: TrackingErrorCode;
   validation_messages?: unknown[];
+  /** true → a hívás szándékosan kimaradt (pl. in-flight dupla-submit suppress). */
+  skipped?: boolean;
 }
 
 export async function sendToGA4MP(
@@ -53,8 +55,12 @@ export async function sendToGA4MP(
   };
   // session_id kötelező a helyes session-attribúcióhoz / riport-megjelenéshez.
   if (payload.session_id) params.session_id = payload.session_id;
-  if (typeof payload.value === 'number') params.value = payload.value;
-  if (payload.currency) params.currency = payload.currency;
+  // value+currency CSAK együtt és CSAK > 0 (CLAUDE.md #3 szellemében). A value:0
+  // valós 0-revenue konverziót logolna a GA4-ben → torzítja az AOV/ROAS-t.
+  if (typeof payload.value === 'number' && payload.value > 0 && payload.currency) {
+    params.value = payload.value;
+    params.currency = payload.currency;
+  }
   if (payload.source) params.source = payload.source;
   if (payload.service) params.service = payload.service;
   if (payload.page_location) params.page_location = payload.page_location;

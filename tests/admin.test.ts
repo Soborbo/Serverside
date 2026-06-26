@@ -147,6 +147,51 @@ describe('handleAdmin — health-check', () => {
   });
 });
 
+describe('handleAdmin — rate limit (defense-in-depth, before auth)', () => {
+  it('429 when limiter denies — runs BEFORE auth (no token → still 429, not 401)', async () => {
+    const env = makeEnv({ INGEST_LIMITER: { limit: async () => ({ success: false }) } });
+    const res = await handleAdmin(
+      req('rl1.example.com', 'GET', '/api/event/admin/health-check'),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(429);
+    expect(await res.text()).toContain('rate_limited');
+  });
+
+  it('fail-open when limiter throws → proceeds to auth (401 without token)', async () => {
+    const env = makeEnv({
+      INGEST_LIMITER: { limit: async () => { throw new Error('limiter down'); } }
+    });
+    const res = await handleAdmin(
+      req('rl2.example.com', 'GET', '/api/event/admin/health-check'),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('ADMIN_LIMITER takes precedence over INGEST_LIMITER and keys by admin:<ip>', async () => {
+    let usedKey = '';
+    const env = makeEnv({
+      ADMIN_LIMITER: {
+        limit: async ({ key }: { key: string }) => {
+          usedKey = key;
+          return { success: false };
+        }
+      },
+      INGEST_LIMITER: { limit: async () => ({ success: true }) }
+    });
+    const res = await handleAdmin(
+      req('rl3.example.com', 'GET', '/api/event/admin/health-check', TOKEN),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(429);
+    expect(usedKey).toMatch(/^admin:/);
+  });
+});
+
 describe('handleAdmin — dlq replay validation', () => {
   it('400 on invalid JSON body', async () => {
     const r = new Request('https://d1.example.com/api/event/admin/dlq/replay', {

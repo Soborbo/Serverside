@@ -136,7 +136,19 @@ interface IdempotencyDecision {
   shouldDispatch: boolean;
   /** Hányadszor láttuk ezt a kulcsot (1 = első). */
   seenCount: number;
+  /**
+   * Ki kell-e hagyni a GA4-leget ennél a dispatch-nél. A Meta/Google Ads
+   * event_id-vel dedup-ol, a GA4 NEM (CLAUDE.md #16) — így egy gyors dupla-submit
+   * (dupla-klikk, sendBeacon-retry), ami a fan-out ablakon BELÜL érkezik, a GA4-en
+   * dupla konverziót/revenue-t okozna. Ezt csak akkor jelezzük, ha a korábbi
+   * rekord még in-flight (friss first_seen_at + dispatched=0); egy régi, valószínű
+   * crash-elt rekordnál továbbra is újraküldünk, hogy ne veszítsük el a GA4-hitet.
+   */
+  suppressGa4: boolean;
 }
+
+/** Az az ablak (ms), ameddig egy dispatched=0 rekordot „még in-flight"-nak tekintünk. */
+const INFLIGHT_WINDOW_MS = 60_000;
 
 /**
  * Atomic-style upsert. A kapu a `dispatched` flag-en dől el, NEM a seen_count-on:
@@ -159,7 +171,7 @@ export async function checkIdempotency(
   eventName: string,
   eventId: string
 ): Promise<IdempotencyDecision> {
-  if (!env.LEDGER) return { shouldDispatch: true, seenCount: 1 };
+  if (!env.LEDGER) return { shouldDispatch: true, seenCount: 1, suppressGa4: false };
   const key = buildIdempotencyKey(siteId, eventName, eventId);
   const now = new Date().toISOString();
   try {
@@ -170,18 +182,24 @@ export async function checkIdempotency(
        ON CONFLICT(idempotency_key) DO UPDATE SET
          last_seen_at = excluded.last_seen_at,
          seen_count = seen_count + 1
-       RETURNING seen_count, dispatched, do_not_replay`
+       RETURNING seen_count, dispatched, do_not_replay, first_seen_at`
     )
       .bind(key, siteId, eventName, eventId, now, now)
-      .first<{ seen_count: number; dispatched: number; do_not_replay: number }>();
+      .first<{ seen_count: number; dispatched: number; do_not_replay: number; first_seen_at: string }>();
 
     const seenCount = row?.seen_count ?? 1;
     const blocked = (row?.do_not_replay ?? 0) === 1;
     const alreadyDispatched = (row?.dispatched ?? 0) === 1;
-    return { shouldDispatch: !blocked && !alreadyDispatched, seenCount };
+    // GA4-suppress: duplikátum (seen>1), a korábbi még nem dispatched, ÉS a
+    // first_seen_at friss → az eredeti fan-out valószínűleg még fut.
+    const firstSeenMs = row?.first_seen_at ? Date.parse(row.first_seen_at) : NaN;
+    const inFlight =
+      Number.isFinite(firstSeenMs) && Date.parse(now) - firstSeenMs < INFLIGHT_WINDOW_MS;
+    const suppressGa4 = seenCount > 1 && !alreadyDispatched && inFlight;
+    return { shouldDispatch: !blocked && !alreadyDispatched, seenCount, suppressGa4 };
   } catch (err) {
     ledgerError('checkIdempotency', err, { site_id: siteId, event_name: eventName });
-    return { shouldDispatch: true, seenCount: 1 };
+    return { shouldDispatch: true, seenCount: 1, suppressGa4: false };
   }
 }
 
