@@ -11,6 +11,7 @@ import { sendToTikTok, type TikTokPayload, type TikTokResult } from '../lib/tikt
 import { sendToLinkedIn, type LinkedInPayload, type LinkedInResult } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload, type MsAdsResult } from '../lib/msads';
 import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
+import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTokenlessLowRiskAcceptable, degradedRateLimit } from '../lib/degraded';
 import {
@@ -178,6 +179,7 @@ export async function handleConversion(
   // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
   const consentState = parseConsent(payload.consent);
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
+  const attribution = parseAttribution(payload.attribution);
   // session_id a GA4 numerikus session timestamp — bound + charset check, hogy
   // ne továbbítsunk korlátlan attacker-stringet a GA4 MP felé.
   const sessionId =
@@ -206,6 +208,7 @@ export async function handleConversion(
       remoteIp,
       userAgent,
       consentDecision,
+      attribution,
       env,
       ctx,
       cors,
@@ -277,6 +280,7 @@ export async function handleConversion(
     userAgent,
     consentDecision,
     sessionId,
+    attribution,
     leadId,
     env,
     ctx
@@ -317,6 +321,7 @@ async function handleQuoteCompletion(
   remoteIp: string | undefined,
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
+  attribution: AttributionParams | undefined,
   env: Env,
   ctx: ExecutionContext,
   cors: HeadersInit,
@@ -335,7 +340,8 @@ async function handleQuoteCompletion(
     user_data: hashedUserData,
     hostname,
     consent: consentDecision.consent,
-    ad_allowed: consentDecision.adAllowed
+    ad_allowed: consentDecision.adAllowed,
+    attribution
   });
 
   // ViewContent csak akkor, ha az ad-platform engedett (Meta-only event).
@@ -351,7 +357,7 @@ async function handleQuoteCompletion(
         source: payload.source,
         event_source_url: payload.event_source_url,
         fbp: payload.fbp,
-        fbc: payload.fbc,
+        fbc: payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time),
         client_ip: remoteIp,
         client_user_agent: userAgent
       },
@@ -396,11 +402,15 @@ function fanOut(
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
   sessionId: string | undefined,
+  attribution: AttributionParams | undefined,
   leadId: string | undefined,
   env: Env,
   ctx: ExecutionContext
 ): void {
   const adAllowed = consentDecision.adAllowed;
+
+  // Meta fbc: a kliens _fbc cookie-ja elsődleges; ha nincs, fbclid-ből építjük.
+  const fbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
 
   // Ledger: az elfogadott event nyers rekordja + consent receipt (NEM PII;
   // csak az `em/ph` jelenléti flag-ek a match-quality audithoz). Fire-and-forget.
@@ -439,7 +449,7 @@ function fanOut(
     source: payload.source,
     event_source_url: payload.event_source_url,
     fbp: payload.fbp,
-    fbc: payload.fbc,
+    fbc,
     client_ip: remoteIp,
     client_user_agent: userAgent
   };
@@ -455,7 +465,8 @@ function fanOut(
     page_location: payload.event_source_url,
     user_agent: userAgent,
     session_id: sessionId,
-    consent: consentDecision.consent
+    consent: consentDecision.consent,
+    attribution
   };
 
   const gadsPayload: GAdsPayload = {
@@ -466,19 +477,16 @@ function fanOut(
     currency: payload.currency,
     city: payload.user_data?.city,
     postal_code: payload.user_data?.postal_code,
-    consent: consentDecision.consent
+    consent: consentDecision.consent,
+    gclid: attribution?.gclid,
+    gbraid: attribution?.gbraid,
+    wbraid: attribution?.wbraid
   };
 
-  // TASK 3 — click-ID forwarderek. A click ID-k a kliens `attribution` flat
-  // string-mapjéből jönnek. Mind opcionális; a forwarder no-op, ha a site nincs
-  // konfigurálva az adott platformra VAGY hiányzik a click ID.
-  const attribution =
-    payload.attribution && typeof payload.attribution === 'object'
-      ? (payload.attribution as Record<string, unknown>)
-      : {};
-  const pickClickId = (k: string): string | undefined =>
-    typeof attribution[k] === 'string' ? (attribution[k] as string) : undefined;
-
+  // TASK 3 — click-ID forwarderek. A click ID-k a validált `attribution`
+  // paraméterből jönnek (parseAttribution: charset + hossz-bound). Mind
+  // opcionális; a forwarder no-op, ha a site nincs konfigurálva az adott
+  // platformra VAGY hiányzik a click ID.
   const tiktokPayload: TikTokPayload = {
     event_name: payload.event_name,
     event_id: payload.event_id,
@@ -486,7 +494,7 @@ function fanOut(
     value: payload.value,
     currency: payload.currency,
     event_source_url: payload.event_source_url,
-    ttclid: pickClickId('ttclid'),
+    ttclid: attribution?.ttclid,
     client_ip: remoteIp,
     client_user_agent: userAgent
   };
@@ -495,14 +503,14 @@ function fanOut(
     event_time: payload.event_time,
     value: payload.value,
     currency: payload.currency,
-    li_fat_id: pickClickId('li_fat_id')
+    li_fat_id: attribution?.li_fat_id
   };
   const msadsPayload: MsAdsPayload = {
     event_name: payload.event_name,
     event_time: payload.event_time,
     value: payload.value,
     currency: payload.currency,
-    msclkid: pickClickId('msclkid')
+    msclkid: attribution?.msclkid
   };
 
   // adAllowed=false → minden ad-platform no-op success (nincs hívás, nincs DLQ).

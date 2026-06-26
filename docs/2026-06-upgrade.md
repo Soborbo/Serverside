@@ -93,10 +93,45 @@ A bugot rögzítő tesztek (Meta LDU placement, Google Ads consent) is javítva.
 
 > **GDPR megjegyzés (akció a KV-configokban):** a `require_consent` **default opt-in**
 > (false = backward-compat, mint a `main`-en). A **magyar/EEA site-okon állítsd
-> `true`-ra** a KV configban, ÉS kösd be a CMP-t (`window.__trackingConsent`),
-> különben consent nélkül is mennek az ad-platform konverziók. A kód mostantól
-> helyesen fail-closed, ha bekapcsolod.
+> `true`-ra** a KV configban — a kód mostantól helyesen fail-closed, ha bekapcsolod.
+>
+> **CookieYes (GTM-ből) automatikus.** A client-lib `getConsentState()` mostantól
+> magától olvassa a `cookieyes-consent` cookie-t és leképezi Consent Mode v2-re
+> (advertisement → ad_storage/ad_user_data/ad_personalization, analytics →
+> analytics_storage). Nem kell `window.__trackingConsent`-et kézzel beállítani
+> (az csak opcionális override marad). Ha a felhasználó még nem döntött (nincs
+> cookie), a consent `undefined` → `require_consent:true` esetén fail-closed.
+
+## Univerzális attribúció (click ID-k + UTM-ek) — `lib/attribution.ts`
+
+A payload-kontraktus mostantól minden bevett attribúciós jelet hordoz, a kliens
+automatikusan gyűjti (URL + `_gcl_aw` cookie + localStorage perzisztencia,
+last-touch click ID / first-touch landing), a worker validál + bound-ol, és
+platformonként továbbít:
+
+| Mező | Forrás | Hova megy |
+|---|---|---|
+| `gclid` / `gbraid` / `wbraid` | URL + `_gcl_aw` cookie | **Google Ads** `ClickConversion` (1 db, prioritás; EC-for-Leads mellette marad) |
+| `fbclid` | URL | **Meta** — `fbc` épül belőle (`fb.1.<ms>.<fbclid>`), ha nincs `_fbc` cookie |
+| `utm_source/medium/campaign/term/content/id` | URL | **GA4** külön `campaign_details` event (a dokumentált MP-mechanizmus; a konverziós eventre bolt-olva no-op lenne) |
+| `gclsrc`, `gad_source`, `dclid` | URL | capture-only (Google kontextus) |
+| `msclkid`, `ttclid`, `li_fat_id`, `twclid` | URL | **capture-only** — TikTok/Microsoft/LinkedIn/X CAPI plug-in pont (még nincs integráció) |
+| `referrer`, `landing_page` | böngésző | capture-only (nem továbbítjuk platformra, nem logoljuk) |
+
+A delayed (60 perc) quote-konverzió a DO-állapotba menti az attribúciót, és
+tüzeléskor használja (a click ID-k akkor is érvényesek a feltöltéshez).
+Validáció: click ID-k url-safe charset + ≤1024, UTM ≤512 + control-char strip.
+
+**Attribúciós audit-javítások (2-ügynökös adversariális):**
+- 🟡 Google Ads: `gbraid`/`wbraid` mellett NEM küldünk `userIdentifiers`-t (a Google
+  `VALUE_MUST_BE_UNSET`-tel csendben elbuktatná; EC-for-Leads csak gclid mellett).
+- 🟡 GA4: UTM külön `campaign_details` eventként (a konverziós eventre bolt-olva
+  no-op volt az attribúcióra).
+- 🔴 `landing_page`/`referrer`: query string + fragment **lekerül** (PII-minimalizálás,
+  mert ezt at-rest tároljuk DO-ban + R2 DLQ-ban).
+- 🟡 client-lib: a click ID-k gyűjtése/tárolása/küldése **ad-consenthez kötött**
+  (consent nélkül nincs ad-azonosító localStorage-ban sem); UTM/landing marad.
 
 ## Tesztek
 
-143 teszt zöld (124 eredeti + 19 új), typecheck tiszta.
+154 teszt zöld (124 eredeti + 30 új), typecheck tiszta.

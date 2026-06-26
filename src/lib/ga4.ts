@@ -1,5 +1,6 @@
 import type { SiteConfig } from './config';
 import type { ConsentState } from './consent';
+import type { AttributionParams } from './attribution';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 
@@ -23,6 +24,8 @@ export interface GA4Payload {
   // Google Consent Mode v2 jelek; ha analytics_storage DENIED, a GA4
   // cookieless modellezést végez (nem mi gate-eljük ki kliensoldalon).
   consent?: ConsentState;
+  // UTM attribúció → GA4 campaign event-paraméterek.
+  attribution?: AttributionParams;
 }
 
 export interface GA4Result {
@@ -56,9 +59,29 @@ export async function sendToGA4MP(
   if (payload.service) params.service = payload.service;
   if (payload.page_location) params.page_location = payload.page_location;
 
+  const events: Array<{ name: string; params: Record<string, unknown> }> = [
+    { name: payload.event_name, params }
+  ];
+
+  // UTM → külön `campaign_details` event (a dokumentált MP-mechanizmus a manuális
+  // kampány-attribúcióra). A konverziós eventre bolt-olva NEM hatna (no-op). Így
+  // a böngésző-tag által nem elkapott (adblock/ITP) forgalomnál is van kampány-jel;
+  // a session_id stitching a session forrásához köti a konverziót.
+  const a = payload.attribution;
+  if (a && (a.utm_source || a.utm_medium || a.utm_campaign || a.utm_id)) {
+    const cd: Record<string, unknown> = {};
+    if (a.utm_source) cd.source = a.utm_source;
+    if (a.utm_medium) cd.medium = a.utm_medium;
+    if (a.utm_campaign) cd.campaign = a.utm_campaign;
+    if (a.utm_id) cd.campaign_id = a.utm_id;
+    if (a.utm_term) cd.term = a.utm_term;
+    if (a.utm_content) cd.content = a.utm_content;
+    events.push({ name: 'campaign_details', params: cd });
+  }
+
   const body: Record<string, unknown> = {
     client_id: clientId,
-    events: [{ name: payload.event_name, params }]
+    events
   };
 
   // Consent Mode v2 — top-level consent objektum. A GA4 MP CSAK GRANTED/DENIED-et

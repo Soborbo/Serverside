@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import type { HashedUserData } from '../lib/hash';
 import type { ConsentState } from '../lib/consent';
+import type { AttributionParams } from '../lib/attribution';
 
 export interface QuoteStateData {
   client_id: string;
@@ -21,6 +22,9 @@ export interface QuoteStateData {
   // false → ad-platform (Meta + Google Ads) konverzió tiltva. undefined/true →
   // engedett (backward-compat).
   ad_allowed?: boolean;
+  // Attribúció a quote időpontjában (gclid/fbclid/UTM stb.) — a +60 perces
+  // tüzeléskor a click ID-k még érvényesek a feltöltéshez.
+  attribution?: AttributionParams;
 }
 
 const STORAGE_KEY = 'quote';
@@ -90,7 +94,8 @@ export class QuoteStateObject implements DurableObject {
       hostname: newQuote.hostname,
       view_content_fired: previous?.view_content_fired ?? false,
       consent: newQuote.consent,
-      ad_allowed: newQuote.ad_allowed
+      ad_allowed: newQuote.ad_allowed,
+      attribution: newQuote.attribution
     };
 
     await this.state.storage.put(STORAGE_KEY, quote);
@@ -169,6 +174,7 @@ export class QuoteStateObject implements DurableObject {
     const { sendToMetaCAPI } = await import('../lib/meta');
     const { sendToGA4MP } = await import('../lib/ga4');
     const { sendToGoogleAdsCAPI } = await import('../lib/gads');
+    const { buildFbcFromFbclid } = await import('../lib/attribution');
     const { enqueueFailure } = await import('../lib/deadletter');
     const { logStructured } = await import('../types');
     const { TrackingErrorCode, ERROR_DESCRIPTIONS } = await import('../lib/error-codes');
@@ -190,6 +196,7 @@ export class QuoteStateObject implements DurableObject {
     // Consent gating: ha az ad-platform tiltott, a Meta + Google Ads hívást
     // teljesen kihagyjuk (no-op success, nincs DLQ). GA4 mindig megy.
     const adAllowed = quote.ad_allowed !== false;
+    const attr = quote.attribution;
 
     const metaPayload = {
       event_name,
@@ -198,7 +205,8 @@ export class QuoteStateObject implements DurableObject {
       value: quote.value,
       currency: quote.currency,
       source: 'delayed_60min',
-      event_source_url: `https://${quote.hostname}/quote`
+      event_source_url: `https://${quote.hostname}/quote`,
+      fbc: buildFbcFromFbclid(attr?.fbclid, event_time)
     };
     const ga4Payload = {
       event_name,
@@ -208,7 +216,8 @@ export class QuoteStateObject implements DurableObject {
       currency: quote.currency,
       source: 'delayed_60min',
       service: quote.service,
-      consent: quote.consent
+      consent: quote.consent,
+      attribution: attr
     };
     const gadsPayload = {
       event_name,
@@ -216,7 +225,10 @@ export class QuoteStateObject implements DurableObject {
       event_time,
       value: quote.value,
       currency: quote.currency,
-      consent: quote.consent
+      consent: quote.consent,
+      gclid: attr?.gclid,
+      gbraid: attr?.gbraid,
+      wbraid: attr?.wbraid
     };
 
     const noopSuccess: Promise<{ success: true; error?: string }> = Promise.resolve({

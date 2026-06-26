@@ -58,6 +58,9 @@ export interface ConversionRequestPayload {
   // Google Consent Mode v2 jelek (ad_user_data, ad_personalization, ad_storage,
   // analytics_storage). Lásd lib/consent.ts.
   consent?: unknown;
+  // Univerzális attribúció: click ID-k (gclid/gbraid/wbraid/fbclid/...) + UTM-ek
+  // + kontextus. Lásd lib/attribution.ts.
+  attribution?: unknown;
 
   [key: string]: unknown;
 }

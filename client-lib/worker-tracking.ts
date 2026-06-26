@@ -54,6 +54,8 @@ export interface ConsentState {
   analytics_storage?: ConsentSignal;
 }
 
+export type AttributionParams = Record<string, string>;
+
 export interface ConversionPayload {
   event_name: string;
   event_id: string;
@@ -65,6 +67,7 @@ export interface ConversionPayload {
   user_data?: UserData;
   event_source_url?: string;
   consent?: ConsentState;
+  attribution?: AttributionParams;
 }
 
 let cachedTurnstileToken: string | undefined;
@@ -168,14 +171,149 @@ function extractGASessionId(): string | undefined {
   return match ? match[1] : undefined;
 }
 
-// Consent Mode v2 állapot. A site beállítja a window.__trackingConsent-et a
-// CMP-jéből (vagy a Google Consent Mode-ból). Hiányában undefined → a Worker a
-// SiteConfig.require_consent szerint dönt.
+// Consent Mode v2 állapot. Forrás-sorrend:
+//   1) window.__trackingConsent (explicit override, pl. teszthez)
+//   2) CookieYes `cookieyes-consent` cookie (GTM-ből betöltött CMP)
+// Hiányában undefined → a Worker a SiteConfig.require_consent szerint dönt
+// (EEA-n állítsd require_consent:true-ra → fail-closed cookie/döntés hiányában).
+//
+// CookieYes cookie formátum:
+//   consentid:..,consent:yes,necessary:yes,functional:yes,analytics:yes,
+//   performance:yes,advertisement:yes,other:yes   (elutasításnál :no)
+// Consent Mode v2 leképezés (CookieYes hivatalos):
+//   advertisement → ad_storage + ad_user_data + ad_personalization
+//   analytics     → analytics_storage
 function getConsentState(): ConsentState | undefined {
   if (typeof window === 'undefined') return undefined;
-  const c = (window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent;
-  if (!c || typeof c !== 'object') return undefined;
-  return c;
+
+  const override = (window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent;
+  if (override && typeof override === 'object') return override;
+
+  const raw = getCookie('cookieyes-consent');
+  if (!raw) return undefined;
+
+  const map: Record<string, string> = {};
+  for (const part of raw.split(',')) {
+    const idx = part.indexOf(':');
+    if (idx > 0) map[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }
+  // Ha nincs kategória-kulcs, nem CookieYes-cookie → ne találgassunk.
+  if (map.advertisement === undefined && map.analytics === undefined) return undefined;
+
+  const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
+  const adGranted = map.advertisement === 'yes';
+  return {
+    ad_user_data: sig(adGranted),
+    ad_personalization: sig(adGranted),
+    ad_storage: sig(adGranted),
+    analytics_storage: sig(map.analytics === 'yes')
+  };
+}
+
+// ── Univerzális attribúció-gyűjtés ──────────────────────────────────────────
+// Minden bevett click ID + UTM, az URL-ből + `_gcl_aw` cookie fallbackkel,
+// localStorage-ban perzisztálva (a konverzió gyakran másik oldalon történik,
+// mint a landing). Last-touch nyer a click ID-knél/UTM-eknél; a landing-kontextus
+// (landing_page, referrer) first-touch.
+const ATTR_STORAGE_KEY = '__sb_attribution';
+const ATTR_CLICK_PARAMS = [
+  'gclid',
+  'gbraid',
+  'wbraid',
+  'gclsrc',
+  'gad_source',
+  'dclid',
+  'fbclid',
+  'msclkid',
+  'ttclid',
+  'li_fat_id',
+  'twclid'
+];
+const ATTR_UTM_PARAMS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'utm_id',
+  'utm_source_platform',
+  'utm_creative_format',
+  'utm_marketing_tactic'
+];
+
+function readStoredAttribution(): AttributionParams {
+  try {
+    const raw = localStorage.getItem(ATTR_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as AttributionParams) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredAttribution(a: AttributionParams): void {
+  try {
+    localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify(a));
+  } catch {
+    // localStorage tiltva (privacy mód) — best-effort, csendben kihagyjuk.
+  }
+}
+
+// gclid a `_gcl_aw` cookie-ból (formátum: GCL.<ts>.<gclid>) — fallback, ha az
+// URL-ben már nincs gclid (pl. a felhasználó belső oldalon konvertál).
+function gclidFromCookie(): string | undefined {
+  const c = getCookie('_gcl_aw');
+  if (!c) return undefined;
+  const parts = c.split('.');
+  return parts.length >= 3 ? parts.slice(2).join('.') : undefined;
+}
+
+export function collectAttribution(): AttributionParams {
+  const stored = readStoredAttribution();
+  const fresh: AttributionParams = {};
+
+  // Ad-consent kapu: a click ID-k ad-azonosítók → CSAK ad-consent mellett
+  // gyűjtjük/tároljuk/küldjük (ePrivacy/TCF). UTM/landing analitikai metaadat.
+  // Consent hiányában (még nincs döntés) fail-closed → nincs click ID.
+  const consent = getConsentState();
+  const adGranted =
+    consent?.ad_user_data === 'GRANTED' || consent?.ad_storage === 'GRANTED';
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (adGranted) {
+      for (const k of ATTR_CLICK_PARAMS) {
+        const v = params.get(k);
+        if (v) fresh[k] = v;
+      }
+    }
+    for (const k of ATTR_UTM_PARAMS) {
+      const v = params.get(k);
+      if (v) fresh[k] = v;
+    }
+  } catch {
+    // no-op
+  }
+
+  if (adGranted && !fresh.gclid) {
+    const g = gclidFromCookie();
+    if (g) fresh.gclid = g;
+  }
+
+  // Last-touch: a friss URL-jelek felülírják a tároltat.
+  const merged: AttributionParams = { ...stored, ...fresh };
+
+  // Ad-consent visszavonva/hiányzik → a korábban tárolt click ID-ket is dobjuk
+  // (ne perzisztáljon/menjen ad-azonosító consent nélkül).
+  if (!adGranted) {
+    for (const k of ATTR_CLICK_PARAMS) delete merged[k];
+  }
+
+  // First-touch landing-kontextus (nem írjuk felül, ha már megvan).
+  if (!merged.landing_page) merged.landing_page = window.location.href;
+  if (!merged.referrer && document.referrer) merged.referrer = document.referrer;
+
+  writeStoredAttribution(merged);
+  return merged;
 }
 
 export async function sendToWorker(payload: ConversionPayload): Promise<boolean> {
@@ -198,6 +336,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     client_id: clientId,
     session_id: sessionId,
     consent: payload.consent || getConsentState(),
+    attribution: payload.attribution || collectAttribution(),
     event_source_url: payload.event_source_url || location.href
   });
 
