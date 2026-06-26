@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 
-export type MetricPlatform = 'meta' | 'ga4' | 'gads';
+export type MetricPlatform = 'meta' | 'ga4' | 'gads' | 'msads' | 'tiktok' | 'linkedin';
 
 // Defensive clamp to prevent Analytics Engine cardinality explosion if any
 // caller bypasses the upstream allowlist validation.
@@ -30,6 +30,33 @@ export function recordFanoutMetric(
     });
   } catch (err) {
     console.warn('Failed to record fan-out metric', err);
+  }
+}
+
+/**
+ * Reconciliation drift-finding observability-metrika. A napi recon-cron írja
+ * minden drift-findinghez → Analytics Engine-ben lekérdezhető trend/alert
+ * (site × platform × kind × severity), nem csak egyszeri email.
+ */
+export function recordReconciliationMetric(
+  env: Env,
+  data: {
+    site_id: string;
+    platform: MetricPlatform;
+    kind: string;
+    severity: 'warning' | 'critical';
+    value: number;
+  }
+): void {
+  if (!env.TRACKING_METRICS) return;
+  try {
+    env.TRACKING_METRICS.writeDataPoint({
+      blobs: [clamp(data.site_id), data.platform, clamp(data.kind), data.severity],
+      doubles: [data.severity === 'critical' ? 2 : 1, data.value],
+      indexes: ['reconciliation']
+    });
+  } catch (err) {
+    console.warn('Failed to record reconciliation metric', err);
   }
 }
 

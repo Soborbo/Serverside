@@ -1,0 +1,285 @@
+import type { Env } from '../env';
+import { logStructured } from '../types';
+import { authenticateAdmin } from '../lib/admin-auth';
+import { getSiteConfig } from '../lib/config';
+import { getAccessToken } from '../lib/gads-oauth';
+import { getLeadTrail, isValidLeadId } from '../lib/ledger';
+import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
+import {
+  listPendingRetries,
+  deleteDeadLetter,
+  type DeadLetterRecord
+} from '../lib/deadletter';
+import { retrySingle } from '../scheduled/retry';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
+
+/**
+ * Admin read/ops API — a meglévő X-Admin-Token mögött. Ez a backend a korábban
+ * elhalasztott P2 tételekhez (#4 replay, #18 admin UI, #19 onboarding validator),
+ * és ez a réteg, amit egy esetleges ops-MCP vékonyan körbecsomagolhat.
+ *
+ * Útvonalak (mind /api/event/admin/* alatt — a meglévő zone-route lefedi):
+ *   GET  /api/event/admin/reconciliation[?hours=24]
+ *   GET  /api/event/admin/leads/:lead_id
+ *   POST /api/event/admin/dlq/replay   { key? | site_id?, max?, discard? }
+ *   GET  /api/event/admin/health-check
+ *
+ * Minden mutáló művelet (replay/discard) auditálható: a fan-out/retry a ledgerbe
+ * ír, így bizonyítható, ki mit replay-elt. A health-check SOHA nem ad vissza
+ * secret-értéket, csak jelenlét/hiány boolean-t.
+ */
+export async function handleAdmin(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  const url = new URL(request.url);
+  const hostname = url.hostname;
+
+  if (!authenticateAdmin(request, env)) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED,
+      message: 'Admin API request failed authentication',
+      hostname,
+      path: url.pathname
+    });
+    return json({ error: 'unauthorized' }, 401);
+  }
+
+  const path = url.pathname.replace(/^\/api\/event\/admin\//, '');
+
+  if (request.method === 'GET' && path === 'reconciliation') {
+    return handleReconReport(request, env);
+  }
+  if (request.method === 'GET' && path.startsWith('leads/')) {
+    return handleLeadTrail(env, hostname, decodeURIComponent(path.slice('leads/'.length)));
+  }
+  if (request.method === 'POST' && path === 'dlq/replay') {
+    return handleDlqReplay(request, env, ctx);
+  }
+  if (request.method === 'GET' && path === 'health-check') {
+    return handleHealthCheck(env, hostname);
+  }
+
+  return json({ error: 'not_found' }, 404);
+}
+
+// ── GET /admin/reconciliation ────────────────────────────────────────────────
+async function handleReconReport(request: Request, env: Env): Promise<Response> {
+  const hoursRaw = parseInt(new URL(request.url).searchParams.get('hours') || '24', 10);
+  const hours = Number.isFinite(hoursRaw) ? Math.min(Math.max(hoursRaw, 1), 168) : 24;
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+  const inputs = await fetchReconInputs(env, since);
+  if (inputs === null) {
+    return json({ error: 'ledger_unavailable', detail: 'No D1 LEDGER binding or query failed' }, 503);
+  }
+  const summary = summarize(inputs, DEFAULT_THRESHOLDS);
+  return json({ window_hours: hours, since, summary, sites: inputs }, 200);
+}
+
+// ── GET /admin/leads/:lead_id ────────────────────────────────────────────────
+async function handleLeadTrail(env: Env, hostname: string, leadId: string): Promise<Response> {
+  if (!isValidLeadId(leadId)) {
+    return json({ error: 'invalid_lead_id' }, 400);
+  }
+  const siteConfig = await getSiteConfig(hostname, env);
+  if (!siteConfig) return json({ error: 'not_configured' }, 404);
+
+  const trail = await getLeadTrail(env, siteConfig.site_id, leadId);
+  if (trail === null) {
+    return json({ error: 'ledger_unavailable' }, 503);
+  }
+  const found =
+    trail.events.length + trail.deliveries.length + trail.lead_status.length > 0;
+  return json({ site_id: siteConfig.site_id, lead_id: leadId, found, trail }, 200);
+}
+
+// ── POST /admin/dlq/replay ───────────────────────────────────────────────────
+interface DlqReplayBody {
+  key?: string;
+  site_id?: string;
+  max?: number;
+  discard?: boolean;
+}
+
+async function handleDlqReplay(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  let body: DlqReplayBody;
+  try {
+    body = (await request.json()) as DlqReplayBody;
+  } catch {
+    return json({ error: 'invalid_json' }, 400);
+  }
+
+  // Egy konkrét record kulcs szerint: replay VAGY discard (= do-not-replay).
+  if (typeof body.key === 'string') {
+    const key = body.key;
+    if (body.discard === true) {
+      await deleteDeadLetter(env, key);
+      logStructured({ level: 'info', message: 'Admin DLQ discard (do-not-replay)', r2_key: key });
+      return json({ action: 'discard', key, ok: true }, 200);
+    }
+    const obj = await env.DEAD_LETTER.get(key);
+    if (!obj) return json({ error: 'key_not_found', key }, 404);
+    let record: DeadLetterRecord;
+    try {
+      record = (await obj.json()) as DeadLetterRecord;
+    } catch {
+      return json({ error: 'corrupt_record', key }, 422);
+    }
+    const ok = await retrySingle(env, record);
+    if (ok) await deleteDeadLetter(env, key);
+    logStructured({
+      level: 'info',
+      message: 'Admin DLQ single replay',
+      r2_key: key,
+      platform: record.platform,
+      site_id: record.site_id,
+      success: ok
+    });
+    return json({ action: 'replay', key, replayed: ok ? 1 : 0, succeeded: ok }, 200);
+  }
+
+  // Bulk replay (opcionálisan site_id prefixre szűrve).
+  const max = Number.isFinite(body.max as number) ? Math.min(Math.max(body.max as number, 1), 100) : 50;
+  // Segment-prefix (`site_id/`), NEM substring — különben a `site_id: "a"`
+  // minden olyan tenant rekordját listázná, amelynek id-je `a`-val kezdődik.
+  const sitePrefix = typeof body.site_id === 'string' && body.site_id ? `${body.site_id}/` : undefined;
+  let pending: { key: string; record: DeadLetterRecord }[];
+  try {
+    pending = await listPendingRetries(env, sitePrefix, max);
+  } catch (err) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.DLQ_LIST_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.DLQ_LIST_FAILED],
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return json({ error: 'dlq_list_failed' }, 503);
+  }
+
+  let succeeded = 0;
+  let failed = 0;
+  for (const { key, record } of pending) {
+    try {
+      const ok = await retrySingle(env, record);
+      if (ok) {
+        await deleteDeadLetter(env, key);
+        succeeded++;
+      } else {
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+  logStructured({
+    level: 'info',
+    message: 'Admin DLQ bulk replay',
+    site_id: body.site_id,
+    attempted: pending.length,
+    succeeded,
+    failed
+  });
+  void ctx;
+  return json({ action: 'replay', attempted: pending.length, succeeded, failed }, 200);
+}
+
+// ── GET /admin/health-check (onboarding validator #19) ───────────────────────
+type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
+interface Check {
+  name: string;
+  status: CheckStatus;
+  detail: string;
+}
+
+async function handleHealthCheck(env: Env, hostname: string): Promise<Response> {
+  const siteConfig = await getSiteConfig(hostname, env);
+  if (!siteConfig) {
+    return json(
+      { hostname, overall: 'FAIL', checks: [{ name: 'site_config', status: 'FAIL', detail: 'No KV config for hostname' }] },
+      404
+    );
+  }
+
+  const checks: Check[] = [];
+  const add = (name: string, status: CheckStatus, detail: string) => checks.push({ name, status, detail });
+
+  add('site_config', 'PASS', `site_id=${siteConfig.site_id}, country=${siteConfig.country_code}`);
+
+  // Meta
+  add('meta_pixel_id', siteConfig.meta.pixel_id ? 'PASS' : 'FAIL', present(siteConfig.meta.pixel_id));
+  add('meta_access_token', siteConfig.meta.access_token ? 'PASS' : 'FAIL', present(siteConfig.meta.access_token));
+  // CLAUDE.md 17: test_event_code prod-ban Test stream-be küld → csendes hiba.
+  add(
+    'meta_test_event_code',
+    siteConfig.meta.test_event_code ? 'WARN' : 'PASS',
+    siteConfig.meta.test_event_code
+      ? 'test_event_code SET — prod konverziók a Test stream-be mennek (CLAUDE.md 17)'
+      : 'absent (correct for production)'
+  );
+
+  // GA4
+  add(
+    'ga4_config',
+    siteConfig.ga4.measurement_id && siteConfig.ga4.api_secret ? 'PASS' : 'FAIL',
+    `measurement_id=${present(siteConfig.ga4.measurement_id)}, api_secret=${present(siteConfig.ga4.api_secret)}`
+  );
+
+  // Google Ads (opcionális — customer_id nélkül a gads no-op)
+  if (siteConfig.gads.customer_id) {
+    const actions = siteConfig.gads.conversion_actions;
+    add(
+      'gads_conversion_actions',
+      actions && Object.keys(actions).length > 0 ? 'PASS' : 'WARN',
+      actions ? `${Object.keys(actions).length} action(s) mapped` : 'no conversion_actions map'
+    );
+    try {
+      const token = await getAccessToken(siteConfig.gads.customer_id, env);
+      add('gads_oauth', token ? 'PASS' : 'FAIL', token ? 'access token obtained' : 'no access token (run OAuth flow)');
+    } catch (err) {
+      // Ne szivárogtassunk OAuth-belső hibaüzenetet a válaszba — logba megy.
+      logStructured({
+        level: 'warn',
+        message: 'health-check gads_oauth token fetch threw',
+        site_id: siteConfig.site_id,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      add('gads_oauth', 'FAIL', 'token fetch failed (see Worker logs)');
+    }
+  } else {
+    add('gads_customer_id', 'WARN', 'no customer_id — Google Ads dispatch is a no-op for this site');
+  }
+
+  // Ledger + consent posture
+  add('ledger_binding', env.LEDGER ? 'PASS' : 'WARN', env.LEDGER ? 'D1 LEDGER bound' : 'no D1 — ledger/idempotency/recon are no-op');
+  add(
+    'require_consent',
+    siteConfig.require_consent === true ? 'PASS' : 'WARN',
+    siteConfig.require_consent === true ? 'fail-closed (EEA-safe)' : 'fail-open — EEA-site-on állítsd true-ra'
+  );
+
+  const overall: CheckStatus = checks.some((c) => c.status === 'FAIL')
+    ? 'FAIL'
+    : checks.some((c) => c.status === 'WARN')
+      ? 'WARN'
+      : 'PASS';
+
+  return json({ site_id: siteConfig.site_id, hostname, overall, checks }, 200);
+}
+
+function present(v: unknown): string {
+  return v ? 'present' : 'MISSING';
+}
+
+function json(obj: unknown, status: number): Response {
+  return new Response(JSON.stringify(obj, null, 2), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}

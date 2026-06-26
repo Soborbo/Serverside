@@ -17,7 +17,7 @@ export function backoffSeconds(zeroBasedIndex: number): number {
   return QUEUE_BACKOFF_SECONDS[idx];
 }
 
-export type Platform = 'meta' | 'ga4' | 'gads';
+export type Platform = 'meta' | 'ga4' | 'gads' | 'msads' | 'tiktok' | 'linkedin';
 
 export interface DeadLetterRecord {
   platform: Platform;

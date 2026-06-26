@@ -47,6 +47,11 @@ export interface ConversionRequestPayload {
   fbp?: string;
   fbc?: string;
   client_id?: string;
+  // Stabil lead-azonosító (UUID, NEM PII). A kliens generálja és ezzel köti
+  // össze a konverziót a későbbi CRM offline-loop státuszokkal (lead_qualified,
+  // booking_confirmed, revenue_confirmed). Opcionális; hiányában a ledger
+  // rögzíti az eventet, de a CRM-loop nem tud rákötni.
+  lead_id?: string;
   // GA4 session azonosító a `_ga_<container>` cookie-ból (GS1.1.<session_id>...).
   // Nélküle az MP-event elfogadódik, de nem jelenik meg rendesen a riportokban.
   session_id?: string;
@@ -103,6 +108,16 @@ export function isValidConversionPayload(payload: unknown): payload is Conversio
   if (
     p.value !== undefined &&
     (typeof p.value !== 'number' || !Number.isFinite(p.value) || p.value < 0 || p.value > MAX_VALUE)
+  ) {
+    return false;
+  }
+  // lead_id opcionális; ha jelen van, korlátozott charset+hossz (NEM PII).
+  if (
+    p.lead_id !== undefined &&
+    (typeof p.lead_id !== 'string' ||
+      p.lead_id.length < 8 ||
+      p.lead_id.length > 64 ||
+      !/^[a-zA-Z0-9_-]+$/.test(p.lead_id))
   ) {
     return false;
   }

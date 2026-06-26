@@ -247,3 +247,37 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 
 **Severity**: Warning
 **Action**: A R2-ben lévő JSON malformed. Töröld a record-ot.
+
+## TRK-000-007 — Ledger write failed
+
+**Severity**: Warning
+**Description**: D1 ledger-írás (events_raw / deliveries / consent_receipts / lead_status / idempotency) elbukott.
+**Action**: A request-path NEM törik (a ledger best-effort). 1) D1 status; 2) `wrangler d1 migrations apply` lefutott-e; 3) ha tartós, az idempotencia fail-open → dupla konverzió kockázat, vizsgáld.
+
+## TRK-400-006 — Invalid lead-status payload
+
+**Severity**: Info
+**Action**: A `/api/event/lead-status` body hibás. Ellenőrizd: `lead_id` (UUID, nem PII), `status` az allowlistából, `value`/`currency`/`occurred_at` formátum.
+
+## TRK-400-007 — Lead-status unauthorized
+
+**Severity**: Warning
+**Description**: A `/api/event/lead-status` admin-auth (X-Admin-Token) megbukott.
+**Action**: A CRM helyes `ADMIN_API_TOKEN`-t küld? Ha ismeretlen forrás → vizsgáld (jogosulatlan hozzáférési kísérlet).
+
+## TRK-950-001 — Reconciliation: vendor failure rate
+
+**Severity**: Warning (a finding lehet critical is — lásd email/log severity)
+**Description**: Egy platform kézbesítési hibaaránya átlépte a küszöböt (warn ≥5%, crit ≥15%).
+**Action**: 1) Mely platform + site? 2) Nézd a kapcsolódó TRK-6xx/7xx/8xx kódokat a logban (token lejárt? rate limit? rossz conversion action?). 3) DLQ újrapróbálkozik, de a gyökérok javítandó.
+
+## TRK-950-002 — Reconciliation: coverage drift
+
+**Severity**: Warning (a finding lehet critical is)
+**Description**: A jogosult eventek nem értek el a platformra (warn <90%, crit <70% lefedettség). MÁS, mint a failure rate — az ilyen event lehet, hogy nem is termel rejected delivery-t (csendes skip, hiányzó conversion action, config-hiba).
+**Action**: 1) Van conversion action a `gads.conversion_actions`-ben az adott event_name-re? 2) Maradt-e bent `test_event_code` (CLAUDE.md 17.)? 3) Consent-gating nem tilt-e túl sokat? 4) Total outage (0%) → platform/config azonnal.
+
+## TRK-950-003 — Reconciliation query failed
+
+**Severity**: Warning
+**Action**: A napi recon D1-lekérdezése elbukott. D1 status + migrations. A recon best-effort, a fő flow nem érintett.
