@@ -2,16 +2,13 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { sendAdminEmail, escapeHtml } from '../lib/notify';
 import { recordReconciliationMetric } from '../lib/metrics';
-import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
+import { TrackingErrorCode } from '../lib/error-codes';
 import {
-  assembleReconInputs,
+  fetchReconInputs,
   summarize,
   DEFAULT_THRESHOLDS,
   type DriftKind,
-  type DriftFinding,
-  type EventCountRow,
-  type DeliveryCountRow,
-  type LeadCountRow
+  type DriftFinding
 } from '../lib/reconciliation';
 import type { MetricPlatform } from '../lib/metrics';
 
@@ -41,48 +38,8 @@ export async function handleReconciliation(env: Env): Promise<void> {
 
   const since = new Date(Date.now() - WINDOW_HOURS * 60 * 60 * 1000).toISOString();
 
-  let eventRows: EventCountRow[];
-  let deliveryRows: DeliveryCountRow[];
-  let leadRows: LeadCountRow[];
-  try {
-    const [events, deliveries, leads] = await Promise.all([
-      env.LEDGER.prepare(
-        `SELECT site_id, COUNT(*) AS total, COALESCE(SUM(ad_allowed), 0) AS ad_eligible
-         FROM events_raw WHERE received_at >= ?1 GROUP BY site_id`
-      )
-        .bind(since)
-        .all<EventCountRow>(),
-      env.LEDGER.prepare(
-        `SELECT site_id, platform,
-            COALESCE(SUM(status = 'accepted'), 0) AS accepted,
-            COALESCE(SUM(status = 'rejected'), 0) AS rejected,
-            COALESCE(SUM(status = 'skipped'), 0) AS skipped
-         FROM deliveries WHERE created_at >= ?1 AND origin = 'fanout'
-         GROUP BY site_id, platform`
-      )
-        .bind(since)
-        .all<DeliveryCountRow>(),
-      env.LEDGER.prepare(
-        `SELECT site_id, COUNT(*) AS total
-         FROM lead_status WHERE created_at >= ?1 GROUP BY site_id`
-      )
-        .bind(since)
-        .all<LeadCountRow>()
-    ]);
-    eventRows = events.results ?? [];
-    deliveryRows = deliveries.results ?? [];
-    leadRows = leads.results ?? [];
-  } catch (err) {
-    logStructured({
-      level: 'error',
-      error_code: TrackingErrorCode.RECON_QUERY_FAILED,
-      message: ERROR_DESCRIPTIONS[TrackingErrorCode.RECON_QUERY_FAILED],
-      error: err instanceof Error ? err.message : String(err)
-    });
-    return;
-  }
-
-  const inputs = assembleReconInputs(eventRows, deliveryRows, leadRows);
+  const inputs = await fetchReconInputs(env, since);
+  if (inputs === null) return; // query failed (already logged)
   const summary = summarize(inputs, DEFAULT_THRESHOLDS);
 
   // Observability: minden finding → structured log + Analytics Engine metrika.

@@ -355,6 +355,59 @@ export async function getLatestConsentForLead(
   }
 }
 
+export interface LeadTrail {
+  events: unknown[];
+  deliveries: unknown[];
+  consent_receipts: unknown[];
+  lead_status: unknown[];
+}
+
+/**
+ * Egy lead teljes ledger-nyomvonala (admin audit): events_raw → deliveries →
+ * consent_receipts → lead_status, site_id-re szűkítve (tenant-izoláció).
+ * null = nincs LEDGER binding vagy D1-hiba.
+ */
+export async function getLeadTrail(
+  env: Env,
+  siteId: string,
+  leadId: string
+): Promise<LeadTrail | null> {
+  if (!env.LEDGER) return null;
+  try {
+    const [events, deliveries, consent, status] = await Promise.all([
+      env.LEDGER.prepare(
+        `SELECT * FROM events_raw WHERE site_id = ? AND lead_id = ? ORDER BY received_at`
+      )
+        .bind(siteId, leadId)
+        .all(),
+      env.LEDGER.prepare(
+        `SELECT * FROM deliveries WHERE site_id = ? AND lead_id = ? ORDER BY created_at`
+      )
+        .bind(siteId, leadId)
+        .all(),
+      env.LEDGER.prepare(
+        `SELECT * FROM consent_receipts WHERE site_id = ? AND lead_id = ? ORDER BY received_at`
+      )
+        .bind(siteId, leadId)
+        .all(),
+      env.LEDGER.prepare(
+        `SELECT * FROM lead_status WHERE site_id = ? AND lead_id = ? ORDER BY created_at`
+      )
+        .bind(siteId, leadId)
+        .all()
+    ]);
+    return {
+      events: events.results ?? [],
+      deliveries: deliveries.results ?? [],
+      consent_receipts: consent.results ?? [],
+      lead_status: status.results ?? []
+    };
+  } catch (err) {
+    ledgerError('getLeadTrail', err, { site_id: siteId });
+    return null;
+  }
+}
+
 function ledgerError(op: string, err: unknown, ctx: Record<string, unknown>): void {
   logStructured({
     level: 'warn',

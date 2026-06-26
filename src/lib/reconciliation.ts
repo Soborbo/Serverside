@@ -1,3 +1,6 @@
+import type { Env } from '../env';
+import { logStructured } from '../types';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import type { Platform } from './deadletter';
 
 /**
@@ -222,4 +225,58 @@ export function assembleReconInputs(
       platforms
     };
   });
+}
+
+/**
+ * A három aggregált D1-lekérdezés → SiteReconInput[]. A cron ÉS az on-demand
+ * admin endpoint (`GET /api/event/admin/reconciliation`) is ezt hívja.
+ * null = a lekérdezés elbukott (már logolva), VAGY nincs LEDGER binding.
+ *
+ * Itt él (nem a scheduled handlerben), hogy az admin route ne húzza be a
+ * notify.ts `cloudflare:email` runtime-importját a függőségi láncon át.
+ */
+export async function fetchReconInputs(
+  env: Env,
+  sinceIso: string
+): Promise<SiteReconInput[] | null> {
+  if (!env.LEDGER) return null;
+  try {
+    const [events, deliveries, leads] = await Promise.all([
+      env.LEDGER.prepare(
+        `SELECT site_id, COUNT(*) AS total, COALESCE(SUM(ad_allowed), 0) AS ad_eligible
+         FROM events_raw WHERE received_at >= ?1 GROUP BY site_id`
+      )
+        .bind(sinceIso)
+        .all<EventCountRow>(),
+      env.LEDGER.prepare(
+        `SELECT site_id, platform,
+            COALESCE(SUM(status = 'accepted'), 0) AS accepted,
+            COALESCE(SUM(status = 'rejected'), 0) AS rejected,
+            COALESCE(SUM(status = 'skipped'), 0) AS skipped
+         FROM deliveries WHERE created_at >= ?1 AND origin = 'fanout'
+         GROUP BY site_id, platform`
+      )
+        .bind(sinceIso)
+        .all<DeliveryCountRow>(),
+      env.LEDGER.prepare(
+        `SELECT site_id, COUNT(*) AS total
+         FROM lead_status WHERE created_at >= ?1 GROUP BY site_id`
+      )
+        .bind(sinceIso)
+        .all<LeadCountRow>()
+    ]);
+    return assembleReconInputs(
+      events.results ?? [],
+      deliveries.results ?? [],
+      leads.results ?? []
+    );
+  } catch (err) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.RECON_QUERY_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.RECON_QUERY_FAILED],
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return null;
+  }
 }
