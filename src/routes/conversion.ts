@@ -9,6 +9,7 @@ import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
 import { sendToGoogleAdsCAPI, type GAdsPayload, type GAdsResult } from '../lib/gads';
 import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
+import { isTokenlessLowRiskAcceptable, degradedRateLimit } from '../lib/degraded';
 import {
   setQuoteState,
   getQuoteState,
@@ -113,22 +114,54 @@ export async function handleConversion(
 
   const remoteIp = request.headers.get('CF-Connecting-IP') || undefined;
   const turnstileResult = await validateTurnstile(payload.turnstile_token, remoteIp, env);
+  let degraded = false;
   if (!turnstileResult.valid) {
-    const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
-    const errorCode = isMissing
-      ? TrackingErrorCode.MISSING_TURNSTILE_TOKEN
-      : TrackingErrorCode.INVALID_TURNSTILE_TOKEN;
-    logStructured({
-      level: 'info',
-      error_code: errorCode,
-      message: ERROR_DESCRIPTIONS[errorCode],
-      hostname,
-      site_id: siteConfig.site_id,
-      event_name: payload.event_name,
-      error: turnstileResult.errorCodes?.join(',') || 'unknown',
-      duration_ms: Date.now() - startedAt
-    });
-    return new Response('Invalid token', { status: 403, headers: cors });
+    // TASK 2 — degradált elfogadás: token-NÉLKÜLI (vagy Turnstile-elérhetetlen)
+    // ALACSONY-kockázatú event (tel:/mailto:/whatsapp) → rate-limitelt elfogadás,
+    // hogy a money-signal (köztük a phone) ne vesszen el. A token-nélküli
+    // form-submit + az ÉRVÉNYTELEN token továbbra is kemény 403.
+    if (isTokenlessLowRiskAcceptable(turnstileResult.errorCodes, payload.event_name)) {
+      const rlKey = `degraded:${hostname}:${remoteIp || 'unknown'}`;
+      if (!(await degradedRateLimit(env, rlKey))) {
+        logStructured({
+          level: 'info',
+          error_code: TrackingErrorCode.DEGRADED_RATE_LIMITED,
+          message: ERROR_DESCRIPTIONS[TrackingErrorCode.DEGRADED_RATE_LIMITED],
+          hostname,
+          site_id: siteConfig.site_id,
+          event_name: payload.event_name,
+          duration_ms: Date.now() - startedAt
+        });
+        return new Response(null, { status: 429, headers: cors });
+      }
+      degraded = true;
+      logStructured({
+        level: 'info',
+        error_code: TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        turnstile_codes: turnstileResult.errorCodes?.join(',') || 'unknown'
+      });
+      // tovább a normál feldolgozásra (consent + fan-out + Queues/DLQ)
+    } else {
+      const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
+      const errorCode = isMissing
+        ? TrackingErrorCode.MISSING_TURNSTILE_TOKEN
+        : TrackingErrorCode.INVALID_TURNSTILE_TOKEN;
+      logStructured({
+        level: 'info',
+        error_code: errorCode,
+        message: ERROR_DESCRIPTIONS[errorCode],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        error: turnstileResult.errorCodes?.join(',') || 'unknown',
+        duration_ms: Date.now() - startedAt
+      });
+      return new Response('Invalid token', { status: 403, headers: cors });
+    }
   }
 
   const hashedUserData = await hashUserData(
@@ -261,6 +294,7 @@ export async function handleConversion(
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
+    degraded,
     duration_ms: totalDuration
   });
 
