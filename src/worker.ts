@@ -1,5 +1,6 @@
 import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
+import { handleLeadStatus } from './routes/lead-status';
 import { handleHealth } from './routes/health';
 import { handleDebugGA4 } from './routes/debug-ga4';
 import { handleOAuthCallback } from './routes/oauth-callback';
@@ -48,6 +49,12 @@ export default {
 
       if (request.method === 'POST' && url.pathname === '/api/event/conversion') {
         return handleConversion(request, env, ctx);
+      }
+
+      // CRM offline-loop — lead lifecycle státuszok → Enhanced Conversions for
+      // Leads (admin-auth, server-to-server). Lásd routes/lead-status.ts.
+      if (request.method === 'POST' && url.pathname === '/api/event/lead-status') {
+        return handleLeadStatus(request, env, ctx);
       }
 
       if (request.method === 'OPTIONS') {

@@ -18,6 +18,14 @@ import {
 import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from '../lib/error-codes';
 import { recordFanoutMetric, recordConversionMetric } from '../lib/metrics';
 import { sendAlert } from '../lib/notify';
+import {
+  checkIdempotency,
+  recordEventRaw,
+  recordConsentReceipt,
+  recordDeliveries,
+  normalizeDelivery,
+  type DeliveryRecord
+} from '../lib/ledger';
 
 const QUOTE_UPGRADE_EVENTS = new Set([
   'callback_conversion',
@@ -168,6 +176,8 @@ export async function handleConversion(
     );
   }
 
+  const leadId = typeof payload.lead_id === 'string' ? payload.lead_id : undefined;
+
   let effectivePayload: ConversionRequestPayload = payload;
   if (QUOTE_UPGRADE_EVENTS.has(payload.event_name) && typeof payload.client_id === 'string') {
     const activeQuote = await getQuoteState(env, payload.client_id);
@@ -191,6 +201,36 @@ export async function handleConversion(
     }
   }
 
+  // Gateway-ingress idempotencia (NEM vendor-dedup): ugyanaz a submit 5× (dupla
+  // klikk, retry, hálózati gond) → a fan-out csak egyszer fut. Fail-open: D1-hiba
+  // vagy hiányzó binding esetén dispatch-elünk. A kliens felé mindkét esetben 204.
+  const idem = await checkIdempotency(
+    env,
+    siteConfig.site_id,
+    effectivePayload.event_name,
+    effectivePayload.event_id
+  );
+  if (!idem.shouldDispatch) {
+    const dupDuration = Date.now() - startedAt;
+    recordConversionMetric(env, {
+      hostname,
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      accepted: true,
+      total_duration_ms: dupDuration
+    });
+    logStructured({
+      level: 'info',
+      message: 'Duplicate conversion suppressed by idempotency',
+      hostname,
+      site_id: siteConfig.site_id,
+      event_name: effectivePayload.event_name,
+      seen_count: idem.seenCount,
+      duration_ms: dupDuration
+    });
+    return new Response(null, { status: 204, headers: cors });
+  }
+
   fanOut(
     effectivePayload,
     siteConfig,
@@ -200,6 +240,7 @@ export async function handleConversion(
     userAgent,
     consentDecision,
     sessionId,
+    leadId,
     env,
     ctx
   );
@@ -317,10 +358,39 @@ function fanOut(
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
   sessionId: string | undefined,
+  leadId: string | undefined,
   env: Env,
   ctx: ExecutionContext
 ): void {
   const adAllowed = consentDecision.adAllowed;
+
+  // Ledger: az elfogadott event nyers rekordja + consent receipt (NEM PII;
+  // csak az `em/ph` jelenléti flag-ek a match-quality audithoz). Fire-and-forget.
+  ctx.waitUntil(
+    recordEventRaw(env, {
+      event_id: payload.event_id,
+      lead_id: leadId,
+      site_id: siteConfig.site_id,
+      hostname,
+      event_name: payload.event_name,
+      event_time: payload.event_time,
+      value: payload.value,
+      currency: payload.currency,
+      ad_allowed: adAllowed,
+      em_present: Boolean(hashedUserData.em),
+      ph_present: Boolean(hashedUserData.ph)
+    })
+  );
+  ctx.waitUntil(
+    recordConsentReceipt(env, {
+      event_id: payload.event_id,
+      lead_id: leadId,
+      site_id: siteConfig.site_id,
+      consent: consentDecision.consent,
+      require_consent: siteConfig.require_consent === true,
+      ad_allowed: adAllowed
+    })
+  );
 
   const metaPayload: MetaCAPIPayload = {
     event_name: payload.event_name,
@@ -457,7 +527,26 @@ function fanOut(
         gadsStart
       );
 
-      await Promise.allSettled([...dlqWrites, ...alerts]);
+      // Normalizált vendor-kézbesítés a ledgerbe (#9). adAllowed=false → a Meta
+      // és a Google Ads 'skipped' (consent-tiltás, nem hiba); a GA4 mindig megy.
+      const deliveryRecords: DeliveryRecord[] = [
+        normalizeDelivery('meta', metaResult, { skipped: !adAllowed }),
+        normalizeDelivery('ga4', ga4Result),
+        normalizeDelivery('gads', gadsResult, { skipped: !adAllowed })
+      ];
+
+      await Promise.allSettled([
+        ...dlqWrites,
+        ...alerts,
+        recordDeliveries(env, {
+          event_id: payload.event_id,
+          lead_id: leadId,
+          site_id: siteConfig.site_id,
+          event_name: payload.event_name,
+          origin: 'fanout',
+          records: deliveryRecords
+        })
+      ]);
 
       logStructured({
         level: 'info',

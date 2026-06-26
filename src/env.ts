@@ -15,6 +15,12 @@ export interface Env {
 
   DEAD_LETTER: R2Bucket;
 
+  // D1 ledger (events_raw / idempotency / deliveries / consent_receipts /
+  // lead_status). OPCIONÁLIS: ha nincs bekötve, a ledger-írás + idempotencia
+  // no-op (a Worker D1 nélkül is teljesen működik). Élesítés: lásd wrangler.toml
+  // + `wrangler d1 migrations apply`.
+  LEDGER?: D1Database;
+
   // Cloudflare Queues alapú újrapróbálkozás (H1). Ha NINCS bekötve, a kód
   // visszaesik a régi R2-alapú DLQ-ra (graceful fallback) — így fokozatosan
   // élesíthető. A terminális (kimerült retry) rekordok R2-be archiválódnak,
