@@ -271,11 +271,20 @@ export function collectAttribution(): AttributionParams {
   const stored = readStoredAttribution();
   const fresh: AttributionParams = {};
 
+  // Ad-consent kapu: a click ID-k ad-azonosítók → CSAK ad-consent mellett
+  // gyűjtjük/tároljuk/küldjük (ePrivacy/TCF). UTM/landing analitikai metaadat.
+  // Consent hiányában (még nincs döntés) fail-closed → nincs click ID.
+  const consent = getConsentState();
+  const adGranted =
+    consent?.ad_user_data === 'GRANTED' || consent?.ad_storage === 'GRANTED';
+
   try {
     const params = new URLSearchParams(window.location.search);
-    for (const k of ATTR_CLICK_PARAMS) {
-      const v = params.get(k);
-      if (v) fresh[k] = v;
+    if (adGranted) {
+      for (const k of ATTR_CLICK_PARAMS) {
+        const v = params.get(k);
+        if (v) fresh[k] = v;
+      }
     }
     for (const k of ATTR_UTM_PARAMS) {
       const v = params.get(k);
@@ -285,13 +294,19 @@ export function collectAttribution(): AttributionParams {
     // no-op
   }
 
-  if (!fresh.gclid) {
+  if (adGranted && !fresh.gclid) {
     const g = gclidFromCookie();
     if (g) fresh.gclid = g;
   }
 
   // Last-touch: a friss URL-jelek felülírják a tároltat.
   const merged: AttributionParams = { ...stored, ...fresh };
+
+  // Ad-consent visszavonva/hiányzik → a korábban tárolt click ID-ket is dobjuk
+  // (ne perzisztáljon/menjen ad-azonosító consent nélkül).
+  if (!adGranted) {
+    for (const k of ATTR_CLICK_PARAMS) delete merged[k];
+  }
 
   // First-touch landing-kontextus (nem írjuk felül, ha már megvan).
   if (!merged.landing_page) merged.landing_page = window.location.href;

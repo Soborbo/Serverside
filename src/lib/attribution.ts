@@ -93,10 +93,19 @@ function stripControlChars(s: string): string {
   return out;
 }
 
-function cleanText(v: unknown): string | undefined {
+// URL-mezők: csak az origin+path marad, a query string + fragment LEKERÜL —
+// ezek tartalmazhatnak PII-t (?email=, ?phone=), és ezt at-rest tároljuk
+// (DO + R2 DLQ). Adatminimalizálás (GDPR Art. 5).
+const URL_FIELDS: ReadonlySet<string> = new Set(['referrer', 'landing_page']);
+
+function cleanText(v: unknown, key: string): string | undefined {
   if (typeof v !== 'string') return undefined;
-  const t = stripControlChars(v).trim();
+  let t = stripControlChars(v).trim();
   if (t.length === 0) return undefined;
+  if (URL_FIELDS.has(key)) {
+    const cut = t.search(/[?#]/);
+    if (cut >= 0) t = t.slice(0, cut);
+  }
   return t.slice(0, TEXT_MAX);
 }
 
@@ -114,7 +123,7 @@ export function parseAttribution(raw: unknown): AttributionParams | undefined {
     if (v !== undefined) out[k] = v;
   }
   for (const k of TEXT_FIELDS) {
-    const v = cleanText(r[k]);
+    const v = cleanText(r[k], k);
     if (v !== undefined) out[k] = v;
   }
 

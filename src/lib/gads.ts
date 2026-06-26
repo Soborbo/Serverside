@@ -112,8 +112,9 @@ export async function sendToGoogleAdsCAPI(
     orderId: payload.event_id.slice(0, 64)
   };
 
-  // Google click ID — pontosan egy, prioritás szerint. A legerősebb attribúciós
-  // jel; az userIdentifiers (EC for Leads) emellett is megy fallbacknek.
+  // Google click ID — pontosan egy, prioritás szerint. A legerősebb attribúciós jel.
+  const hasGclid = !!payload.gclid;
+  const usingBraid = !hasGclid && (!!payload.gbraid || !!payload.wbraid);
   if (payload.gclid) conversion.gclid = payload.gclid;
   else if (payload.gbraid) conversion.gbraid = payload.gbraid;
   else if (payload.wbraid) conversion.wbraid = payload.wbraid;
@@ -121,7 +122,11 @@ export async function sendToGoogleAdsCAPI(
     conversion.conversionValue = payload.value;
   }
   if (payload.currency) conversion.currencyCode = payload.currency;
-  if (userIdentifiers.length > 0) conversion.userIdentifiers = userIdentifiers;
+  // Enhanced Conversions for Leads (userIdentifiers) CSAK gclid mellett (vagy
+  // click ID nélkül) engedett. gbraid/wbraid mellett a Google VALUE_MUST_BE_UNSET
+  // hibát ad → partialFailure-rel csendben elbukna a sor. Ezért braid esetén
+  // a click ID-re hagyatkozunk, PII-match nélkül.
+  if (userIdentifiers.length > 0 && !usingBraid) conversion.userIdentifiers = userIdentifiers;
 
   // Consent Mode v2 jelek. FONTOS: a Google Ads API a consent mezőkre CSAK
   // GRANTED / DENIED bemenetet fogad el — az `UNKNOWN`/`UNSPECIFIED` érték

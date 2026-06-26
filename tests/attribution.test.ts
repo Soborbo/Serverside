@@ -51,6 +51,15 @@ describe('parseAttribution', () => {
   it('bounds overly long token (DoS guard)', () => {
     expect(parseAttribution({ gclid: 'a'.repeat(2000) })).toBeUndefined();
   });
+
+  it('strips query+fragment from URL fields (landing_page / referrer) — PII minimisation', () => {
+    const a = parseAttribution({
+      landing_page: 'https://site.hu/quote?email=jane@x.com&phone=%2B4471',
+      referrer: 'https://ref.example/path?token=secret#frag'
+    });
+    expect(a?.landing_page).toBe('https://site.hu/quote');
+    expect(a?.referrer).toBe('https://ref.example/path');
+  });
 });
 
 describe('buildFbcFromFbclid', () => {
@@ -128,6 +137,23 @@ describe('sendToGoogleAdsCAPI — click ID priority', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.conversions[0].wbraid).toBe('WB-1');
   });
+
+  it('does NOT attach userIdentifiers when using gbraid/wbraid (VALUE_MUST_BE_UNSET guard)', async () => {
+    await sendToGoogleAdsCAPI(
+      cfg,
+      env,
+      {
+        event_name: 'callback_conversion',
+        event_id: 'e3',
+        event_time: Math.floor(Date.now() / 1000),
+        gbraid: 'GB-1'
+      },
+      { em: 'hashedmail', ph: 'hashedphone' }
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.conversions[0].gbraid).toBe('GB-1');
+    expect(body.conversions[0]).not.toHaveProperty('userIdentifiers');
+  });
 });
 
 describe('sendToGA4MP — UTM forwarding', () => {
@@ -141,12 +167,12 @@ describe('sendToGA4MP — UTM forwarding', () => {
     vi.unstubAllGlobals();
   });
 
-  it('maps utm_* to GA4 campaign params; does not clobber existing custom source', async () => {
+  it('emits a separate campaign_details event for UTMs; conversion event untouched', async () => {
     await sendToGA4MP(baseSiteConfig, {
       event_name: 'contact_form_submit',
       event_id: 'e1',
       client_id: '1.2',
-      source: 'contact_form', // existing custom param
+      source: 'contact_form', // existing custom param on the conversion event
       attribution: {
         utm_source: 'google',
         utm_medium: 'cpc',
@@ -156,23 +182,31 @@ describe('sendToGA4MP — UTM forwarding', () => {
         utm_content: 'ad1'
       }
     });
-    const p = JSON.parse(fetchMock.mock.calls[0][1].body as string).events[0].params;
-    expect(p.source).toBe('contact_form'); // NOT overwritten by utm_source
-    expect(p.medium).toBe('cpc');
-    expect(p.campaign).toBe('brand');
-    expect(p.campaign_id).toBe('12345');
-    expect(p.term).toBe('kw');
-    expect(p.content).toBe('ad1');
+    const events = JSON.parse(fetchMock.mock.calls[0][1].body as string).events;
+    // konverziós event változatlan
+    expect(events[0].name).toBe('contact_form_submit');
+    expect(events[0].params.source).toBe('contact_form');
+    expect(events[0].params).not.toHaveProperty('medium');
+    // külön campaign_details event a kampány-jelekkel
+    const cd = events.find((e: { name: string }) => e.name === 'campaign_details');
+    expect(cd.params).toEqual({
+      source: 'google',
+      medium: 'cpc',
+      campaign: 'brand',
+      campaign_id: '12345',
+      term: 'kw',
+      content: 'ad1'
+    });
   });
 
-  it('fills source from utm_source when no custom source set', async () => {
+  it('no campaign_details event when no UTMs present', async () => {
     await sendToGA4MP(baseSiteConfig, {
       event_name: 'contact_form_submit',
       event_id: 'e2',
-      client_id: '1.2',
-      attribution: { utm_source: 'newsletter' }
+      client_id: '1.2'
     });
-    const p = JSON.parse(fetchMock.mock.calls[0][1].body as string).events[0].params;
-    expect(p.source).toBe('newsletter');
+    const events = JSON.parse(fetchMock.mock.calls[0][1].body as string).events;
+    expect(events).toHaveLength(1);
+    expect(events[0].name).toBe('contact_form_submit');
   });
 });

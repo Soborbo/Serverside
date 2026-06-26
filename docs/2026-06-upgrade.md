@@ -113,7 +113,7 @@ platformonként továbbít:
 |---|---|---|
 | `gclid` / `gbraid` / `wbraid` | URL + `_gcl_aw` cookie | **Google Ads** `ClickConversion` (1 db, prioritás; EC-for-Leads mellette marad) |
 | `fbclid` | URL | **Meta** — `fbc` épül belőle (`fb.1.<ms>.<fbclid>`), ha nincs `_fbc` cookie |
-| `utm_source/medium/campaign/term/content/id` | URL | **GA4** campaign event-paraméterek (a meglévő custom `source` nem íródik felül) |
+| `utm_source/medium/campaign/term/content/id` | URL | **GA4** külön `campaign_details` event (a dokumentált MP-mechanizmus; a konverziós eventre bolt-olva no-op lenne) |
 | `gclsrc`, `gad_source`, `dclid` | URL | capture-only (Google kontextus) |
 | `msclkid`, `ttclid`, `li_fat_id`, `twclid` | URL | **capture-only** — TikTok/Microsoft/LinkedIn/X CAPI plug-in pont (még nincs integráció) |
 | `referrer`, `landing_page` | böngésző | capture-only (nem továbbítjuk platformra, nem logoljuk) |
@@ -121,6 +121,16 @@ platformonként továbbít:
 A delayed (60 perc) quote-konverzió a DO-állapotba menti az attribúciót, és
 tüzeléskor használja (a click ID-k akkor is érvényesek a feltöltéshez).
 Validáció: click ID-k url-safe charset + ≤1024, UTM ≤512 + control-char strip.
+
+**Attribúciós audit-javítások (2-ügynökös adversariális):**
+- 🟡 Google Ads: `gbraid`/`wbraid` mellett NEM küldünk `userIdentifiers`-t (a Google
+  `VALUE_MUST_BE_UNSET`-tel csendben elbuktatná; EC-for-Leads csak gclid mellett).
+- 🟡 GA4: UTM külön `campaign_details` eventként (a konverziós eventre bolt-olva
+  no-op volt az attribúcióra).
+- 🔴 `landing_page`/`referrer`: query string + fragment **lekerül** (PII-minimalizálás,
+  mert ezt at-rest tároljuk DO-ban + R2 DLQ-ban).
+- 🟡 client-lib: a click ID-k gyűjtése/tárolása/küldése **ad-consenthez kötött**
+  (consent nélkül nincs ad-azonosító localStorage-ban sem); UTM/landing marad.
 
 ## Tesztek
 
