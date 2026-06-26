@@ -81,9 +81,25 @@ vagy ismeretlen lead), engedjük (a CRM megbízható, a consent a business felel
 A `lead_id`-t a **kliens** generálja (UUID) capture-kor, és ugyanazt küldi a konverziós
 event `lead_id` mezőjébe ÉS a CRM-be — így köthető össze a kettő.
 
-## Reconciliation (a ledger "ingyen" haszna)
+## Reconciliation (automata drift-detektálás)
 
-A ledger fölött SQL view-kkal napi kontroll készíthető, külön warehouse nélkül:
+Napi cron (`15 8 * * *`, a digest után) a ledger fölött drift-et detektál és riaszt —
+`src/scheduled/reconciliation.ts`, pure maggal `src/lib/reconciliation.ts`. Két független
+hibamódot fog meg site × platform bontásban:
+
+| Jel | Mit fog meg | Küszöb |
+|---|---|---|
+| **vendor failure rate** (`TRK-950-001`) | a kézbesítések elbukási aránya | warn ≥5%, crit ≥15% |
+| **coverage drift** (`TRK-950-002`) | a jogosult eventek be sem jutottak a platformra | warn <90%, crit <70% lefedettség |
+
+- `MIN_SAMPLE=10` guard — nincs riasztás apró zajra.
+- A `skipped` (consent-blokkolt) kézbesítések NEM számítanak hibának.
+- GA4 lefedettsége az összes eventhez mérve, Meta/Google Ads csak az ad-jogosultakhoz.
+- Minden finding → strukturált log (error_code-dal) **+** Analytics Engine metrika
+  (`reconciliation` index, site × platform × kind × severity trendhez). Email CSAK ha van
+  finding (no-noise). Küszöbök: `DEFAULT_THRESHOLDS` a `lib/reconciliation.ts`-ben.
+
+Ad-hoc lekérdezések (külön warehouse nélkül) a ledger fölött:
 
 ```sql
 -- Napi accepted lead-count platformonként (drift-figyeléshez)

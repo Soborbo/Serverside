@@ -57,6 +57,7 @@ head_sampling_rate = 1.0
 # [triggers]
 # crons = [
 #   "0 8 * * *",        # Daily digest at 8 AM GMT
+#   "15 8 * * *",       # Reconciliation drift-check (D1 ledger) at 8:15 AM GMT
 #   "*/30 * * * *",     # SLO check every 30 min
 #   "0 * * * *"         # DLQ retry every hour
 # ]

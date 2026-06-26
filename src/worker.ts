@@ -12,6 +12,7 @@ import { QuoteStateObject } from './durable-objects/quote-state';
 import { handleScheduledRetry, retrySingle } from './scheduled/retry';
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
+import { handleReconciliation } from './scheduled/reconciliation';
 import {
   writeDeadLetter,
   backoffSeconds,
@@ -81,6 +82,9 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     if (event.cron === '0 8 * * *') {
       ctx.waitUntil(handleDailyDigest(env));
+    } else if (event.cron === '15 8 * * *') {
+      // Napi reconciliation (drift-detektálás a D1 ledger fölött), a digest után.
+      ctx.waitUntil(handleReconciliation(env));
     } else if (event.cron === '*/30 * * * *') {
       ctx.waitUntil(handleSloCheck(env));
     } else if (event.cron === '0 * * * *') {

@@ -9,6 +9,7 @@
  * - 700: GA4 MP specific
  * - 800: Google Ads specific
  * - 900: DLQ + Cron specific
+ * - 950: Reconciliation + observability
  */
 
 export enum TrackingErrorCode {
@@ -67,7 +68,11 @@ export enum TrackingErrorCode {
   DLQ_DELETE_FAILED = 'TRK-900-003',
   CRON_RETRY_FAILED = 'TRK-900-004',
   MAX_RETRIES_EXCEEDED = 'TRK-900-005',
-  DLQ_CORRUPT_RECORD = 'TRK-900-006'
+  DLQ_CORRUPT_RECORD = 'TRK-900-006',
+
+  RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
+  RECON_COVERAGE_DRIFT = 'TRK-950-002',
+  RECON_QUERY_FAILED = 'TRK-950-003'
 }
 
 export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
@@ -122,7 +127,12 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.DLQ_DELETE_FAILED]: 'Failed to delete DLQ record after successful retry',
   [TrackingErrorCode.CRON_RETRY_FAILED]: 'Cron retry handler encountered unhandled error',
   [TrackingErrorCode.MAX_RETRIES_EXCEEDED]: 'DLQ record reached max retry count',
-  [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed'
+  [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed',
+  [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
+    'Vendor delivery failure rate exceeded threshold (reconciliation)',
+  [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
+    'Eligible events did not reach the platform — coverage drift (reconciliation)',
+  [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed'
 };
 
 export type ErrorSeverity = 'critical' | 'warning' | 'info';
@@ -173,6 +183,9 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'warning',
   [TrackingErrorCode.LEDGER_WRITE_FAILED]: 'warning',
   [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'warning',
+  [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]: 'warning',
+  [TrackingErrorCode.RECON_COVERAGE_DRIFT]: 'warning',
+  [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',
