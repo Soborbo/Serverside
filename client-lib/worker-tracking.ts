@@ -40,6 +40,18 @@ export interface UserData {
   street?: string;
   postal_code?: string;
   country?: string;
+  // Stabil user/cookie azonosító (Meta external_id → EMQ-javítás). A Worker
+  // hash-eli; ugyanezt az értéket add a böngésző Pixelnek is a dedup miatt.
+  external_id?: string;
+}
+
+export type ConsentSignal = 'GRANTED' | 'DENIED' | 'UNSPECIFIED';
+
+export interface ConsentState {
+  ad_user_data?: ConsentSignal;
+  ad_personalization?: ConsentSignal;
+  ad_storage?: ConsentSignal;
+  analytics_storage?: ConsentSignal;
 }
 
 export interface ConversionPayload {
@@ -52,6 +64,7 @@ export interface ConversionPayload {
   service?: string;
   user_data?: UserData;
   event_source_url?: string;
+  consent?: ConsentState;
 }
 
 let cachedTurnstileToken: string | undefined;
@@ -144,6 +157,27 @@ function extractGAClientId(gaCookie: string | undefined): string | undefined {
   return parts.length >= 4 ? `${parts[2]}.${parts[3]}` : undefined;
 }
 
+// GA4 session id a `_ga_<STREAM>` cookie-ból. Két formátumot kell kezelni:
+//   GS1: `GS1.1.<session_id>.<...>`
+//   GS2: `GS2.1.s<session_id>$o..$g..`  ← 2025-05-06 óta az új session-ök defaultja
+// A GS2-nél a session_id elé egy literál `s` kerül. Az opcionális `s`-t és a
+// több jegyű verzió/slot szegmenseket is kezeljük. Nélküle az MP-event nem
+// jelenik meg rendesen a GA4 riportokban.
+function extractGASessionId(): string | undefined {
+  const match = document.cookie.match(/_ga_[A-Z0-9]+=GS\d+\.\d+\.s?(\d+)/);
+  return match ? match[1] : undefined;
+}
+
+// Consent Mode v2 állapot. A site beállítja a window.__trackingConsent-et a
+// CMP-jéből (vagy a Google Consent Mode-ból). Hiányában undefined → a Worker a
+// SiteConfig.require_consent szerint dönt.
+function getConsentState(): ConsentState | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const c = (window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent;
+  if (!c || typeof c !== 'object') return undefined;
+  return c;
+}
+
 export async function sendToWorker(payload: ConversionPayload): Promise<boolean> {
   const turnstileToken = await getTurnstileToken();
   if (!turnstileToken) {
@@ -154,6 +188,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   const fbp = getCookie('_fbp');
   const fbc = getCookie('_fbc');
   const clientId = extractGAClientId(getCookie('_ga'));
+  const sessionId = extractGASessionId();
 
   const body = JSON.stringify({
     ...payload,
@@ -161,6 +196,8 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     fbp,
     fbc,
     client_id: clientId,
+    session_id: sessionId,
+    consent: payload.consent || getConsentState(),
     event_source_url: payload.event_source_url || location.href
   });
 
@@ -197,6 +234,7 @@ export async function trackConversion(
     source?: string;
     service?: string;
     user_data?: UserData;
+    consent?: ConsentState;
   } = {}
 ): Promise<void> {
   const eventId = params.event_id || generateUUID();
@@ -225,6 +263,7 @@ export async function trackConversion(
     currency: params.currency,
     source: params.source,
     service: params.service,
-    user_data: params.user_data
+    user_data: params.user_data,
+    consent: params.consent
   });
 }

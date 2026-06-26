@@ -1,4 +1,5 @@
 import type { SiteConfig } from './config';
+import type { ConsentState } from './consent';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 
@@ -16,6 +17,12 @@ export interface GA4Payload {
   service?: string;
   page_location?: string;
   user_agent?: string;
+  // GA4 session azonosító — session-attribúcióhoz és a Realtime/standard
+  // riportokban való megjelenéshez szükséges (engagement_time_msec mellett).
+  session_id?: string;
+  // Google Consent Mode v2 jelek; ha analytics_storage DENIED, a GA4
+  // cookieless modellezést végez (nem mi gate-eljük ki kliensoldalon).
+  consent?: ConsentState;
 }
 
 export interface GA4Result {
@@ -41,16 +48,34 @@ export async function sendToGA4MP(
     engagement_time_msec: 100,
     event_id: payload.event_id
   };
+  // session_id kötelező a helyes session-attribúcióhoz / riport-megjelenéshez.
+  if (payload.session_id) params.session_id = payload.session_id;
   if (typeof payload.value === 'number') params.value = payload.value;
   if (payload.currency) params.currency = payload.currency;
   if (payload.source) params.source = payload.source;
   if (payload.service) params.service = payload.service;
   if (payload.page_location) params.page_location = payload.page_location;
 
-  const body = {
+  const body: Record<string, unknown> = {
     client_id: clientId,
     events: [{ name: payload.event_name, params }]
   };
+
+  // Consent Mode v2 — top-level consent objektum. A GA4 MP CSAK GRANTED/DENIED-et
+  // dokumentál; az UNSPECIFIED-et kihagyjuk (a hiányzó mező a default).
+  if (payload.consent) {
+    const consent: Record<string, string> = {};
+    if (payload.consent.ad_user_data === 'GRANTED' || payload.consent.ad_user_data === 'DENIED') {
+      consent.ad_user_data = payload.consent.ad_user_data;
+    }
+    if (
+      payload.consent.ad_personalization === 'GRANTED' ||
+      payload.consent.ad_personalization === 'DENIED'
+    ) {
+      consent.ad_personalization = payload.consent.ad_personalization;
+    }
+    if (Object.keys(consent).length > 0) body.consent = consent;
+  }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (payload.user_agent) {

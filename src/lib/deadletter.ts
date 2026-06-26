@@ -2,8 +2,20 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 
-const MAX_RETRIES = 3;
+export const MAX_RETRIES = 3;
 const RETRY_WINDOW_HOURS = 24;
+
+// Queues delivery-delay backoff 0-alapú index szerint (másodperc). Cloudflare
+// Queues max delaySeconds = 86400 (24h) — a lenti értékek bőven belül vannak.
+// HÍVÁSI KONVENCIÓ: a paraméter 0-ALAPÚ (0 = első késleltetés). A consumer a
+// 1-alapú `msg.attempts`-ből `msg.attempts - 1`-et ad át, hogy a 60s-os fok is
+// ténylegesen használatba kerüljön.
+const QUEUE_BACKOFF_SECONDS = [60, 300, 1800];
+
+export function backoffSeconds(zeroBasedIndex: number): number {
+  const idx = Math.min(Math.max(zeroBasedIndex, 0), QUEUE_BACKOFF_SECONDS.length - 1);
+  return QUEUE_BACKOFF_SECONDS[idx];
+}
 
 export type Platform = 'meta' | 'ga4' | 'gads';
 
@@ -17,6 +29,39 @@ export interface DeadLetterRecord {
   retry_count: number;
   first_failed_at: string;
   last_attempted_at: string;
+}
+
+/**
+ * Sikertelen platform-hívás → újrapróba-sorba. Ha a Cloudflare Queues binding
+ * (`env.DLQ`) elérhető, oda küldjük a rekordot delivery-delay backoff-fal;
+ * különben visszaesünk az R2-alapú DLQ-ra (writeDeadLetter). A Queues consumer
+ * a worker.ts `queue()` handlerében fut.
+ */
+export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promise<void> {
+  if (env.DLQ) {
+    try {
+      await env.DLQ.send(record, { delaySeconds: backoffSeconds(record.retry_count) });
+      logStructured({
+        level: 'info',
+        message: 'Failure enqueued to Cloudflare Queue',
+        site_id: record.site_id,
+        platform: record.platform,
+        retry_count: record.retry_count
+      });
+      return;
+    } catch (err) {
+      logStructured({
+        level: 'warn',
+        error_code: TrackingErrorCode.DLQ_WRITE_FAILED,
+        message: 'Queue send failed, falling back to R2 DLQ',
+        site_id: record.site_id,
+        platform: record.platform,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      // fall through to R2
+    }
+  }
+  await writeDeadLetter(env, record);
 }
 
 export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promise<void> {

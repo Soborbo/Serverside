@@ -4,10 +4,11 @@ import { corsHeaders } from '../worker';
 import { getSiteConfig, type SiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
-import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
+import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
-import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
-import { writeDeadLetter, type Platform } from '../lib/deadletter';
+import { sendToGoogleAdsCAPI, type GAdsPayload, type GAdsResult } from '../lib/gads';
+import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
+import { enqueueFailure, type Platform } from '../lib/deadletter';
 import {
   setQuoteState,
   getQuoteState,
@@ -34,6 +35,23 @@ export async function handleConversion(
   const url = new URL(request.url);
   const hostname = url.hostname;
   const cors = corsHeaders(request, env);
+
+  // Natív rate limiting (H2) — Turnstile a botokat fogja, de egy scriptelt
+  // forrást nem. IP+hostname kulcs: egy site/IP nem meríti ki a többit.
+  // Guarded: ha nincs binding, kimarad.
+  if (env.INGEST_LIMITER) {
+    const rlIp = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const { success } = await env.INGEST_LIMITER.limit({ key: `${hostname}:${rlIp}` });
+    if (!success) {
+      logStructured({
+        level: 'info',
+        message: 'Rate limited',
+        hostname,
+        duration_ms: Date.now() - startedAt
+      });
+      return new Response(null, { status: 429, headers: cors });
+    }
+  }
 
   // Reject oversized bodies before parsing — guards against DLQ/AE flooding
   // via large user_data payloads.
@@ -111,6 +129,17 @@ export async function handleConversion(
 
   const userAgent = request.headers.get('User-Agent') || undefined;
 
+  // Consent feloldása (Consent Mode v2). adAllowed=false → Meta + Google Ads
+  // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
+  const consentState = parseConsent(payload.consent);
+  const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
+  // session_id a GA4 numerikus session timestamp — bound + charset check, hogy
+  // ne továbbítsunk korlátlan attacker-stringet a GA4 MP felé.
+  const sessionId =
+    typeof payload.session_id === 'string' && /^\d{1,20}$/.test(payload.session_id)
+      ? payload.session_id
+      : undefined;
+
   if (
     payload.event_name === 'quote_calculator_conversion' &&
     typeof payload.client_id === 'string' &&
@@ -131,6 +160,7 @@ export async function handleConversion(
       hostname,
       remoteIp,
       userAgent,
+      consentDecision,
       env,
       ctx,
       cors,
@@ -161,7 +191,18 @@ export async function handleConversion(
     }
   }
 
-  fanOut(effectivePayload, siteConfig, hashedUserData, hostname, remoteIp, userAgent, env, ctx);
+  fanOut(
+    effectivePayload,
+    siteConfig,
+    hashedUserData,
+    hostname,
+    remoteIp,
+    userAgent,
+    consentDecision,
+    sessionId,
+    env,
+    ctx
+  );
 
   const totalDuration = Date.now() - startedAt;
   recordConversionMetric(env, {
@@ -196,6 +237,7 @@ async function handleQuoteCompletion(
   hostname: string,
   remoteIp: string | undefined,
   userAgent: string | undefined,
+  consentDecision: ConsentDecision,
   env: Env,
   ctx: ExecutionContext,
   cors: HeadersInit,
@@ -212,10 +254,13 @@ async function handleQuoteCompletion(
     event_time: payload.event_time,
     event_id: payload.event_id,
     user_data: hashedUserData,
-    hostname
+    hostname,
+    consent: consentDecision.consent,
+    ad_allowed: consentDecision.adAllowed
   });
 
-  if (!previousState?.view_content_fired) {
+  // ViewContent csak akkor, ha az ad-platform engedett (Meta-only event).
+  if (consentDecision.adAllowed && !previousState?.view_content_fired) {
     const viewContentPromise = sendToMetaCAPI(
       siteConfig,
       {
@@ -270,9 +315,13 @@ function fanOut(
   hostname: string,
   remoteIp: string | undefined,
   userAgent: string | undefined,
+  consentDecision: ConsentDecision,
+  sessionId: string | undefined,
   env: Env,
   ctx: ExecutionContext
 ): void {
+  const adAllowed = consentDecision.adAllowed;
+
   const metaPayload: MetaCAPIPayload = {
     event_name: payload.event_name,
     event_id: payload.event_id,
@@ -296,7 +345,9 @@ function fanOut(
     source: payload.source,
     service: payload.service,
     page_location: payload.event_source_url,
-    user_agent: userAgent
+    user_agent: userAgent,
+    session_id: sessionId,
+    consent: consentDecision.consent
   };
 
   const gadsPayload: GAdsPayload = {
@@ -306,15 +357,21 @@ function fanOut(
     value: payload.value,
     currency: payload.currency,
     city: payload.user_data?.city,
-    postal_code: payload.user_data?.postal_code
+    postal_code: payload.user_data?.postal_code,
+    consent: consentDecision.consent
   };
 
+  // adAllowed=false → Meta + Google Ads no-op success (nincs hívás, nincs DLQ).
   const metaStart = Date.now();
-  const metaPromise = sendToMetaCAPI(siteConfig, metaPayload, hashedUserData);
+  const metaPromise: Promise<MetaCAPIResult> = adAllowed
+    ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
+    : Promise.resolve({ success: true });
   const ga4Start = Date.now();
   const ga4Promise = sendToGA4MP(siteConfig, ga4Payload);
   const gadsStart = Date.now();
-  const gadsPromise = sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData);
+  const gadsPromise: Promise<GAdsResult> = adAllowed
+    ? sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData)
+    : Promise.resolve({ success: true });
 
   const fanout = Promise.allSettled([metaPromise, ga4Promise, gadsPromise]).then(
     async (results) => {
@@ -362,7 +419,7 @@ function fanOut(
             ? String(result.reason)
             : result.value.error || 'unknown';
         dlqWrites.push(
-          writeDeadLetter(env, {
+          enqueueFailure(env, {
             platform,
             site_id: siteConfig.site_id,
             hostname,
