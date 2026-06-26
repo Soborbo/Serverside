@@ -164,9 +164,19 @@ export class QuoteStateObject implements DurableObject {
 
     try {
       await this.fireDelayedConversion(quote);
-    } finally {
-      await this.state.storage.deleteAll();
+    } catch (err) {
+      // Váratlan throw (dynamic import / config / enqueue hiba). NEM törlünk és
+      // visszaállítjuk a fired_at-ot null-ra, hogy a DO at-least-once alarm-retry-ja
+      // (max 6×) újrapróbálja — különben a finally+deleteAll csendben elveszítené a
+      // 60 perces késleltetett konverziót. A platform-szintű hibák amúgy is a
+      // Promise.allSettled-en belül DLQ-ba mennek, ide csak igazán váratlan hiba jut.
+      // A re-fire Meta/GAds-re event_id-vel dedup-ol; a GA4 ritkán duplázódhat, ami
+      // elfogadható a teljes vesztéssel szemben.
+      quote.fired_at = null;
+      await this.state.storage.put(STORAGE_KEY, quote);
+      throw err;
     }
+    await this.state.storage.deleteAll();
   }
 
   private async fireDelayedConversion(quote: QuoteStateData): Promise<void> {

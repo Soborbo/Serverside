@@ -126,7 +126,9 @@ Email, telefon, név **soha nem mehet** GA4 Measurement Protocol-ra. Ez a Meta C
 
 - Validate **MINDEN** API call **ELŐTT**.
 - Invalid token: return 403, no fan-out.
-- Validation API maga error-ol: log, allow request through (graceful degradation — better to allow legitimate traffic than to block it).
+- Validation API maga error-ol (non-OK válasz vagy network throw): **fail-CLOSED** az alapértelmezett — log + `valid:false`, az event nem megy ki. Ez szándékos biztonsági döntés (egy spoofolható siteverify-kimaradás ne nyisson kaput a botoknak). A `conversion` route alacsony kockázatú tel/mailto eventeknél degraded-accept-tel kompenzál (lásd `degraded.ts`).
+  - **Escape hatch:** `TURNSTILE_FAILOPEN=1` env-flag-gel kapcsolható fail-OPEN (allow-through API-hibánál), ha egy Turnstile-incidens alatt a legitim forgalom átengedése fontosabb. Production default: **kikapcsolva** (fail-closed).
+  - **Megjegyzés:** ez a bekezdés korábban fail-open-t írt; a kód (`turnstile.ts` + `tests/turnstile.test.ts`) szándékosan fail-closed-ra váltott egy security-fix során — a doc most ehhez igazodik.
 
 ## 11. Failed API calls → R2 dead-letter
 

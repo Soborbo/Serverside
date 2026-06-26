@@ -12,6 +12,7 @@ import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
 import { getSiteConfig } from '../lib/config';
+import { recordDeliveries } from '../lib/ledger';
 import type { HashedUserData } from '../lib/hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
@@ -48,6 +49,16 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
     try {
       const success = await retrySingle(env, record);
       if (success) {
+        // A sikeres retry-t 'retry' origin-nal könyveljük a deliveries táblába,
+        // különben a reconciliation (csak 'fanout'-ot számolt accepted-ként) hamis
+        // coverage_drift CRITICAL-t adna minden DLQ-ból visszanyert kézbesítésre.
+        await recordDeliveries(env, {
+          event_id: String(record.event_payload.event_id ?? ''),
+          site_id: record.site_id,
+          event_name: String(record.event_payload.event_name ?? ''),
+          origin: 'retry',
+          records: [{ platform: record.platform, status: 'accepted' }]
+        });
         await deleteDeadLetter(env, key);
         succeeded++;
       } else {

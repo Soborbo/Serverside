@@ -253,7 +253,7 @@ export async function fetchReconInputs(
             COALESCE(SUM(status = 'accepted'), 0) AS accepted,
             COALESCE(SUM(status = 'rejected'), 0) AS rejected,
             COALESCE(SUM(status = 'skipped'), 0) AS skipped
-         FROM deliveries WHERE created_at >= ?1 AND origin = 'fanout'
+         FROM deliveries WHERE created_at >= ?1 AND origin IN ('fanout', 'retry')
          GROUP BY site_id, platform`
       )
         .bind(sinceIso)

@@ -5,7 +5,7 @@ import { getSiteConfig, type SiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
 import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
-import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
+import { sendToGA4MP, type GA4Payload, type GA4Result } from '../lib/ga4';
 import { sendToGoogleAdsCAPI, type GAdsPayload, type GAdsResult } from '../lib/gads';
 import { sendToTikTok, type TikTokPayload, type TikTokResult } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload, type LinkedInResult } from '../lib/linkedin';
@@ -283,7 +283,8 @@ export async function handleConversion(
     attribution,
     leadId,
     env,
-    ctx
+    ctx,
+    idem.suppressGa4
   );
 
   const totalDuration = Date.now() - startedAt;
@@ -405,8 +406,10 @@ function fanOut(
   attribution: AttributionParams | undefined,
   leadId: string | undefined,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  suppressGa4: boolean
 ): void {
+  try {
   const adAllowed = consentDecision.adAllowed;
 
   // Meta fbc: a kliens _fbc cookie-ja elsődleges; ha nincs, fbclid-ből építjük.
@@ -477,6 +480,7 @@ function fanOut(
     currency: payload.currency,
     city: payload.user_data?.city,
     postal_code: payload.user_data?.postal_code,
+    country: payload.user_data?.country,
     consent: consentDecision.consent,
     gclid: attribution?.gclid,
     gbraid: attribution?.gbraid,
@@ -519,7 +523,11 @@ function fanOut(
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
     : Promise.resolve({ success: true });
   const ga4Start = Date.now();
-  const ga4Promise = sendToGA4MP(siteConfig, ga4Payload);
+  // GA4 nem dedup-ol event_id-re (#16) → in-flight dupla-submitnél a GA4-leget
+  // kihagyjuk (skipped success), hogy ne duplázódjon a konverzió/revenue.
+  const ga4Promise: Promise<GA4Result> = suppressGa4
+    ? Promise.resolve({ success: true, skipped: true })
+    : sendToGA4MP(siteConfig, ga4Payload);
   const gadsStart = Date.now();
   const gadsPromise: Promise<GAdsResult> = adAllowed
     ? sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData)
@@ -680,4 +688,26 @@ function fanOut(
   );
 
   ctx.waitUntil(fanout);
+  } catch (setupErr) {
+    // A fan-out SZINKRON felépítése dobott (rendkívül ritka — pure payload-építés).
+    // A platform-hívások amúgy is Promise.allSettled+DLQ mögött vannak; ide csak egy
+    // váratlan setup-hiba juthat. Ne némán: CRITICAL log + alert, hogy az event ne
+    // tűnjön el nyom nélkül (a top-level catch különben 204-et adna némán).
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.FANOUT_SETUP_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.FANOUT_SETUP_FAILED],
+      site_id: siteConfig.site_id,
+      hostname,
+      event_name: payload.event_name,
+      error: setupErr instanceof Error ? setupErr.message : String(setupErr)
+    });
+    ctx.waitUntil(
+      sendAlert(env, TrackingErrorCode.FANOUT_SETUP_FAILED, {
+        site_id: siteConfig.site_id,
+        hostname,
+        event_name: payload.event_name
+      })
+    );
+  }
 }

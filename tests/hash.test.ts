@@ -124,6 +124,23 @@ describe('normalizeCountry', () => {
   it('returns undefined for unknown', () => {
     expect(normalizeCountry('Atlantis')).toBeUndefined();
   });
+  it('rejects EU (region, not a valid ISO 3166-1 alpha-2 country)', () => {
+    // #3: 'EU' korábban átment 'eu' invalid hash-ként → Meta EMQ / GAds match szennyezés.
+    expect(normalizeCountry('EU')).toBeUndefined();
+    expect(normalizeCountry('eu')).toBeUndefined();
+  });
+  it('rejects bogus 2-letter codes not on the ISO allowlist', () => {
+    expect(normalizeCountry('xx')).toBeUndefined();
+    expect(normalizeCountry('zz')).toBeUndefined();
+  });
+  it('maps raw "uk" to gb via the name map (uk is not ISO alpha-2)', () => {
+    expect(normalizeCountry('uk')).toBe('gb');
+  });
+  it('accepts real ISO codes beyond the core set', () => {
+    expect(normalizeCountry('DE')).toBe('de');
+    expect(normalizeCountry('fr')).toBe('fr');
+    expect(normalizeCountry('US')).toBe('us');
+  });
 });
 
 describe('sha256Hex', () => {

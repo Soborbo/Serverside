@@ -91,6 +91,32 @@ function negativeCachePut(hostname: string): void {
   negativeCache.set(hostname, Date.now() + NEGATIVE_CACHE_TTL_MS);
 }
 
+/**
+ * A konfigurált site-ok (KV-kulcsok) számának teljes, lapozott megszámolása.
+ * A sima `.list({ limit: 100 })` csendben csonkol 100 tenant fölött; ez cursor-loop
+ * a `list_complete`-ig. Hibatűrő: hiba esetén az addig számolt értéket adja vissza.
+ */
+export async function countSiteConfigs(env: Env): Promise<number> {
+  let count = 0;
+  let cursor: string | undefined;
+  try {
+    for (;;) {
+      const page = await env.SITE_CONFIG.list({ limit: 1000, cursor });
+      count += page.keys.length;
+      if (page.list_complete) break;
+      cursor = page.cursor;
+    }
+  } catch (err) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.KV_READ_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.KV_READ_FAILED],
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  return count;
+}
+
 export async function getSiteConfig(hostname: string, env: Env): Promise<SiteConfig | null> {
   if (negativeCacheHit(hostname)) {
     return null;

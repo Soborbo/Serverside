@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 import type { SiteConfig } from './config';
-import type { HashedUserData } from './hash';
+import { type HashedUserData, normalizeCity, normalizePostalCode, normalizeCountry } from './hash';
 import type { ConsentState } from './consent';
 import { getAccessToken } from './gads-oauth';
 import { logStructured } from '../types';
@@ -21,6 +21,7 @@ export interface GAdsPayload {
   currency?: string;
   city?: string;
   postal_code?: string;
+  country?: string;
   // Consent Mode v2 — EEA-attribúcióhoz erősen ajánlott. Ha hiányzik, a
   // konverzió lehet, hogy nem attribútálódik.
   consent?: ConsentState;
@@ -100,9 +101,17 @@ export async function sendToGoogleAdsCAPI(
     const addressInfo: Record<string, unknown> = {};
     if (hashedUserData.fn) addressInfo.hashedFirstName = hashedUserData.fn;
     if (hashedUserData.ln) addressInfo.hashedLastName = hashedUserData.ln;
-    if (payload.city) addressInfo.city = payload.city;
-    if (payload.postal_code) addressInfo.postalCode = payload.postal_code;
-    addressInfo.countryCode = siteConfig.country_code;
+    // Google Ads addressInfo PLAIN (nem hash), DE ugyanazt a normalizációt kell
+    // kapnia, mint Meta (CLAUDE.md #7). Nyers kliens-input ("  Bristol " /
+    // "SW1A 1AA") rontaná az Enhanced Conversions match rate-et.
+    const ct = normalizeCity(payload.city);
+    if (ct) addressInfo.city = ct;
+    const zp = normalizePostalCode(payload.postal_code);
+    if (zp) addressInfo.postalCode = zp;
+    // countryCode: a user country-ja elsőbbséget élvez, fallback a site default.
+    // normalizeCountry kiszűri az invalid kódokat (pl. 'EU'). Google uppercase-t vár.
+    const cc = normalizeCountry(payload.country) || normalizeCountry(siteConfig.country_code);
+    if (cc) addressInfo.countryCode = cc.toUpperCase();
     userIdentifiers.push({ addressInfo });
   }
 

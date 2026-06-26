@@ -184,12 +184,30 @@ const COUNTRY_NAME_TO_2: Record<string, string> = {
   america: 'us'
 };
 
+// Valós ISO 3166-1 alpha-2 kódok. Egy nyers 2-betűs input CSAK akkor megy át,
+// ha ezen a listán van — különben pl. 'EU' (régió, nem ország) invalid 'eu'
+// hash-ként/plain kódként szennyezné a Meta EMQ / Google Ads match-et (#3).
+const ISO_3166_1_ALPHA2 = new Set<string>([
+  'ad','ae','af','ag','ai','al','am','ao','aq','ar','as','at','au','aw','ax','az',
+  'ba','bb','bd','be','bf','bg','bh','bi','bj','bl','bm','bn','bo','bq','br','bs','bt','bv','bw','by','bz',
+  'ca','cc','cd','cf','cg','ch','ci','ck','cl','cm','cn','co','cr','cu','cv','cw','cx','cy','cz',
+  'de','dj','dk','dm','do','dz','ec','ee','eg','eh','er','es','et','fi','fj','fk','fm','fo','fr',
+  'ga','gb','gd','ge','gf','gg','gh','gi','gl','gm','gn','gp','gq','gr','gs','gt','gu','gw','gy',
+  'hk','hm','hn','hr','ht','hu','id','ie','il','im','in','io','iq','ir','is','it',
+  'je','jm','jo','jp','ke','kg','kh','ki','km','kn','kp','kr','kw','ky','kz',
+  'la','lb','lc','li','lk','lr','ls','lt','lu','lv','ly','ma','mc','md','me','mf','mg','mh','mk','ml','mm','mn','mo','mp','mq','mr','ms','mt','mu','mv','mw','mx','my','mz',
+  'na','nc','ne','nf','ng','ni','nl','no','np','nr','nu','nz','om','pa','pe','pf','pg','ph','pk','pl','pm','pn','pr','ps','pt','pw','py',
+  'qa','re','ro','rs','ru','rw','sa','sb','sc','sd','se','sg','sh','si','sj','sk','sl','sm','sn','so','sr','ss','st','sv','sx','sy','sz',
+  'tc','td','tf','tg','th','tj','tk','tl','tm','tn','to','tr','tt','tv','tw','tz',
+  'ua','ug','um','us','uy','uz','va','vc','ve','vg','vi','vn','vu','wf','ws','ye','yt','za','zm','zw'
+]);
+
 export function normalizeCountry(country: string | null | undefined): string | undefined {
   if (typeof country !== 'string') return undefined;
   const trimmed = country.trim().toLowerCase();
   if (trimmed.length === 0) return undefined;
 
-  if (trimmed.length === 2 && /^[a-z]{2}$/.test(trimmed)) return trimmed;
+  if (trimmed.length === 2 && ISO_3166_1_ALPHA2.has(trimmed)) return trimmed;
   if (trimmed.length === 3 && /^[a-z]{3}$/.test(trimmed)) {
     return COUNTRY_3_TO_2[trimmed.toUpperCase()] || undefined;
   }

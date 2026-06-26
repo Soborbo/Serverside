@@ -77,7 +77,12 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
       ? `${record.site_id}/${record.platform}/dead`
       : `${record.site_id}/${record.platform}/${dateStr}`;
 
-  const key = `${prefix}/${timeStr}_${safeEventId}_${record.retry_count}.json`;
+  // Egyediség-suffix: a kulcs másodperc-felbontású, és event_id hiányában a
+  // safeEventId 'unknown' — egy platform-kimaradás SOK eventet bukik ugyanabban a
+  // másodpercben, amik különben felülírnák egymást (R2 last-write-wins) → DLQ
+  // alulszámol épp amikor a legjobban kell. A random token garantálja az egyediséget.
+  const unique = crypto.randomUUID().slice(0, 8);
+  const key = `${prefix}/${timeStr}_${safeEventId}_${record.retry_count}_${unique}.json`;
 
   try {
     await env.DEAD_LETTER.put(key, JSON.stringify(record), {

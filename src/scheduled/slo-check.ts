@@ -1,5 +1,6 @@
 import type { Env } from '../env';
 import { sendAdminEmail, sendCriticalSMS } from '../lib/notify';
+import { countSiteConfigs } from '../lib/config';
 import { logStructured } from '../types';
 
 const PAGE_LIMIT = 1000;
@@ -32,7 +33,7 @@ async function countDlqRecords(env: Env): Promise<{ pending: number; dead: numbe
 }
 
 export async function handleSloCheck(env: Env): Promise<void> {
-  const sites = await env.SITE_CONFIG.list({ limit: 100 });
+  const siteCount = await countSiteConfigs(env);
   const { pending: pendingCount, dead: deadCount, truncated } = await countDlqRecords(env);
 
   const truncNote = truncated ? ` (≥${MAX_PAGES * PAGE_LIMIT} — list truncated)` : '';
@@ -76,7 +77,7 @@ export async function handleSloCheck(env: Env): Promise<void> {
   logStructured({
     level: 'info',
     message: 'SLO check completed',
-    sites_count: sites.keys.length,
+    sites_count: siteCount,
     dlq_pending: pendingCount,
     dlq_dead: deadCount,
     dlq_list_truncated: truncated

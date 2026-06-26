@@ -37,11 +37,12 @@ const ALLOWED_COUNTRIES = new Set(['GB', 'HU', 'EU', 'US', 'DE', 'FR', 'IT', 'ES
 const EEA_COUNTRIES = new Set(['HU', 'EU', 'DE', 'FR', 'IT', 'ES']);
 
 function parseArgs(args) {
-  const out = { input: null, out: null, kvNamespaceId: DEFAULT_SITE_CONFIG_NS };
+  const out = { input: null, out: null, kvNamespaceId: DEFAULT_SITE_CONFIG_NS, allowTestEventCode: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--input') out.input = args[++i];
     else if (args[i] === '--out') out.out = args[++i];
     else if (args[i] === '--kv-namespace-id') out.kvNamespaceId = args[++i];
+    else if (args[i] === '--allow-test-event-code') out.allowTestEventCode = true;
   }
   return out;
 }
@@ -61,7 +62,7 @@ function warn(m) {
   WARNINGS.push(m);
 }
 
-function validate(cfg) {
+function validate(cfg, opts = {}) {
   if (!cfg || typeof cfg !== 'object') return err('Input nem objektum.');
 
   if (!cfg.site_id || typeof cfg.site_id !== 'string') err('site_id kötelező (string).');
@@ -76,6 +77,8 @@ function validate(cfg) {
   if (!ALLOWED_COUNTRIES.has(cfg.country_code))
     err(`country_code érvénytelen (${cfg.country_code}); engedett: ${[...ALLOWED_COUNTRIES].join(', ')}.`);
   if (!cfg.currency || typeof cfg.currency !== 'string') err('currency kötelező (pl. "HUF", "GBP").');
+  else if (!/^[A-Z]{3}$/.test(cfg.currency))
+    err(`currency érvénytelen (3-betűs ISO 4217 kell, pl. "HUF", "GBP", "EUR"), kapott: ${cfg.currency}`);
 
   // Meta
   if (!cfg.meta || typeof cfg.meta !== 'object') err('meta blokk kötelező.');
@@ -83,10 +86,20 @@ function validate(cfg) {
     if (!/^\d{5,}$/.test(String(cfg.meta.pixel_id || '')))
       err(`meta.pixel_id érvénytelen (numerikus pixel ID kell), kapott: ${cfg.meta.pixel_id}`);
     if (!cfg.meta.access_token) err('meta.access_token kötelező (CAPI token).');
-    if (cfg.meta.test_event_code)
-      warn(
-        `meta.test_event_code = "${cfg.meta.test_event_code}" — PRODUCTION-ban KÖTELEZŐ kivenni (különben minden konverzió a Test stream-be megy).`
-      );
+    // #17 hard-gate: a test_event_code production-ban minden konverziót a Meta
+    // Test stream-be terel (csendes ROAS-nullázás). Alapból HIBA, ami megállítja
+    // a generálást; Sprint 4-8 alatti szándékos teszthez explicit opt-in kell:
+    //   node scripts/generate-site.mjs --input site.json --allow-test-event-code
+    if (cfg.meta.test_event_code) {
+      if (opts.allowTestEventCode)
+        warn(
+          `meta.test_event_code = "${cfg.meta.test_event_code}" — engedélyezve (--allow-test-event-code). PRODUCTION-ban KÖTELEZŐ kivenni!`
+        );
+      else
+        err(
+          `meta.test_event_code = "${cfg.meta.test_event_code}" jelen van — production-ban minden konverzió a Test stream-be menne (CLAUDE.md #17). Vedd ki a configból, VAGY Sprint 4-8 alatti szándékos teszthez add meg a --allow-test-event-code flaget.`
+        );
+    }
   }
 
   // GA4
@@ -209,7 +222,7 @@ function main() {
     exit(1);
   }
 
-  validate(cfg);
+  validate(cfg, { allowTestEventCode: args.allowTestEventCode });
   if (ERRORS.length) {
     console.error('❌ Validációs hibák:\n' + ERRORS.map((e) => '  - ' + e).join('\n'));
     exit(1);

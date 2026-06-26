@@ -49,4 +49,18 @@ describe('sanitizeErrorMessage', () => {
       'user [email] phone [phone]'
     );
   });
+
+  it('redacts echoed SHA-256 hashes (hashed user_data is still PII per #13)', () => {
+    const hash = 'a'.repeat(64);
+    expect(sanitizeErrorMessage(`Rejected em=${hash}`)).toBe('Rejected em=[hash]');
+  });
+
+  it('redacts shorter hex runs (32+ chars) too', () => {
+    const hex = 'deadbeef'.repeat(4); // 32 hex chars
+    expect(sanitizeErrorMessage(`hash ${hex} bad`)).toBe('hash [hash] bad');
+  });
+
+  it('does not redact short hex-like tokens (status codes, ids)', () => {
+    expect(sanitizeErrorMessage('error code abc123 at line 5')).toBe('error code abc123 at line 5');
+  });
 });
