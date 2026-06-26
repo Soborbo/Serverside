@@ -107,3 +107,94 @@ describe('validateTurnstile — successful upstream', () => {
     vi.restoreAllMocks();
   });
 });
+
+function makeKV() {
+  const store = new Map<string, string>();
+  return {
+    store,
+    get: async (k: string) => store.get(k) ?? null,
+    put: async (k: string, v: string) => {
+      store.set(k, v);
+    },
+    delete: async (k: string) => {
+      store.delete(k);
+    },
+    list: async () => ({ keys: [], list_complete: true })
+  } as unknown as KVNamespace & { store: Map<string, string> };
+}
+
+function mockFetch(body: unknown) {
+  return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  );
+}
+
+describe('validateTurnstile — verdict cache (TASK 1: 4-min token reuse)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('caches a positive verdict; reuse hits cache without a 2nd siteverify', async () => {
+    const fetchSpy = mockFetch({ success: true });
+    const cache = makeKV();
+    const env = makeEnv({ TURNSTILE_CACHE: cache });
+
+    const r1 = await validateTurnstile('tok-A', '1.2.3.4', env);
+    expect(r1.valid).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(cache.store.size).toBe(1);
+
+    // Second event in the 4-min window reuses the same token → cache hit.
+    const r2 = await validateTurnstile('tok-A', '1.2.3.4', env);
+    expect(r2.valid).toBe(true);
+    expect(r2.errorCodes).toContain('cache_hit');
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // NOT re-verified → no duplicate 403
+  });
+
+  it('lenient (default): timeout-or-duplicate on cache-miss is ACCEPTED', async () => {
+    mockFetch({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    const env = makeEnv({ TURNSTILE_CACHE: makeKV() });
+    const r = await validateTurnstile('reused-tok', undefined, env);
+    expect(r.valid).toBe(true);
+    expect(r.errorCodes).toContain('reused_token_accepted');
+  });
+
+  it('strict (TURNSTILE_STRICT=1): timeout-or-duplicate on cache-miss is REJECTED', async () => {
+    mockFetch({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    const env = makeEnv({ TURNSTILE_CACHE: makeKV(), TURNSTILE_STRICT: '1' });
+    const r = await validateTurnstile('reused-tok', undefined, env);
+    expect(r.valid).toBe(false);
+    expect(r.errorCodes).toContain('timeout-or-duplicate');
+  });
+
+  it('caches a definitive invalid verdict; 2nd call short-circuits without siteverify', async () => {
+    const fetchSpy = mockFetch({ success: false, 'error-codes': ['invalid-input-response'] });
+    const cache = makeKV();
+    const env = makeEnv({ TURNSTILE_CACHE: cache });
+
+    const r1 = await validateTurnstile('spam-tok', undefined, env);
+    expect(r1.valid).toBe(false);
+    const r2 = await validateTurnstile('spam-tok', undefined, env);
+    expect(r2.valid).toBe(false);
+    expect(r2.errorCodes).toContain('cache_hit_invalid');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT cache timeout-or-duplicate as invalid (could be a racing legit token)', async () => {
+    mockFetch({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    const cache = makeKV();
+    const env = makeEnv({ TURNSTILE_CACHE: cache, TURNSTILE_STRICT: '1' });
+    await validateTurnstile('dup-tok', undefined, env);
+    // strict-mode rejection, but nothing cached as invalid
+    expect(cache.store.size).toBe(0);
+  });
+
+  it('without a cache binding, verifies on every call (legacy behavior preserved)', async () => {
+    const fetchSpy = mockFetch({ success: true });
+    const env = makeEnv(); // no TURNSTILE_CACHE
+    await validateTurnstile('tok-B', undefined, env);
+    await validateTurnstile('tok-B', undefined, env);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});

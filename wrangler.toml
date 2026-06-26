@@ -88,6 +88,14 @@ id = "edd34e28eee847c09c26f9d9e3ea04ab"
 binding = "OAUTH_TOKENS"
 id = "f464647802e24a5dac60cacd66a9876a"
 
+# Turnstile token-verdikt cache (TASK 1). A kliens 4 percig újrahasználja a
+# tokent; enélkül a binding nélkül a 2.+ event "timeout-or-duplicate"-tal 403-azna
+# (konverzió-vesztés). A kód guardolt: binding nélkül a régi per-request verify
+# marad. Élesítés: `wrangler kv namespace create TURNSTILE_CACHE` → id ide.
+# [[kv_namespaces]]
+# binding = "TURNSTILE_CACHE"
+# id = "<wrangler kv namespace create kiírja>"
+
 # Durable Objects — quote state (60-min upgrade window, strong consistency)
 [[durable_objects.bindings]]
 name = "QUOTE_STATE"
