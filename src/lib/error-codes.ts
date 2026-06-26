@@ -9,6 +9,7 @@
  * - 700: GA4 MP specific
  * - 800: Google Ads specific
  * - 900: DLQ + Cron specific
+ * - 950: Reconciliation + observability
  */
 
 export enum TrackingErrorCode {
@@ -18,12 +19,15 @@ export enum TrackingErrorCode {
   R2_READ_FAILED = 'TRK-000-004',
   R2_WRITE_FAILED = 'TRK-000-005',
   DURABLE_OBJECT_FAILED = 'TRK-000-006',
+  LEDGER_WRITE_FAILED = 'TRK-000-007',
 
   INVALID_JSON = 'TRK-400-001',
   INVALID_PAYLOAD_STRUCTURE = 'TRK-400-002',
   MISSING_TURNSTILE_TOKEN = 'TRK-400-003',
   INVALID_TURNSTILE_TOKEN = 'TRK-400-004',
   TURNSTILE_API_UNAVAILABLE = 'TRK-400-005',
+  INVALID_LEAD_STATUS_PAYLOAD = 'TRK-400-006',
+  LEAD_STATUS_UNAUTHORIZED = 'TRK-400-007',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -64,7 +68,11 @@ export enum TrackingErrorCode {
   DLQ_DELETE_FAILED = 'TRK-900-003',
   CRON_RETRY_FAILED = 'TRK-900-004',
   MAX_RETRIES_EXCEEDED = 'TRK-900-005',
-  DLQ_CORRUPT_RECORD = 'TRK-900-006'
+  DLQ_CORRUPT_RECORD = 'TRK-900-006',
+
+  RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
+  RECON_COVERAGE_DRIFT = 'TRK-950-002',
+  RECON_QUERY_FAILED = 'TRK-950-003'
 }
 
 export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
@@ -74,11 +82,14 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.R2_READ_FAILED]: 'R2 bucket read operation failed',
   [TrackingErrorCode.R2_WRITE_FAILED]: 'R2 bucket write operation failed',
   [TrackingErrorCode.DURABLE_OBJECT_FAILED]: 'Durable Object operation failed',
+  [TrackingErrorCode.LEDGER_WRITE_FAILED]: 'D1 ledger write operation failed',
   [TrackingErrorCode.INVALID_JSON]: 'Request body is not valid JSON',
   [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'Payload missing required fields',
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'Turnstile token absent from payload',
   [TrackingErrorCode.INVALID_TURNSTILE_TOKEN]: 'Turnstile validation API rejected token',
   [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'Turnstile validation API returned non-2xx',
+  [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'Lead-status payload missing or invalid fields',
+  [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'Lead-status request failed admin authentication',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -116,7 +127,12 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.DLQ_DELETE_FAILED]: 'Failed to delete DLQ record after successful retry',
   [TrackingErrorCode.CRON_RETRY_FAILED]: 'Cron retry handler encountered unhandled error',
   [TrackingErrorCode.MAX_RETRIES_EXCEEDED]: 'DLQ record reached max retry count',
-  [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed'
+  [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed',
+  [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
+    'Vendor delivery failure rate exceeded threshold (reconciliation)',
+  [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
+    'Eligible events did not reach the platform — coverage drift (reconciliation)',
+  [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed'
 };
 
 export type ErrorSeverity = 'critical' | 'warning' | 'info';
@@ -165,8 +181,14 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DLQ_LIST_FAILED]: 'warning',
   [TrackingErrorCode.DLQ_DELETE_FAILED]: 'warning',
   [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'warning',
+  [TrackingErrorCode.LEDGER_WRITE_FAILED]: 'warning',
+  [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'warning',
+  [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]: 'warning',
+  [TrackingErrorCode.RECON_COVERAGE_DRIFT]: 'warning',
+  [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
+  [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',
   [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'info',
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'info',
   [TrackingErrorCode.INVALID_TURNSTILE_TOKEN]: 'info',

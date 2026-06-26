@@ -1,5 +1,8 @@
 import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
+import { handleLeadStatus } from './routes/lead-status';
+import { handleAdmin } from './routes/admin';
+import { handleAdminUI } from './routes/admin-ui';
 import { handleHealth } from './routes/health';
 import { handleDebugGA4 } from './routes/debug-ga4';
 import { handleOAuthCallback } from './routes/oauth-callback';
@@ -11,6 +14,7 @@ import { QuoteStateObject } from './durable-objects/quote-state';
 import { handleScheduledRetry, retrySingle } from './scheduled/retry';
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
+import { handleReconciliation } from './scheduled/reconciliation';
 import {
   writeDeadLetter,
   backoffSeconds,
@@ -50,6 +54,25 @@ export default {
         return handleConversion(request, env, ctx);
       }
 
+      // CRM offline-loop — lead lifecycle státuszok → Enhanced Conversions for
+      // Leads (admin-auth, server-to-server). Lásd routes/lead-status.ts.
+      if (request.method === 'POST' && url.pathname === '/api/event/lead-status') {
+        return handleLeadStatus(request, env, ctx);
+      }
+
+      // Admin UI — önálló dashboard-váz (nincs benne secret), a 4 admin-endpointot
+      // fogyasztja böngészőből. NEM az /api/event/admin/ prefix alatt, hogy ne
+      // legyen auth-gated (a token a fetch-headerben megy). Lásd routes/admin-ui.ts.
+      if (request.method === 'GET' && url.pathname === '/api/event/admin-ui') {
+        return handleAdminUI();
+      }
+
+      // Admin read/ops API (reconciliation, lead-trail, DLQ replay, health-check).
+      // Mind X-Admin-Token mögött. Lásd routes/admin.ts.
+      if (url.pathname.startsWith('/api/event/admin/')) {
+        return handleAdmin(request, env, ctx);
+      }
+
       if (request.method === 'OPTIONS') {
         return new Response(null, {
           status: 204,
@@ -74,6 +97,9 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     if (event.cron === '0 8 * * *') {
       ctx.waitUntil(handleDailyDigest(env));
+    } else if (event.cron === '15 8 * * *') {
+      // Napi reconciliation (drift-detektálás a D1 ledger fölött), a digest után.
+      ctx.waitUntil(handleReconciliation(env));
     } else if (event.cron === '*/30 * * * *') {
       ctx.waitUntil(handleSloCheck(env));
     } else if (event.cron === '0 * * * *') {
