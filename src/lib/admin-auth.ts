@@ -16,17 +16,12 @@ export function authenticateAdmin(request: Request, env: Env): boolean {
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    // Still do a constant-time comparison against b to prevent length leak
-    // via timing — but the result is always false.
-    let acc = 1;
-    for (let i = 0; i < b.length; i++) acc |= b.charCodeAt(i) ^ b.charCodeAt(i);
-    void acc;
-    return false;
-  }
-  let mismatch = 0;
+  // A hossz-különbséget az akkumulátorba hajtjuk (nem korai return-nel), és
+  // mindig `a.length` iterációt futunk — így a „rossz hossz" és a „jó hossz,
+  // rossz bájt" eset nem különböztethető meg időzítésből.
+  let mismatch = a.length ^ b.length;
   for (let i = 0; i < a.length; i++) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i < b.length ? i : 0);
   }
   return mismatch === 0;
 }

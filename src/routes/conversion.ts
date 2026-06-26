@@ -20,6 +20,7 @@ import { recordFanoutMetric, recordConversionMetric } from '../lib/metrics';
 import { sendAlert } from '../lib/notify';
 import {
   checkIdempotency,
+  markDispatched,
   recordEventRaw,
   recordConsentReceipt,
   recordDeliveries,
@@ -547,6 +548,10 @@ function fanOut(
           records: deliveryRecords
         })
       ]);
+
+      // A fan-out lefutott → jelöljük kézbesítettnek (idempotencia). Csak ezután,
+      // hogy egy crash-elt, soha-le-nem-kézbesített event újraküldhető maradjon.
+      await markDispatched(env, siteConfig.site_id, payload.event_name, payload.event_id);
 
       logStructured({
         level: 'info',

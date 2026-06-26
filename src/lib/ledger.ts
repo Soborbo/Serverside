@@ -128,15 +128,25 @@ function id(): string {
 }
 
 interface IdempotencyDecision {
-  /** Elinduljon-e a fan-out (első látás ÉS nem tiltott). */
+  /** Elinduljon-e a fan-out. */
   shouldDispatch: boolean;
   /** Hányadszor láttuk ezt a kulcsot (1 = első). */
   seenCount: number;
 }
 
 /**
- * Atomic-style upsert. Első látáskor beszúr (seen_count=1) → dispatch. Ismételt
- * látáskor inkrementál → skip. do_not_replay=1 → soha ne dispatch-eljen.
+ * Atomic-style upsert. A kapu a `dispatched` flag-en dől el, NEM a seen_count-on:
+ *  - első látás → beszúr dispatched=0 → dispatch.
+ *  - ismételt látás, de a korábbi fan-out MÉG nem fejeződött be (dispatched=0,
+ *    pl. a Worker meghalt kézbesítés előtt VAGY épp folyamatban) → ÚJRA dispatch.
+ *    Ez biztonságos: a vendorok event_id-vel dedup-olnak (CLAUDE.md 16.), tehát
+ *    legrosszabb esetben dupla hívás, NEM dupla konverzió.
+ *  - ismételt látás, és a korábbi már sikeresen kézbesült (dispatched=1) → skip.
+ *
+ * Így soha nem nyomunk el egy SOHA-le-nem-kézbesített konverziót (a korábbi
+ * seen_count===1 kapu épp ezt a hibát okozta: crash után a 2. látás véglegesen
+ * elnyelte a valós konverziót). A `markDispatched` állítja 1-re a fan-out után.
+ *
  * D1-hiba VAGY hiányzó binding → fail-open (shouldDispatch=true).
  */
 export async function checkIdempotency(
@@ -152,21 +162,46 @@ export async function checkIdempotency(
     const row = await env.LEDGER.prepare(
       `INSERT INTO idempotency
          (idempotency_key, site_id, event_name, event_id, first_seen_at, last_seen_at, seen_count, dispatched, do_not_replay)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 1, 0)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0)
        ON CONFLICT(idempotency_key) DO UPDATE SET
          last_seen_at = excluded.last_seen_at,
          seen_count = seen_count + 1
-       RETURNING seen_count, do_not_replay`
+       RETURNING seen_count, dispatched, do_not_replay`
     )
       .bind(key, siteId, eventName, eventId, now, now)
-      .first<{ seen_count: number; do_not_replay: number }>();
+      .first<{ seen_count: number; dispatched: number; do_not_replay: number }>();
 
     const seenCount = row?.seen_count ?? 1;
     const blocked = (row?.do_not_replay ?? 0) === 1;
-    return { shouldDispatch: seenCount === 1 && !blocked, seenCount };
+    const alreadyDispatched = (row?.dispatched ?? 0) === 1;
+    return { shouldDispatch: !blocked && !alreadyDispatched, seenCount };
   } catch (err) {
     ledgerError('checkIdempotency', err, { site_id: siteId, event_name: eventName });
     return { shouldDispatch: true, seenCount: 1 };
+  }
+}
+
+/**
+ * A fan-out sikeres lefutása után jelöli az idempotency-rekordot kézbesítettnek
+ * (dispatched=1). Innentől egy ismételt submit skip-elődik. Best-effort: ha ez
+ * elbukik (vagy a Worker előbb meghal), a flag 0 marad → egy későbbi duplikátum
+ * újraküld (vendor-dedup véd) — ami biztonságosabb, mint a konverzió-vesztés.
+ */
+export async function markDispatched(
+  env: Env,
+  siteId: string,
+  eventName: string,
+  eventId: string
+): Promise<void> {
+  if (!env.LEDGER) return;
+  try {
+    await env.LEDGER.prepare(
+      `UPDATE idempotency SET dispatched = 1 WHERE idempotency_key = ?`
+    )
+      .bind(buildIdempotencyKey(siteId, eventName, eventId))
+      .run();
+  } catch (err) {
+    ledgerError('markDispatched', err, { site_id: siteId, event_name: eventName });
   }
 }
 
@@ -406,6 +441,23 @@ export async function getLeadTrail(
     ledgerError('getLeadTrail', err, { site_id: siteId });
     return null;
   }
+}
+
+/**
+ * Eldönti, hogy egy offline-loop upload tiltott-e consent alapján (pure, tesztelhető).
+ *  - Ha a leadnek explicit ad_allowed=false consentje van → tiltott.
+ *  - Fail-closed (EEA): ha a site `require_consent`, ÉS nincs (vagy nem olvasható)
+ *    consent-rekord (leadConsent===null, ami D1-hibát IS jelenthet) → tiltott.
+ *    Így egy D1-kiesés nem fordítja át a „consent ismeretlen"-t „consent megadott"-ra.
+ *  - Egyébként (nem kötelező consent, és nincs explicit tiltás) → engedett.
+ */
+export function isOfflineUploadBlocked(
+  leadConsent: { ad_allowed: boolean } | null,
+  requireConsent: boolean
+): boolean {
+  if (leadConsent !== null && leadConsent.ad_allowed === false) return true;
+  if (requireConsent && leadConsent === null) return true;
+  return false;
 }
 
 function ledgerError(op: string, err: unknown, ctx: Record<string, unknown>): void {
