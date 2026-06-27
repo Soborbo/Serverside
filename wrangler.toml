@@ -72,6 +72,7 @@ head_sampling_rate = 1.0
 #   "0 8 * * *",        # Daily digest at 8 AM GMT
 #   "15 8 * * *",       # Reconciliation drift-check (D1 ledger) at 8:15 AM GMT
 #   "*/30 * * * *",     # SLO check every 30 min
+#   "30 3 * * *",       # Retention cleanup (D1 ledger + R2 'dead' archive) at 3:30 AM GMT
 #   "0 * * * *"         # DLQ retry every hour
 # ]
 
@@ -114,12 +115,24 @@ tag = "v1"
 new_classes = ["QuoteStateObject"]
 
 # R2 bucket for dead-letter queue
-# NOTE: created with default jurisdiction (ENAM). Spec calls for EU (Belgium)
-# for GDPR. If a re-creation is performed in the dashboard with eu jurisdiction,
-# update bucket_name accordingly.
+# ⚠️ GDPR P0 (go-live gate): the live `soborbo-tracking-dlq` bucket is in the
+# DEFAULT jurisdiction (location ENAM = North America), but the DLQ stores the
+# RAW event payload (email/phone/name/address for retry) → EU-subject PII must
+# reside in the EU jurisdiction. Remediation (do BEFORE Painless go-live):
+#   1) wrangler r2 bucket create soborbo-tracking-dlq-eu --jurisdiction eu
+#      (the EU-jurisdiction flag MUST be set at creation; it cannot be changed
+#       afterwards, and the Cloudflare MCP create tool ignores it — use wrangler.)
+#   2) drain any PENDING records from the old bucket first (run the DLQ retry
+#      cron / admin replay until `pending` reads 0 in the SLO check), so no
+#      un-delivered conversion is orphaned by the binding swap.
+#   3) switch the binding to the two lines marked EU below + redeploy.
+#   4) after a clean window, delete the old ENAM bucket.
 [[r2_buckets]]
 binding = "DEAD_LETTER"
 bucket_name = "soborbo-tracking-dlq"
+# EU jurisdiction (uncomment these two, comment the line above, after step 1-2):
+# bucket_name = "soborbo-tracking-dlq-eu"
+# jurisdiction = "eu"
 
 # ── D1 ledger (events_raw / idempotency / deliveries / consent_receipts /
 # lead_status) ───────────────────────────────────────────────────────────────
