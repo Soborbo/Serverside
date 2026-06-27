@@ -15,6 +15,7 @@ import { handleScheduledRetry, retrySingle } from './scheduled/retry';
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
 import { handleReconciliation } from './scheduled/reconciliation';
+import { handleRetention } from './scheduled/retention';
 import {
   writeDeadLetter,
   backoffSeconds,
@@ -102,6 +103,10 @@ export default {
       ctx.waitUntil(handleReconciliation(env));
     } else if (event.cron === '*/30 * * * *') {
       ctx.waitUntil(handleSloCheck(env));
+    } else if (event.cron === '30 3 * * *') {
+      // Napi retention cleanup (#8/#9) — D1 ledger operatív táblák + R2 'dead'
+      // archívum purge a megőrzési ablakon túl. Alacsony forgalmú időben (3:30).
+      ctx.waitUntil(handleRetention(env));
     } else if (event.cron === '0 * * * *') {
       // Csak akkor releváns, ha NINCS Queues binding (R2-fallback üzemmód).
       // Queues-módban a consumer (queue handler) végzi az újrapróbálkozást.

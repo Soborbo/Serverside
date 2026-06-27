@@ -1,0 +1,41 @@
+name: CI
+
+# Typecheck + test gate on every PR and on pushes to the main branches.
+# 273+ vitest tests existed but nothing ran them automatically — given the
+# client↔server contract-drift history (microsoft_ads vs msads), this gate is
+# the cheapest insurance against silent regressions.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: typecheck + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

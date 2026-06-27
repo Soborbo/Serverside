@@ -82,7 +82,10 @@ export enum TrackingErrorCode {
 
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
-  RECON_QUERY_FAILED = 'TRK-950-003'
+  RECON_QUERY_FAILED = 'TRK-950-003',
+
+  RETENTION_QUERY_FAILED = 'TRK-960-001',
+  RETENTION_R2_FAILED = 'TRK-960-002'
 }
 
 export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
@@ -153,7 +156,9 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Vendor delivery failure rate exceeded threshold (reconciliation)',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
     'Eligible events did not reach the platform — coverage drift (reconciliation)',
-  [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed'
+  [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed',
+  [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
+  [TrackingErrorCode.RETENTION_R2_FAILED]: 'Dead-letter R2 retention purge failed'
 };
 
 export type ErrorSeverity = 'critical' | 'warning' | 'info';
@@ -214,6 +219,8 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]: 'warning',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]: 'warning',
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
+  [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'warning',
+  [TrackingErrorCode.RETENTION_R2_FAILED]: 'warning',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',

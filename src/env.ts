@@ -84,6 +84,19 @@ export interface Env {
   // Default = 3600 (60 min) per spec.
   QUOTE_ALARM_SECONDS?: string;
 
+  // Retention (#8/#9). Operatív D1 táblák (events_raw/deliveries/idempotency) +
+  // R2 'dead' archívum megőrzési ablaka napokban. Unset → 90 nap. A
+  // consent_receipts és lead_status alapból MEGMARAD (compliance/üzleti érték);
+  // csak az alábbi külön env-ekkel purge-ölhető, jellemzően hosszabb ablakkal.
+  RETENTION_DAYS?: string;
+  // Opt-in: consent-receipt purge napokban (default OFF — a consent-proof marad).
+  CONSENT_RETENTION_DAYS?: string;
+  // Opt-in: lead_status purge napokban (default OFF — az offline-konverzió marad).
+  LEAD_RETENTION_DAYS?: string;
+  // R2 'dead' DLQ-archívum purge napokban. Unset → RETENTION_DAYS default (90).
+  // A PENDING (retry-olható) rekordokat SOHA nem purge-öljük.
+  DEAD_RECORD_RETENTION_DAYS?: string;
+
   // Optional (Twilio for SMS alerts)
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
