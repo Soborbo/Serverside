@@ -215,7 +215,7 @@ async function handleDlqReplay(
 }
 
 // ── GET /admin/health-check (onboarding validator #19) ───────────────────────
-type CheckStatus = 'PASS' | 'WARN' | 'FAIL';
+type CheckStatus = 'PASS' | 'WARN' | 'FAIL' | 'SKIP';
 interface Check {
   name: string;
   status: CheckStatus;
@@ -248,11 +248,14 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
       : 'absent (correct for production)'
   );
 
-  // GA4
+  // GA4 (optional — a migration site may omit the ga4 block; the gateway then
+  // skips the MP leg so its browser GA4 isn't double-counted).
   add(
     'ga4_config',
-    siteConfig.ga4.measurement_id && siteConfig.ga4.api_secret ? 'PASS' : 'FAIL',
-    `measurement_id=${present(siteConfig.ga4.measurement_id)}, api_secret=${present(siteConfig.ga4.api_secret)}`
+    !siteConfig.ga4 ? 'SKIP' : (siteConfig.ga4.measurement_id && siteConfig.ga4.api_secret ? 'PASS' : 'FAIL'),
+    !siteConfig.ga4
+      ? 'omitted — GA4 MP disabled for this site (browser GA4 only)'
+      : `measurement_id=${present(siteConfig.ga4.measurement_id)}, api_secret=${present(siteConfig.ga4.api_secret)}`
   );
 
   // Google Ads (opcionális — customer_id nélkül a gads no-op)

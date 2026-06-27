@@ -29,7 +29,8 @@ const EVENT_NAME_MAP: Record<string, string> = {
   email_conversion: 'Contact',
   whatsapp_conversion: 'Contact',
   quote_calculator_first_view: 'ViewContent',
-  video_play: 'ViewContent'
+  video_play: 'ViewContent',
+  booking_click: 'InitiateCheckout'
 };
 
 function mapEventName(internalName: string): string {

@@ -168,7 +168,9 @@ migrations_dir = "migrations"
 #   3) Astro projekt: client-lib/ másolás + Turnstile widget + GTM tisztítás
 #
 # Sprint 1 test-deploy alatt MIND kikommentezve — Worker workers.dev URL-en él.
-# Sprint 9 (Painless go-live) előtt aktiváld a Painless route-okat.
+# Sprint 9 (Painless go-live): a Painless route-ok AKTÍV-ra kapcsolva.
+# ⚠️ MERGE-ELÉS ELŐTT: a SITE_CONFIG KV-ban legyen "painlessremovals.com" és
+#    "www.painlessremovals.com" bejegyzés (különben a route 404-et ad). Lásd GO-LIVE.md.
 #
 # A gateway SAJÁT domainje: tracking.soborbo.co.uk — JELENLEG a Cloudflare
 # dashboardban kezelt custom domain, NINCS itt a deployban. Verziókövetésbe hozni
@@ -177,14 +179,14 @@ migrations_dir = "migrations"
 # [[routes]]
 # pattern = "tracking.soborbo.co.uk"
 # custom_domain = true
-#
-# [[routes]]
-# pattern = "painlessremovals.com/api/event/*"
-# zone_name = "painlessremovals.com"
-#
-# [[routes]]
-# pattern = "www.painlessremovals.com/api/event/*"
-# zone_name = "painlessremovals.com"
+
+[[routes]]
+pattern = "painlessremovals.com/api/event/*"
+zone_name = "painlessremovals.com"
+
+[[routes]]
+pattern = "www.painlessremovals.com/api/event/*"
+zone_name = "painlessremovals.com"
 #
 # Sprint 10 ütemezett rollout — uncomment ahogy haladsz site-onként.
 # (Spec: 10-sprint-multi-tenant-rollout.md táblázat)
