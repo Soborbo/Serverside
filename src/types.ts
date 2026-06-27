@@ -77,7 +77,8 @@ export const ALLOWED_EVENT_NAMES: ReadonlySet<string> = new Set([
   'email_conversion',
   'whatsapp_conversion',
   'quote_calculator_first_view',
-  'video_play'
+  'video_play',
+  'booking_click'
 ]);
 
 // Meta CAPI event_id cap (CLAUDE.md #2/#16). A valós id egy 36 karakteres UUID,

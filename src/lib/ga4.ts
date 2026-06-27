@@ -43,6 +43,10 @@ export async function sendToGA4MP(
   payload: GA4Payload,
   options: { debug?: boolean } = {}
 ): Promise<GA4Result> {
+  // Multi-tenant: a site may omit the `ga4` block entirely (migration sites whose
+  // browser GA4 already fires via GTM — sending GA4 MP here too would double-count,
+  // GA4 does not dedup on event_id). No ga4 config → skip the MP leg as a no-op success.
+  if (!siteConfig.ga4) return { success: true, skipped: true };
   const startedAt = Date.now();
   const endpoint = options.debug ? GA4_DEBUG_ENDPOINT : GA4_ENDPOINT;
   const url = `${endpoint}?measurement_id=${siteConfig.ga4.measurement_id}&api_secret=${siteConfig.ga4.api_secret}`;
