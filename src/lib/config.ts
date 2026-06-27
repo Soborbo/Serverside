@@ -11,7 +11,10 @@ export interface SiteConfig {
     access_token: string;
     test_event_code?: string | null;
   };
-  ga4: {
+  // Optional: a migration site may omit `ga4` so the gateway does NOT send GA4 MP
+  // (its browser GA4 already fires via GTM; sending here too would double-count —
+  // GA4 does not dedup on event_id). Absent → the GA4 MP leg is skipped. See ga4.ts.
+  ga4?: {
     measurement_id: string;
     api_secret: string;
   };

@@ -525,7 +525,7 @@ function fanOut(
   const ga4Start = Date.now();
   // GA4 nem dedup-ol event_id-re (#16) → in-flight dupla-submitnél a GA4-leget
   // kihagyjuk (skipped success), hogy ne duplázódjon a konverzió/revenue.
-  const ga4Promise: Promise<GA4Result> = suppressGa4
+  const ga4Promise: Promise<GA4Result> = (suppressGa4 || !siteConfig.ga4)
     ? Promise.resolve({ success: true, skipped: true })
     : sendToGA4MP(siteConfig, ga4Payload);
   const gadsStart = Date.now();
