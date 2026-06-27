@@ -1,3 +1,15 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# event-gateway — there is ONE worker, and THIS top-level config IS production.
+#   • Live worker: `event-gateway`, served on custom domain tracking.soborbo.co.uk
+#     (see the [[routes]] note near the bottom of this file).
+#   • Deploy production:  wrangler deploy        (NO --env)
+#   • Local test:         wrangler dev           (or `wrangler deploy --dry-run`)
+#   Do NOT add an `[env.production]` block: Wrangler appends the environment name
+#   to the worker name, so `--env production` would deploy to a SEPARATE worker
+#   `event-gateway-production` (and the custom domain would not follow). One
+#   worker → one top-level config. This file is the source of truth — the active
+#   bindings below already match the live worker; keep them in sync. See DEPLOY.md.
+# ═════════════════════════════════════════════════════════════════════════════
 name = "event-gateway"
 main = "src/worker.ts"
 compatibility_date = "2026-06-25"
@@ -159,6 +171,15 @@ migrations_dir = "migrations"
 # Sprint 9 (Painless go-live): a Painless route-ok AKTÍV-ra kapcsolva.
 # ⚠️ MERGE-ELÉS ELŐTT: a SITE_CONFIG KV-ban legyen "painlessremovals.com" és
 #    "www.painlessremovals.com" bejegyzés (különben a route 404-et ad). Lásd GO-LIVE.md.
+#
+# A gateway SAJÁT domainje: tracking.soborbo.co.uk — JELENLEG a Cloudflare
+# dashboardban kezelt custom domain, NINCS itt a deployban. Verziókövetésbe hozni
+# = az alábbi blokk uncomment-je; ekkor a `wrangler deploy` átveszi a kezelését (a
+# meglévő custom domaint reconcile-álja, nem törli). Go-live alatt NE most flippeld.
+# [[routes]]
+# pattern = "tracking.soborbo.co.uk"
+# custom_domain = true
+
 [[routes]]
 pattern = "painlessremovals.com/api/event/*"
 zone_name = "painlessremovals.com"
