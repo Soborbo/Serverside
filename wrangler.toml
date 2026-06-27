@@ -114,25 +114,25 @@ class_name = "QuoteStateObject"
 tag = "v1"
 new_classes = ["QuoteStateObject"]
 
-# R2 bucket for dead-letter queue
-# ⚠️ GDPR P0 (go-live gate): the live `soborbo-tracking-dlq` bucket is in the
-# DEFAULT jurisdiction (location ENAM = North America), but the DLQ stores the
-# RAW event payload (email/phone/name/address for retry) → EU-subject PII must
-# reside in the EU jurisdiction. Remediation (do BEFORE Painless go-live):
-#   1) wrangler r2 bucket create soborbo-tracking-dlq-eu --jurisdiction eu
-#      (the EU-jurisdiction flag MUST be set at creation; it cannot be changed
-#       afterwards, and the Cloudflare MCP create tool ignores it — use wrangler.)
-#   2) drain any PENDING records from the old bucket first (run the DLQ retry
-#      cron / admin replay until `pending` reads 0 in the SLO check), so no
-#      un-delivered conversion is orphaned by the binding swap.
-#   3) switch the binding to the two lines marked EU below + redeploy.
-#   4) after a clean window, delete the old ENAM bucket.
+# R2 bucket for dead-letter queue — EU jurisdiction (GDPR P0).
+# The DLQ stores the RAW event payload (email/phone/name/address for retry), so
+# EU-subject PII must reside in the EU jurisdiction. The active bucket below is
+# `soborbo-tracking-dlq-eu` (location EEUR), created 2026-06-27 with:
+#   wrangler r2 bucket create soborbo-tracking-dlq-eu --jurisdiction eu
+# (the jurisdiction flag is settable ONLY at creation, and the Cloudflare MCP
+#  create tool ignores it, so wrangler is required.)
+#
+# The previous bucket `soborbo-tracking-dlq` (DEFAULT/ENAM) is retained, NOT
+# deleted: its 9 objects were verified to be test-only dead-letters (site_id
+# `test-painless`, dated 2026-04-29, synthetic event IDs, all far past the 24h
+# retry window), so the binding swap orphans nothing live. Delete it once the
+# test archive is no longer wanted:  wrangler r2 bucket delete soborbo-tracking-dlq
 [[r2_buckets]]
 binding = "DEAD_LETTER"
-bucket_name = "soborbo-tracking-dlq"
-# EU jurisdiction (uncomment these two, comment the line above, after step 1-2):
-# bucket_name = "soborbo-tracking-dlq-eu"
-# jurisdiction = "eu"
+bucket_name = "soborbo-tracking-dlq-eu"
+jurisdiction = "eu"
+# Old default/ENAM bucket (retained as frozen test archive — see note above):
+# bucket_name = "soborbo-tracking-dlq"
 
 # ── D1 ledger (events_raw / idempotency / deliveries / consent_receipts /
 # lead_status) ───────────────────────────────────────────────────────────────

@@ -30,15 +30,18 @@ listája — nem helyettesíti a `CLAUDE.md`-t, hanem operatívan kikényszerít
 ## B. GDPR / adat-rezidencia (hard gate)
 
 - [ ] **R2 DLQ EU jurisdikció** — a `DEAD_LETTER` bucket EU-jurisdikciós.
-      A live `soborbo-tracking-dlq` **default/ENAM** (észak-amerikai), de a DLQ
-      NYERS PII-t tárol → tilos EU-érintettnél. Lépések (`wrangler.toml` R2-komment):
-      1. `wrangler r2 bucket create soborbo-tracking-dlq-eu --jurisdiction eu`
-         (a jurisdikció CSAK létrehozáskor állítható; a Cloudflare MCP figyelmen
-         kívül hagyja a flaget → **wrangler-rel** kell).
-      2. a régi bucket PENDING rekordjait leüríteni (DLQ-retry/admin replay, amíg az
-         SLO-check `pending = 0`), hogy egy konverzió se árválkodjon el a swapnél.
-      3. `wrangler.toml`: átállítani a bindinget az EU-sorokra + redeploy.
-      4. tiszta ablak után a régi ENAM bucket törlése.
+      A DLQ NYERS PII-t tárol → tilos default/ENAM bucketben EU-érintettnél. Állapot:
+      1. ✅ **KÉSZ:** `soborbo-tracking-dlq-eu` létrehozva (location **EEUR**, 2026-06-27,
+         `wrangler r2 bucket create ... --jurisdiction eu`). A jurisdikció CSAK
+         létrehozáskor állítható; a Cloudflare MCP figyelmen kívül hagyja → wrangler kell.
+      2. ✅ **N/A:** a régi `soborbo-tracking-dlq` (ENAM) 9 objektuma igazoltan
+         **csak teszt** (site_id `test-painless`, 2026-04-29, szintetikus event_id-k,
+         mind a 24h retry-ablakon kívül) → a swap semmi élőt nem árvít el. Nincs drain.
+      3. ✅ **KÉSZ a kódban:** `wrangler.toml` `DEAD_LETTER` binding már az EU-bucketre
+         mutat (`claude/r2-dlq-eu-jurisdiction` PR). **Hátra van:** merge + a következő
+         `wrangler deploy` (a Painless go-live deploy vigye be, NE staging-mode main-ből).
+      4. ⏳ **Opcionális:** tiszta ablak után a régi ENAM bucket törlése
+         (`wrangler r2 bucket delete soborbo-tracking-dlq`) — csak teszt-archívum.
 - [ ] **D1 ledger EU** — az `event-gateway-ledger` D1 `weur` (EU). ✅ már EU
       (created 2026-06-26), csak igazold deploy előtt.
 - [ ] **Retention env** — beállítva (vagy tudatosan a 90-napos default elfogadva):
