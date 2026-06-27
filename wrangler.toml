@@ -129,10 +129,10 @@ new_classes = ["QuoteStateObject"]
 #   4) after a clean window, delete the old ENAM bucket.
 [[r2_buckets]]
 binding = "DEAD_LETTER"
-bucket_name = "soborbo-tracking-dlq"
+# bucket_name = "soborbo-tracking-dlq"  # ENAM (old) — superseded by the EU bucket below (GDPR P0)
 # EU jurisdiction (uncomment these two, comment the line above, after step 1-2):
-# bucket_name = "soborbo-tracking-dlq-eu"
-# jurisdiction = "eu"
+bucket_name = "soborbo-tracking-dlq-eu"
+jurisdiction = "eu"
 
 # ── D1 ledger (events_raw / idempotency / deliveries / consent_receipts /
 # lead_status) ───────────────────────────────────────────────────────────────
