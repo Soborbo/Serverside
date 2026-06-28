@@ -84,6 +84,12 @@ export interface Env {
   // Default = 3600 (60 min) per spec.
   QUOTE_ALARM_SECONDS?: string;
 
+  // Optional: Data Manager API dry-run. Set to "1" to send events:ingest with
+  // validateOnly=true (request is validated by Google but NOT executed — no
+  // conversions recorded). Use during the parallel-run window before GCP setup
+  // is fully live. Default (unset) = live ingestion.
+  DATAMANAGER_VALIDATE_ONLY?: string;
+
   // Retention (#8/#9). Operatív D1 táblák (events_raw/deliveries/idempotency) +
   // R2 'dead' archívum megőrzési ablaka napokban. Unset → 90 nap. A
   // consent_receipts és lead_status alapból MEGMARAD (compliance/üzleti érték);

@@ -2,8 +2,9 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { getSiteConfig } from '../lib/config';
 import { authenticateAdmin } from '../lib/admin-auth';
-import { hashUserData, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
-import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
+import { hashUserDataForGoogle, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
+import { type GAdsPayload } from '../lib/gads';
+import { sendToDataManager } from '../lib/datamanager';
 import { sendToGA4MP } from '../lib/ga4';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
@@ -155,7 +156,10 @@ export async function handleLeadStatus(
       has_consent_record: leadConsent !== null
     });
   } else if (siteConfig.gads.customer_id) {
-    const hashed = await hashUserData(
+    // Model 2: the server is Google-Ads-offline-only (Enhanced Conversions for
+    // Leads), delivered via the Data Manager API. The email hash MUST use the
+    // Google normalization (Gmail dot/plus strip), NOT the Meta rule.
+    const hashed = await hashUserDataForGoogle(
       body.user_data ?? {},
       siteConfig.country_code as CountryCode
     );
@@ -165,10 +169,12 @@ export async function handleLeadStatus(
       event_time: eventTimeSec,
       value: body.value,
       currency: body.currency ?? siteConfig.currency,
-      city: body.user_data?.city ?? undefined,
-      postal_code: body.user_data?.postal_code ?? undefined
+      // city is dropped by the Data Manager (no AddressInfo.city field); only
+      // postal_code/country (plain) are carried into the address identifier.
+      postal_code: body.user_data?.postal_code ?? undefined,
+      country: body.user_data?.country ?? undefined
     };
-    const result = await sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashed);
+    const result = await sendToDataManager(siteConfig, env, gadsPayload, hashed);
     uploadedToGads = result.success;
     gadsErrorCode = result.error_code;
 

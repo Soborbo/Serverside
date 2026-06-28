@@ -7,7 +7,8 @@
  * - 500: Configuration errors
  * - 600: Meta CAPI specific
  * - 700: GA4 MP specific
- * - 800: Google Ads specific
+ * - 800: Google Ads specific (legacy uploadClickConversions)
+ * - 840: Google Data Manager API specific (events:ingest — offline conversions)
  * - 900: DLQ + Cron specific
  * - 950: Reconciliation + observability
  */
@@ -65,6 +66,13 @@ export enum TrackingErrorCode {
   GADS_INVALID_CONVERSION_ACTION = 'TRK-800-008',
   GADS_NO_REFRESH_TOKEN = 'TRK-800-009',
   GADS_RATE_LIMITED = 'TRK-800-010',
+
+  DATAMANAGER_API_TIMEOUT = 'TRK-840-001',
+  DATAMANAGER_API_NETWORK_ERROR = 'TRK-840-002',
+  DATAMANAGER_API_REJECTED = 'TRK-840-003',
+  DATAMANAGER_AUTH_REJECTED = 'TRK-840-004',
+  DATAMANAGER_RATE_LIMITED = 'TRK-840-005',
+  DATAMANAGER_NOT_ALLOWLISTED = 'TRK-840-006',
 
   MSADS_DISPATCH_FAILED = 'TRK-810-001',
   MSADS_API_TIMEOUT = 'TRK-810-002',
@@ -151,6 +159,13 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.GADS_INVALID_CONVERSION_ACTION]: 'Conversion action ID does not exist',
   [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'No refresh token in KV for customer (run OAuth flow)',
   [TrackingErrorCode.GADS_RATE_LIMITED]: 'Google Ads API rate limit exceeded',
+  [TrackingErrorCode.DATAMANAGER_API_TIMEOUT]: 'Data Manager API call exceeded 5s timeout',
+  [TrackingErrorCode.DATAMANAGER_API_NETWORK_ERROR]: 'Network error reaching Data Manager API',
+  [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'Data Manager API returned non-2xx with error response',
+  [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'Data Manager API rejected authentication (401)',
+  [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'Data Manager API rate limit exceeded',
+  [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]:
+    'Data Manager destination/feature not allowlisted for this account (e.g. multi-source / store sales)',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'Microsoft Ads offline conversion upload failed',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'Microsoft Ads API call exceeded timeout',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'TikTok Events API call failed',
@@ -195,6 +210,8 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'critical',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'critical',
   [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'critical',
+  [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'critical',
+  [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]: 'critical',
   [TrackingErrorCode.FANOUT_SETUP_FAILED]: 'critical',
 
   [TrackingErrorCode.META_API_REJECTED]: 'warning',
@@ -207,6 +224,10 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_API_NETWORK_ERROR]: 'warning',
   [TrackingErrorCode.GADS_PARTIAL_FAILURE]: 'warning',
   [TrackingErrorCode.GADS_RATE_LIMITED]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_API_TIMEOUT]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_API_NETWORK_ERROR]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'warning',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'warning',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'warning',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'warning',

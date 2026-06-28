@@ -35,6 +35,8 @@
 - **NE** strip Gmail dot (`john.smith@gmail.com` MARAD `john.smith@gmail.com`)
 - Indok: Meta a literal stringet hash-eli — ha okoskodunk a saját normalizációval, nem fog egyezni a Meta belső rekordjával
 
+> **Platform-eltérés — Google Data Manager API:** a fenti email-szabály a **Meta** rule. A Google Data Manager (offline conversions / ECL, `lib/datamanager.ts`) **ellenkezőt** vár: gmail.com / googlemail.com címeknél a `@` előtt **strip a pontokat ÉS a plus-suffixet**, más domainnél nem. Ezért a Google láb **külön** normalizálót használ (`normalizeEmailForGoogle` / `hashUserDataForGoogle`), NEM a Meta-hash-t. Ha a Meta-hash-t küldenéd Google-nek, a Gmail-felhasználók EC match rate-je **csendben** romlik. (A telefon/név/postal/region szabály ugyanaz mindkét platformon — csak az email és a hash-lépés tér el.)
+
 ### Phone E.164 formátum
 
 - Strip ALL whitespace, dashes, parentheses, dots: `+44 (0)7123-456.789` → `+447123456789`
@@ -102,12 +104,16 @@
 - **NEM** millisec
 - Példa: `2026-04-29 10:30:00+00:00`
 
+> **Platform-eltérés — Google Data Manager API:** ez a formátum a **legacy `uploadClickConversions`** (`lib/gads.ts`, dormant) szabálya. A Data Manager API (`lib/datamanager.ts`) az `eventTimestamp`-et **RFC3339**-ben várja, `T` separatorral és `Z`-vel: `2026-06-10T20:07:01Z`. Tehát a Data Manager úton NE a `formatGAdsDateTime`-ot használd, hanem a `toRfc3339Seconds` helpert.
+
 ## 7. Google Ads `addressInfo` mezők
 
 - `hashedFirstName`, `hashedLastName`: **hashed**
 - `city`, `state`, `postalCode`, `countryCode`: **PLAIN** (nem hashed)
 
 Ez ellentétes Meta-val, ahol a city és postcode is hashelt. Mindegy ugyanaz a normalize, **csak a hash lépés különbözik** platform-onként.
+
+> **Data Manager API megfelelő:** ugyanez a hash-szabály áll a Data Manager `userData.address`-re is — `givenName`/`familyName` **hashed**, `regionCode`/`postalCode` **PLAIN**. Két különbség: (a) **nincs `city` mező** a Data Manager AddressInfo-ban (eldobjuk); (b) `countryCode` helyett `regionCode` a neve (továbbra is plain, 2-betűs ISO uppercase).
 
 ## 8. GA4 Measurement Protocol
 
