@@ -34,6 +34,16 @@ export interface SiteConfig {
   // Ads) konverziók NEM mennek el (GDPR fail-closed). Default (hiányzó/false):
   // backward-compat, ad-platform engedett. EEA-site-okon ajánlott true-ra állítani.
   require_consent?: boolean;
+
+  // Per-site CRM offline-loop token — a SAJÁT CRM-deployjának kiadott plaintext
+  // token SHA-256 hex-e. Ha jelen van, a /lead-status az `X-Admin-Token`-t KIZÁRÓLAG
+  // EHHEZ a hash-hez hasonlítja (constant-time) — a globális ADMIN_API_TOKEN NEM ad
+  // hozzáférést ehhez a site-hoz. Ez a tenant-határ: egy szivárgott token blast-
+  // radiusa 1 site, nem az egész flotta. Hash-elve tárolva → egy KV-olvasás SEM ad
+  // használható tokent. Ha HIÁNYZIK: a route visszaesik a globális ADMIN_API_TOKEN-re
+  // (operator-default a még-nem-kiadott site-okhoz). Lásd routes/lead-status.ts +
+  // az onboarding generate-site.mjs token-generálását.
+  crm_token_sha256?: string;
 }
 
 /**

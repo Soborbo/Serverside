@@ -1,7 +1,7 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { getSiteConfig } from '../lib/config';
-import { authenticateAdmin } from '../lib/admin-auth';
+import { authenticateLeadStatus } from '../lib/admin-auth';
 import { hashUserDataForGoogle, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
 import { type GAdsPayload } from '../lib/gads';
 import { sendToDataManager } from '../lib/datamanager';
@@ -88,7 +88,16 @@ export async function handleLeadStatus(
   const startedAt = Date.now();
   const hostname = new URL(request.url).hostname;
 
-  if (!authenticateAdmin(request, env)) {
+  // Site-feloldás ELŐSZÖR (hostname-alapú, CLAUDE.md 14.) — a per-site CRM-token
+  // auth EHHEZ a site-hoz kötött. Ismeretlen host → 404, fallback nélkül.
+  const siteConfig = await getSiteConfig(hostname, env);
+  if (!siteConfig) {
+    return json({ error: 'not_configured' }, 404);
+  }
+
+  // Per-site token: a globális ADMIN_API_TOKEN NEM ad hozzáférést egy saját tokennel
+  // rendelkező site-hoz. Rossz site tokenjével (cross-tenant kísérlet) → 401.
+  if (!(await authenticateLeadStatus(request, env, siteConfig))) {
     logStructured({
       level: 'warn',
       error_code: TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED,
@@ -116,11 +125,6 @@ export async function handleLeadStatus(
       duration_ms: Date.now() - startedAt
     });
     return json({ error: 'invalid_payload', valid_statuses: VALID_LEAD_STATUSES }, 400);
-  }
-
-  const siteConfig = await getSiteConfig(hostname, env);
-  if (!siteConfig) {
-    return json({ error: 'not_configured' }, 404);
   }
 
   const eventName = mapLeadStatusToEventName(body.status);
