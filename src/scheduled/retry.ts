@@ -7,7 +7,8 @@ import {
 } from '../lib/deadletter';
 import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
-import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
+import { type GAdsPayload } from '../lib/gads';
+import { sendToDataManager } from '../lib/datamanager';
 import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
@@ -117,7 +118,10 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<b
     return result.success;
   }
   if (record.platform === 'gads') {
-    const result = await sendToGoogleAdsCAPI(
+    // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager
+    // API-n megy, NEM a sunset uploadClickConversions-ön (az új adopternek
+    // CUSTOMER_NOT_ALLOWLISTED-et ad). A retry-nak UGYANAZT az utat kell használnia.
+    const result = await sendToDataManager(
       siteConfig,
       env,
       eventPayload as unknown as GAdsPayload,

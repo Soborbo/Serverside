@@ -66,9 +66,18 @@ export interface DriftFinding {
   detail: string;
 }
 
-/** GA4 MINDEN eventet kap; Meta + Google Ads csak az ad-jogosultakat (consent). */
-function expectedFor(platform: Platform, input: SiteReconInput): number {
-  return platform === 'ga4' ? input.events_total : input.ad_eligible;
+// Coverage-drift base. Modell 2-ben CSAK a Meta kapja meg MINDEN ad-jogosult
+// konverziós eventet a szerver-oldali fan-outon — ezért csak a Metára van értelmes
+// "expected" alap (ad_eligible). A click-ID forwarderek (TikTok/LinkedIn/MsAds) CSAK
+// akkor tüzelnek, ha a megfelelő click-ID jelen van, így az ad_eligible NEM a
+// coverage-alapjuk (őket a vendor-failure-rate méri). A GA4 és a Google Ads offline-
+// only (lead-status, origin='offline') → NEM ezen az úton mérjük. Egy nem-Meta
+// platform `null`-t kap → a coverage-blokk kihagyja (nincs hamis 0%-os drift).
+const COVERAGE_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['meta']);
+
+function coverageExpectedFor(platform: Platform, input: SiteReconInput): number | null {
+  if (!COVERAGE_PLATFORMS.has(platform)) return null;
+  return input.ad_eligible;
 }
 
 function round4(n: number): number {
@@ -115,8 +124,9 @@ export function computeSiteDrift(
     }
 
     // 2. Coverage drift — a jogosult eventek mekkora hányada ért el a platformra.
-    const expected = expectedFor(p.platform, input);
-    if (expected >= t.minSample) {
+    // null → ezen a platformon nincs értelmes coverage-alap (forwarder/offline).
+    const expected = coverageExpectedFor(p.platform, input);
+    if (expected !== null && expected >= t.minSample) {
       const coverage = p.accepted / expected;
       const shortfall = 1 - coverage;
       if (shortfall >= t.coverageShortfallCrit) {
@@ -186,7 +196,12 @@ export interface LeadCountRow {
   total: number;
 }
 
-const PLATFORMS: Platform[] = ['meta', 'ga4', 'gads'];
+// A szerver-oldali fan-out által ténylegesen kézbesített platformok (origin
+// 'fanout'/'retry'). Modell 2: GA4 és Google Ads NEM ezen az úton mennek (offline-
+// only, lead-status), ezért NEM szerepelnek itt — különben minden aktív site-on
+// permanens hamis coverage_drift CRITICAL keletkezne. A forwarderek (tiktok/
+// linkedin/msads) viszont itt vannak, hogy a vendor-failure-rate figyelje őket.
+const PLATFORMS: Platform[] = ['meta', 'tiktok', 'linkedin', 'msads'];
 
 /**
  * A három aggregált D1-lekérdezés sorait egy site-onkénti SiteReconInput-tá

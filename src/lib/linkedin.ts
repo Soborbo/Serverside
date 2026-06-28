@@ -124,7 +124,7 @@ export async function sendToLinkedIn(
       message: ERROR_DESCRIPTIONS[errorCode],
       site_id: siteConfig.site_id,
       event_name: payload.event_name,
-      error: err instanceof Error ? err.message : String(err),
+      error: sanitizeErrorMessage(err instanceof Error ? err.message : String(err)),
       duration_ms: Date.now() - startedAt
     });
     return { success: false, error_code: errorCode, error: isTimeout ? 'timeout' : String(err) };

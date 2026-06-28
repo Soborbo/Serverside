@@ -26,7 +26,12 @@ export async function handleOAuthCallback(request: Request, env: Env): Promise<R
 
   const result = await exchangeCodeForTokens(code, redirectUri, env);
   if (result.error) {
-    return new Response('OAuth exchange failed', { status: 500 });
+    // A state-nonce single-use → már elköltöttük (replay-védelem). Egy tranziens
+    // exchange-hiba esetén az operátornak újra kell indítania a flow-t /oauth-init-ről.
+    return new Response(
+      'OAuth exchange failed. Restart the flow at /api/event/oauth-init?customer_id=<id>.',
+      { status: 500 }
+    );
   }
 
   await storeRefreshToken(customerId, result.refreshToken, env);

@@ -16,6 +16,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import { argv, exit } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
@@ -139,6 +140,13 @@ function validate(cfg, opts = {}) {
       warn('gads.customer_id meg van adva, de nincs conversion_actions — a Google Ads konverziók kimaradnak.');
   }
 
+  // Per-site CRM token (opcionális input). Ha megadod, determinisztikusan
+  // hash-eljük; ha nem, a generátor generál egyet (lásd resolveCrmToken).
+  if (cfg.crm_token !== undefined && cfg.crm_token !== null) {
+    if (typeof cfg.crm_token !== 'string' || cfg.crm_token.length < 16)
+      err('crm_token érvénytelen (string, ≥16 karakter) vagy hagyd ki (akkor generálódik).');
+  }
+
   // Consent default ajánlás EEA-ra
   if (EEA_COUNTRIES.has(cfg.country_code) && cfg.require_consent !== true)
     warn(
@@ -171,6 +179,38 @@ function toSiteConfig(cfg) {
   return sc;
 }
 
+/**
+ * Per-site CRM offline-loop token. A KV-be CSAK a SHA-256 hash kerül
+ * (crm_token_sha256); a plaintext a crm-secret.env-be megy a CRM-deploynak.
+ * Ha az input ad `crm_token`-t → determinisztikus (azt hash-eljük). Ha nem →
+ * random 32 bájt (base64url), és figyelmeztetünk, hogy mentsd el MOST.
+ */
+function resolveCrmToken(cfg) {
+  let token = cfg.crm_token;
+  let generated = false;
+  if (!token) {
+    token = randomBytes(32).toString('base64url');
+    generated = true;
+  }
+  const hash = createHash('sha256').update(token).digest('hex');
+  return { token, hash, generated };
+}
+
+function crmSecretEnv(cfg, token) {
+  const url = `https://${cfg.hostnames[0]}/api/event/lead-status`;
+  return (
+    `# ${cfg.site_id} — CRM offline-loop secrets. Állítsd be a CRM-deploy secretjeiként\n` +
+    `# (wrangler secret put / dashboard). A token plaintextje CSAK ITT szerepel —\n` +
+    `# a Worker KV-jében csak a SHA-256 hash van. Ne commitold.\n` +
+    `TRACKING_WORKER_URL=${url}\n` +
+    `TRACKING_ADMIN_TOKEN=${token}\n` +
+    `# A CRM ezekkel konvertál minor→major értéket és tölti a user_data.country-t\n` +
+    `# (a Worker omit esetén a site currency-jére esik vissza).\n` +
+    `TRACKING_CURRENCY=${cfg.currency}\n` +
+    `TRACKING_COUNTRY_CODE=${cfg.country_code}\n`
+  );
+}
+
 function routeBlock(hostnames) {
   // A zóna a fő (apex) domain — a www-t is ugyanaz a zóna szolgálja ki.
   const apex = hostnames
@@ -200,6 +240,12 @@ function integrationChecklist(cfg) {
 - [ ] wrangler.toml: route-blokk hozzáadva (lásd routes.toml) → \`wrangler deploy\`
 - [ ] (ha Google Ads) OAuth elvégezve a customer_id-ra: GET /api/event/oauth-init (X-Admin-Token)
 ${cfg.meta.test_event_code ? '- [ ] ⚠️ test_event_code KIVÉVE a KV-ből élesítés előtt' : ''}
+
+## CRM offline-loop (server-to-server)
+- [ ] CRM-deploy secretjei beállítva a crm-secret.env-ből: \`TRACKING_WORKER_URL\` + \`TRACKING_ADMIN_TOKEN\`
+- [ ] A KV site-config tartalmazza a \`crm_token_sha256\`-ot (a kv-put.sh ezt felteszi) → a globális
+      ADMIN_API_TOKEN MÁR NEM ír ehhez a site-hoz (tenant-izoláció)
+- [ ] Teszt: a CRM \`lezart_nyert\` → POST /api/event/lead-status → 200; ROSSZ tokennel → 401
 
 ## Astro site oldal
 - [ ] client-lib/ (worker-tracking.ts + uuid.ts) bemásolva az Astro projekt src/lib/-jébe
@@ -235,24 +281,37 @@ function main() {
   }
 
   const siteConfig = toSiteConfig(cfg);
+  // Per-site CRM token: a hash a KV-be (SiteConfig), a plaintext a CRM-deploynak.
+  const crm = resolveCrmToken(cfg);
+  siteConfig.crm_token_sha256 = crm.hash;
+
   const json = JSON.stringify(siteConfig, null, 2);
   const routes = routeBlock(cfg.hostnames);
   const kv = kvPutCommands(cfg.hostnames, json, args.kvNamespaceId);
   const checklist = integrationChecklist(cfg);
+  const secretEnv = crmSecretEnv(cfg, crm.token);
 
   if (WARNINGS.length) console.error('⚠️  Figyelmeztetések:\n' + WARNINGS.map((w) => '  - ' + w).join('\n') + '\n');
+  if (crm.generated)
+    console.error(
+      `🔑 Per-site CRM token GENERÁLVA — mentsd el MOST (a KV csak a hash-t tárolja, visszafejteni nem lehet):\n   ${crm.token}\n`
+    );
 
   if (args.out) {
     mkdirSync(args.out, { recursive: true });
     writeFileSync(`${args.out}/site-config.json`, json + '\n');
     writeFileSync(`${args.out}/routes.toml`, routes + '\n');
     writeFileSync(`${args.out}/kv-put.sh`, '#!/usr/bin/env bash\nset -euo pipefail\n' + kv + '\n');
+    writeFileSync(`${args.out}/crm-secret.env`, secretEnv);
     writeFileSync(`${args.out}/INTEGRATION.md`, checklist);
-    console.error(`✅ Kiírva: ${args.out}/ (site-config.json, routes.toml, kv-put.sh, INTEGRATION.md)`);
+    console.error(
+      `✅ Kiírva: ${args.out}/ (site-config.json, routes.toml, kv-put.sh, crm-secret.env, INTEGRATION.md)`
+    );
   } else {
     console.log('=== KV site-config (' + cfg.hostnames.join(', ') + ') ===\n' + json);
     console.log('\n=== wrangler.toml route-blokk ===\n' + routes);
     console.log('\n=== KV put parancsok ===\n' + kv);
+    console.log('\n=== CRM-deploy secrets (crm-secret.env) ===\n' + secretEnv);
     console.log('\n=== Integrációs ellenőrzőlista ===\n' + checklist);
   }
 }

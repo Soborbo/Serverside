@@ -8,6 +8,9 @@
  * - 600: Meta CAPI specific
  * - 700: GA4 MP specific
  * - 800: Google Ads specific (legacy uploadClickConversions)
+ * - 810: Microsoft Ads (Bing) forwarder specific
+ * - 820: TikTok Events API forwarder specific
+ * - 830: LinkedIn Conversions API forwarder specific
  * - 840: Google Data Manager API specific (events:ingest — offline conversions)
  * - 900: DLQ + Cron specific
  * - 950: Reconciliation + observability

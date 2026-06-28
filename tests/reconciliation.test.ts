@@ -18,10 +18,13 @@ function site(partial: Partial<SiteReconInput> & { platforms: PlatformCounts[] }
   };
 }
 
+// Modell 2: a szerver-oldali fan-out a Metát + a click-ID forwardereket kézbesíti.
+// GA4/Google Ads offline-only → NEM ezen az úton mérve (lásd reconciliation.ts).
 const healthy: PlatformCounts[] = [
   { platform: 'meta', accepted: 100, rejected: 0, skipped: 0 },
-  { platform: 'ga4', accepted: 100, rejected: 0, skipped: 0 },
-  { platform: 'gads', accepted: 100, rejected: 0, skipped: 0 }
+  { platform: 'tiktok', accepted: 40, rejected: 0, skipped: 0 },
+  { platform: 'linkedin', accepted: 0, rejected: 0, skipped: 0 },
+  { platform: 'msads', accepted: 0, rejected: 0, skipped: 0 }
 ];
 
 describe('computeSiteDrift — healthy', () => {
@@ -48,10 +51,23 @@ describe('computeSiteDrift — vendor failure rate', () => {
     const input = site({
       events_total: 100,
       ad_eligible: 100,
-      platforms: [{ platform: 'gads', accepted: 80, rejected: 20, skipped: 0 }]
+      platforms: [{ platform: 'meta', accepted: 80, rejected: 20, skipped: 0 }]
     });
     const f = computeSiteDrift(input).find((x) => x.kind === 'vendor_failure_rate');
     expect(f?.severity).toBe('critical');
+  });
+
+  it('monitors forwarder failure rate too (tiktok), independent of coverage', () => {
+    // A forwardereknek NINCS coverage-alapja (click-ID-gated), de a failure-rate
+    // figyeli őket: 20% bukás 100 kísérletből → critical, coverage finding NÉLKÜL.
+    const input = site({
+      events_total: 100,
+      ad_eligible: 100,
+      platforms: [{ platform: 'tiktok', accepted: 80, rejected: 20, skipped: 0 }]
+    });
+    const findings = computeSiteDrift(input);
+    expect(findings.find((x) => x.kind === 'vendor_failure_rate')?.severity).toBe('critical');
+    expect(findings.filter((x) => x.kind === 'coverage_drift')).toEqual([]);
   });
 
   it('MIN_SAMPLE guard: ignores tiny samples (1 of 2 = 50% but n<10)', () => {
@@ -75,8 +91,8 @@ describe('computeSiteDrift — vendor failure rate', () => {
   });
 });
 
-describe('computeSiteDrift — coverage drift', () => {
-  it('warns when delivered <90% of eligible (no rejections involved)', () => {
+describe('computeSiteDrift — coverage drift (Meta only under Model 2)', () => {
+  it('warns when Meta delivered <90% of eligible (no rejections involved)', () => {
     const input = site({
       events_total: 100,
       ad_eligible: 100,
@@ -87,17 +103,17 @@ describe('computeSiteDrift — coverage drift', () => {
     expect(f?.value).toBe(0.85);
   });
 
-  it('escalates to critical when delivered <70% of eligible', () => {
+  it('escalates to critical when Meta delivered <70% of eligible', () => {
     const input = site({
       events_total: 100,
       ad_eligible: 100,
-      platforms: [{ platform: 'gads', accepted: 50, rejected: 0, skipped: 0 }]
+      platforms: [{ platform: 'meta', accepted: 50, rejected: 0, skipped: 0 }]
     });
     const f = computeSiteDrift(input).find((x) => x.kind === 'coverage_drift');
     expect(f?.severity).toBe('critical');
   });
 
-  it('detects a total platform outage (0 delivered, events came in)', () => {
+  it('detects a total Meta outage (0 delivered, events came in)', () => {
     const input = site({
       events_total: 50,
       ad_eligible: 50,
@@ -117,17 +133,20 @@ describe('computeSiteDrift — coverage drift', () => {
     expect(computeSiteDrift(input).filter((x) => x.kind === 'coverage_drift')).toEqual([]);
   });
 
-  it('GA4 coverage uses events_total, Meta/GAds use ad_eligible', () => {
-    // 100 events, only 10 ad-eligible (consent). GA4 gets all 100, Meta gets 10.
+  it('does NOT raise coverage drift for offline/forwarder platforms (ga4/gads/tiktok)', () => {
+    // Regression guard for the Model-2 bug: GA4 + Google Ads are offline-only and
+    // forwarders are click-id-gated, so a 0-accepted row against a large eligible
+    // base must NOT produce a (false) coverage_drift CRITICAL.
     const input = site({
       events_total: 100,
-      ad_eligible: 10,
+      ad_eligible: 100,
       platforms: [
-        { platform: 'ga4', accepted: 100, rejected: 0, skipped: 0 },
-        { platform: 'meta', accepted: 10, rejected: 0, skipped: 90 }
+        { platform: 'ga4', accepted: 0, rejected: 0, skipped: 0 },
+        { platform: 'gads', accepted: 0, rejected: 0, skipped: 0 },
+        { platform: 'tiktok', accepted: 0, rejected: 0, skipped: 0 }
       ]
     });
-    expect(computeSiteDrift(input)).toEqual([]); // both at 100% of their own base
+    expect(computeSiteDrift(input).filter((f) => f.kind === 'coverage_drift')).toEqual([]);
   });
 });
 
@@ -149,7 +168,7 @@ describe('summarize', () => {
   it('aggregates across sites and reports worst severity', () => {
     const inputs = [
       site({ site_id: 'a', events_total: 100, ad_eligible: 100, platforms: [{ platform: 'meta', accepted: 94, rejected: 6, skipped: 0 }] }),
-      site({ site_id: 'b', events_total: 100, ad_eligible: 100, platforms: [{ platform: 'gads', accepted: 50, rejected: 0, skipped: 0 }] })
+      site({ site_id: 'b', events_total: 100, ad_eligible: 100, platforms: [{ platform: 'meta', accepted: 50, rejected: 0, skipped: 0 }] })
     ];
     const s = summarize(inputs);
     expect(s.sites_checked).toBe(2);
@@ -166,7 +185,7 @@ describe('summarize', () => {
 });
 
 describe('assembleReconInputs', () => {
-  it('merges event/delivery/lead rows and zero-fills missing platforms', () => {
+  it('merges event/delivery/lead rows and zero-fills missing fan-out platforms', () => {
     const inputs = assembleReconInputs(
       [{ site_id: 'painless', total: 100, ad_eligible: 80 }],
       [{ site_id: 'painless', platform: 'meta', accepted: 78, rejected: 2, skipped: 20 }],
@@ -177,16 +196,19 @@ describe('assembleReconInputs', () => {
     expect(i.events_total).toBe(100);
     expect(i.ad_eligible).toBe(80);
     expect(i.lead_status_total).toBe(5);
-    // ga4 + gads had no delivery rows → zero-filled
-    const ga4 = i.platforms.find((p) => p.platform === 'ga4');
-    const gads = i.platforms.find((p) => p.platform === 'gads');
-    expect(ga4).toEqual({ platform: 'ga4', accepted: 0, rejected: 0, skipped: 0 });
-    expect(gads).toEqual({ platform: 'gads', accepted: 0, rejected: 0, skipped: 0 });
+    // The fan-out platforms are meta + the three forwarders; the absent forwarder
+    // rows are zero-filled. GA4/Google Ads are NOT fan-out platforms (offline-only).
+    const tiktok = i.platforms.find((p) => p.platform === 'tiktok');
+    const linkedin = i.platforms.find((p) => p.platform === 'linkedin');
+    expect(tiktok).toEqual({ platform: 'tiktok', accepted: 0, rejected: 0, skipped: 0 });
+    expect(linkedin).toEqual({ platform: 'linkedin', accepted: 0, rejected: 0, skipped: 0 });
+    expect(i.platforms.find((p) => p.platform === 'ga4')).toBeUndefined();
+    expect(i.platforms.find((p) => p.platform === 'gads')).toBeUndefined();
   });
 
-  it('a site with events but ZERO delivery rows surfaces as full coverage drift', () => {
-    // This is the key safety property: a silent total outage (events ingested,
-    // nothing dispatched) must be detectable, not invisible.
+  it('a site with events but ZERO Meta delivery rows surfaces as full coverage drift', () => {
+    // Key safety property: a silent total outage (events ingested, nothing
+    // dispatched to Meta) must be detectable, not invisible.
     const inputs = assembleReconInputs(
       [{ site_id: 'painless', total: 50, ad_eligible: 50 }],
       [],
@@ -194,7 +216,9 @@ describe('assembleReconInputs', () => {
     );
     const findings = computeSiteDrift(inputs[0]);
     const critical = findings.filter((f) => f.severity === 'critical' && f.kind === 'coverage_drift');
-    expect(critical.length).toBeGreaterThanOrEqual(2); // meta + gads at 0%
+    // Only Meta has a coverage base under Model 2 → exactly one coverage critical.
+    expect(critical).toHaveLength(1);
+    expect(critical[0].platform).toBe('meta');
     expect(inputs[0].lead_status_total).toBe(0);
   });
 
