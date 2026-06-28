@@ -57,6 +57,15 @@ function classifyGAdsError(
   return TrackingErrorCode.GADS_PARTIAL_FAILURE;
 }
 
+/**
+ * @deprecated Legacy Google Ads `uploadClickConversions` transport. As of
+ * 2026-06-15 Google blocks NEW adopters of this method
+ * (CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE) and directs migration to the Data
+ * Manager API. We are a new adopter → this path is non-functional for us. The
+ * live offline leg now uses {@link import('./datamanager').sendToDataManager}
+ * (see routes/lead-status.ts). Kept dormant for reference; remove once the Data
+ * Manager path is validated in production.
+ */
 export async function sendToGoogleAdsCAPI(
   siteConfig: SiteConfig,
   env: Env,

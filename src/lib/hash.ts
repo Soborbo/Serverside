@@ -49,6 +49,42 @@ export function normalizeEmail(email: string | null | undefined): string | undef
   return trimmed;
 }
 
+// Domains where Google's user-data formatting spec requires stripping dots and
+// the plus-suffix from the local part BEFORE hashing.
+const GOOGLE_DOTLESS_DOMAINS: ReadonlySet<string> = new Set(['gmail.com', 'googlemail.com']);
+
+/**
+ * Google-specific email normalization for the Data Manager API (Google Ads /
+ * GA4 ingestion). DIFFERS from {@link normalizeEmail} (which is Meta's rule).
+ *
+ * Per the Data Manager "Format user data" spec: for gmail.com / googlemail.com
+ * addresses, remove all dots and everything from the first `+` in the local
+ * part. For every other domain, leave dots/plus untouched. Then lowercase+trim
+ * (inherited from normalizeEmail) and SHA-256.
+ *
+ * CLAUDE.md Rule 1 forbids this stripping — but Rule 1 is the *Meta* rule
+ * (Meta hashes the literal string). Google matches against the canonical Gmail
+ * address, so reusing the Meta hash here would silently lower the Google EC
+ * match rate for Gmail users with dots/plus in their address.
+ */
+export function normalizeEmailForGoogle(email: string | null | undefined): string | undefined {
+  const base = normalizeEmail(email);
+  if (!base) return undefined;
+  const atIdx = base.lastIndexOf('@');
+  const local = base.slice(0, atIdx);
+  const domain = base.slice(atIdx + 1);
+  if (!GOOGLE_DOTLESS_DOMAINS.has(domain)) return base;
+
+  let localNorm = local;
+  const plusIdx = localNorm.indexOf('+');
+  if (plusIdx !== -1) localNorm = localNorm.slice(0, plusIdx);
+  localNorm = localNorm.replace(/\./g, '');
+  // Safety: a local part of only dots/plus would collapse to '' → don't emit a
+  // domain-only '@gmail.com'; fall back to the un-stripped address.
+  if (localNorm.length === 0) return base;
+  return `${localNorm}@${domain}`;
+}
+
 // Country dialing-codes that use a leading `0` as a national trunk prefix.
 // When the international `+CC` prefix is already present, the trunk `0` must
 // be dropped (e.g. `+44 (0)7123 456 789` → `+447123456789`).
@@ -214,13 +250,21 @@ export function normalizeCountry(country: string | null | undefined): string | u
   return COUNTRY_NAME_TO_2[trimmed] || undefined;
 }
 
+export interface HashUserDataOptions {
+  // Override the email normalizer. Default = Meta's rule (normalizeEmail).
+  // The Data Manager (Google) leg passes normalizeEmailForGoogle.
+  emailNormalizer?: (email: string | null | undefined) => string | undefined;
+}
+
 export async function hashUserData(
   input: PlainUserData,
-  countryCode: CountryCode = 'GB'
+  countryCode: CountryCode = 'GB',
+  opts?: HashUserDataOptions
 ): Promise<HashedUserData> {
   const result: HashedUserData = {};
 
-  const email = normalizeEmail(input.email);
+  const normalizeEmailFn = opts?.emailNormalizer ?? normalizeEmail;
+  const email = normalizeEmailFn(input.email);
   if (email) result.em = await sha256Hex(email);
 
   const phone = normalizePhone(input.phone_number, countryCode);
@@ -251,4 +295,18 @@ export async function hashUserData(
   }
 
   return result;
+}
+
+/**
+ * Google-flavoured hashing for the Data Manager API leg. Identical to
+ * {@link hashUserData} except the email uses {@link normalizeEmailForGoogle}
+ * (Gmail dot/plus stripping). The hashed name fields (fn/ln) map to the
+ * AddressInfo.givenName/familyName; the plain region/postal come from the
+ * payload, not from here (see datamanager.ts).
+ */
+export async function hashUserDataForGoogle(
+  input: PlainUserData,
+  countryCode: CountryCode = 'GB'
+): Promise<HashedUserData> {
+  return hashUserData(input, countryCode, { emailNormalizer: normalizeEmailForGoogle });
 }
