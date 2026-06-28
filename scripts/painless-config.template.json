@@ -15,7 +15,7 @@
   },
 
   "ga4": {
-    "_comment": "GA4 Admin → Data Streams → Painless web stream → Measurement Protocol API secrets. measurement_id formátum: G-XXXXXXXXXX.",
+    "_comment": "OFFLINE-ONLY (Modell 2): az on-site GA4-et a böngésző küldi (Google Tag) — a szerver GA4 MP-t KIZÁRÓLAG a CRM-fázis (offline) eventekre használ a lead-status végponton (augment), hogy ne legyen dupla (GA4 nem dedup-ol event_id-re). GA4 Admin → Data Streams → Painless web stream → Measurement Protocol API secrets. measurement_id formátum: G-XXXXXXXXXX.",
     "measurement_id": "REPLACE_ME_GA4_MEASUREMENT_ID",
     "api_secret": "REPLACE_ME_GA4_API_SECRET"
   },
@@ -27,14 +27,11 @@
     "_comment_login_customer_id": "Csak ha Painless MCC alatt van, akkor az MCC ID; egyébként null.",
     "login_customer_id": null,
 
-    "_comment_conversion_actions": "Painless 6 conversion action ID. Google Ads → Goals → Conversions → minden action → Tag setup → 'send_to: AW-XXX/<ACTION_ID>' második része.",
+    "_comment_conversion_actions": "Modell 2: a szerver KIZÁRÓLAG offline (Enhanced Conversions for Leads) Google Ads konverziót küld a CRM-fázisokra (lead-status webhook). Az on-site Google Adset a böngésző birtokolja (AWCT + Enhanced Conversions) — ahhoz ITT nincs action. Kulcsok = offline CRM event-nevek (events.json kind:offline). Action ID = Google Ads → Goals → Conversions → action → 'send_to: AW-XXX/<ACTION_ID>' második fele. FIGYELEM: a régi uploadClickConversions API új integrációkra zárul (2026-06-15) → Painlessre Data Manager API kellhet (lásd PR Phase 2 jelzés).",
     "conversion_actions": {
-      "quote_calculator_conversion": "REPLACE_ME_ACTION_ID_1",
-      "callback_conversion": "REPLACE_ME_ACTION_ID_2",
-      "contact_form_submit": "REPLACE_ME_ACTION_ID_3",
-      "phone_conversion": "REPLACE_ME_ACTION_ID_4",
-      "email_conversion": "REPLACE_ME_ACTION_ID_5",
-      "whatsapp_conversion": "REPLACE_ME_ACTION_ID_6"
+      "lead_qualified": "REPLACE_ME_ACTION_ID_QUALIFIED_LEAD",
+      "booking_confirmed": "REPLACE_ME_ACTION_ID_BOOKING",
+      "revenue_confirmed": "REPLACE_ME_ACTION_ID_REVENUE"
     }
   },
 

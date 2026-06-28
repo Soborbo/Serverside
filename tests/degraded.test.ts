@@ -7,37 +7,37 @@ import {
 
 describe('isTokenlessLowRiskAcceptable (TASK 2)', () => {
   it('accepts token-less (missing_token) low-risk click events', () => {
-    for (const ev of ['phone_conversion', 'email_conversion', 'whatsapp_conversion']) {
+    for (const ev of ['phone_number_clicked', 'email_address_clicked', 'whatsapp_button_clicked']) {
       expect(isTokenlessLowRiskAcceptable(['missing_token'], ev)).toBe(true);
     }
   });
 
   it('accepts low-risk events when Turnstile verify was unavailable', () => {
-    expect(isTokenlessLowRiskAcceptable(['service_unavailable'], 'phone_conversion')).toBe(true);
+    expect(isTokenlessLowRiskAcceptable(['service_unavailable'], 'phone_number_clicked')).toBe(true);
   });
 
   it('does NOT degrade-accept high-risk form events (spam surface)', () => {
-    expect(isTokenlessLowRiskAcceptable(['missing_token'], 'contact_form_submit')).toBe(false);
-    expect(isTokenlessLowRiskAcceptable(['missing_token'], 'quote_calculator_conversion')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable(['missing_token'], 'contact_form_submitted')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable(['missing_token'], 'quote_calculator_submitted')).toBe(false);
     // callback is a callback-request form → high risk, excluded
-    expect(isTokenlessLowRiskAcceptable(['missing_token'], 'callback_conversion')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable(['missing_token'], 'callback_request_submitted')).toBe(false);
   });
 
   it('does NOT degrade-accept a PRESENT-but-INVALID token (bot signal)', () => {
-    expect(isTokenlessLowRiskAcceptable(['invalid-input-response'], 'phone_conversion')).toBe(false);
-    expect(isTokenlessLowRiskAcceptable(['timeout-or-duplicate'], 'phone_conversion')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable(['invalid-input-response'], 'phone_number_clicked')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable(['timeout-or-duplicate'], 'phone_number_clicked')).toBe(false);
   });
 
   it('handles undefined/empty codes', () => {
-    expect(isTokenlessLowRiskAcceptable(undefined, 'phone_conversion')).toBe(false);
-    expect(isTokenlessLowRiskAcceptable([], 'phone_conversion')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable(undefined, 'phone_number_clicked')).toBe(false);
+    expect(isTokenlessLowRiskAcceptable([], 'phone_number_clicked')).toBe(false);
   });
 
   it('the low-risk set is exactly the click events', () => {
     expect([...DEGRADED_LOW_RISK_EVENTS].sort()).toEqual([
-      'email_conversion',
-      'phone_conversion',
-      'whatsapp_conversion'
+      'email_address_clicked',
+      'phone_number_clicked',
+      'whatsapp_button_clicked'
     ]);
   });
 });

@@ -15,11 +15,13 @@ import type { Env } from '../env';
  */
 
 // tel:/mailto:/whatsapp kattintások — user-kezdeményezett, alacsony spam-érték.
-// A callback_conversion + contact_form_submit SZÁNDÉKOSAN kimarad (form = spam-felület).
+// Kanonikus nevek (az ingress már normalizált ide a turnstile-ellenőrzés előtt).
+// A callback_request_submitted + contact_form_submitted SZÁNDÉKOSAN kimarad
+// (form = spam-felület).
 export const DEGRADED_LOW_RISK_EVENTS: ReadonlySet<string> = new Set([
-  'phone_conversion',
-  'email_conversion',
-  'whatsapp_conversion'
+  'phone_number_clicked',
+  'email_address_clicked',
+  'whatsapp_button_clicked'
 ]);
 
 /**

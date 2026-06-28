@@ -23,16 +23,23 @@ import { sanitizeErrorMessage } from './log-sanitize';
 const TIKTOK_URL = 'https://business-api.tiktok.com/open_api/v1.3/event/track/';
 const TIKTOK_TIMEOUT_MS = 5000;
 
-// internal event_name → TikTok standard event (config.event_names felülírhatja).
+// internal (kanonikus) event_name → TikTok standard event (config.event_names
+// felülírhatja). A forwarder az ingress-normalizálás után kanonikus nevet kap.
 const DEFAULT_EVENT_MAP: Record<string, string> = {
-  quote_calculator_conversion: 'SubmitForm',
-  callback_conversion: 'Contact',
-  contact_form_submit: 'SubmitForm',
-  phone_conversion: 'Contact',
-  email_conversion: 'Contact',
-  whatsapp_conversion: 'Contact',
-  quote_calculator_first_view: 'ViewContent',
-  video_play: 'ViewContent'
+  quote_calculator_submitted: 'SubmitForm',
+  callback_request_submitted: 'Contact',
+  contact_form_submitted: 'SubmitForm',
+  phone_number_clicked: 'Contact',
+  email_address_clicked: 'Contact',
+  whatsapp_button_clicked: 'Contact',
+  quote_calculator_opened: 'ViewContent',
+  video_play: 'ViewContent',
+  view_item: 'ViewContent',
+  add_to_cart: 'AddToCart',
+  begin_checkout: 'InitiateCheckout',
+  add_payment_info: 'AddPaymentInfo',
+  order_request_submitted: 'SubmitForm',
+  purchase: 'CompletePayment'
 };
 
 export interface TikTokPayload {

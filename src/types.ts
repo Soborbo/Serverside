@@ -1,4 +1,5 @@
 import type { TrackingErrorCode } from './lib/error-codes';
+import eventsJson from './events.json';
 
 export type StructuredLog = {
   level: 'info' | 'warn' | 'error';
@@ -61,25 +62,73 @@ export interface ConversionRequestPayload {
   // Univerzális attribúció: click ID-k (gclid/gbraid/wbraid/fbclid/...) + UTM-ek
   // + kontextus. Lásd lib/attribution.ts.
   attribution?: unknown;
+  // §3 automatikus lead-útvonal: cold | post_quote | from_quote_email. Ingress-
+  // validált (lib/provenance.ts); érvénytelen → drop (TRK-PROV-001). Meta
+  // custom_data paraméterként utazik (nem PII).
+  lead_provenance?: string;
 
   [key: string]: unknown;
 }
 
-// Allowlist of internal event names accepted by /api/event/conversion.
-// New events MUST be added here AND to lib/meta.ts EVENT_NAME_MAP.
-// Rejecting unknown event_names prevents Analytics Engine cardinality
-// explosion via attacker-controlled strings.
-export const ALLOWED_EVENT_NAMES: ReadonlySet<string> = new Set([
-  'quote_calculator_conversion',
-  'callback_conversion',
-  'contact_form_submit',
-  'phone_conversion',
-  'email_conversion',
-  'whatsapp_conversion',
-  'quote_calculator_first_view',
-  'video_play',
-  'booking_click'
+// ── Kanonikus event-forrás (events.json) ────────────────────────────────────
+// EGYETLEN igazságforrás (§1). Az ALLOWED_EVENT_NAMES, az EVENT_NAME_MAP és a
+// legacy→kanonikus alias-térkép MIND ebből származik runtime-ban — nincs kézi
+// lista, így drift sem lehet. Új event = egy bejegyzés events.json-ban.
+
+export interface CanonicalEvent {
+  name: string;
+  kind: 'conversion' | 'engagement' | 'ecommerce' | 'offline';
+  module: string;
+  ga4_key_event: boolean;
+  meta: string | null;
+  channels: Array<'browser' | 'server'>;
+  provenance: boolean;
+  flow: 'A' | 'B' | null;
+  legacy_ga4: string | null;
+  legacy_datalayer: string | null;
+  description: string;
+}
+
+export const CANONICAL_EVENTS = eventsJson as unknown as CanonicalEvent[];
+
+// A /api/event/conversion ingress által elfogadott nevek: server-csatornás, NEM
+// offline eventek (az offline a /api/event/lead-status admin-route-on érkezik),
+// PLUSZ a legacy_ga4 aliasok (migrációs elfogadás — canonicalizeEventName normalizál).
+// A unknown event_name elutasítása megakadályozza az Analytics Engine cardinality
+// robbanást támadó-vezérelt stringekkel.
+const _ingressEvents = CANONICAL_EVENTS.filter(
+  (e) => e.channels.includes('server') && e.kind !== 'offline'
+);
+export const ALLOWED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
+  ..._ingressEvents.map((e) => e.name),
+  ..._ingressEvents.map((e) => e.legacy_ga4).filter((n): n is string => n !== null)
 ]);
+
+// legacy GA4 alias → kanonikus név. Ingress-belépéskor normalizálunk, hogy minden
+// downstream (Meta-map, ledger, forwarderek, special-case logika) EGYSÉGESEN a
+// kanonikus nevet lássa, miközben a régi kliensek/tesztek se törjenek.
+const _legacyToCanonical = new Map<string, string>();
+for (const e of CANONICAL_EVENTS) {
+  if (e.legacy_ga4) _legacyToCanonical.set(e.legacy_ga4, e.name);
+}
+export function canonicalizeEventName(name: string): string {
+  return _legacyToCanonical.get(name) ?? name;
+}
+
+// Belső event_name (kanonikus ÉS legacy alias) → Meta standard event név. Minden
+// meta!=null eventből generálva (a browser-only ViewContent-mérföldkövek is, mert
+// a szerver-oldali derived ViewContent rájuk map-el). A korábbi kézi térkép a
+// lib/meta.ts-ben élt; most innen, az events.json-ból származik (§1.2).
+export const EVENT_NAME_MAP: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const e of CANONICAL_EVENTS) {
+    if (e.meta) {
+      m[e.name] = e.meta;
+      if (e.legacy_ga4) m[e.legacy_ga4] = e.meta;
+    }
+  }
+  return m;
+})();
 
 // Meta CAPI event_id cap (CLAUDE.md #2/#16). A valós id egy 36 karakteres UUID,
 // így a derived ViewContent id (`${event_id}_vc`, +3) is bőven 40 alatt marad.

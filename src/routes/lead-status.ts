@@ -4,6 +4,7 @@ import { getSiteConfig } from '../lib/config';
 import { authenticateAdmin } from '../lib/admin-auth';
 import { hashUserData, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
 import { sendToGoogleAdsCAPI, type GAdsPayload } from '../lib/gads';
+import { sendToGA4MP } from '../lib/ga4';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   isValidLeadId,
@@ -135,6 +136,12 @@ export async function handleLeadStatus(
   const leadConsent = await getLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
   const consentBlocked = isOfflineUploadBlocked(leadConsent, siteConfig.require_consent === true);
 
+  // Ütközésbiztos, determinisztikus orderId: a (lead_id, status) SHA-256-ja —
+  // MEGOSZTVA a Google Ads offline upload és az offline GA4 MP között (event_id).
+  // A naiv `${lead_id}_${status}`.slice(0,64) hosszú lead_id-knál csonkolt és
+  // ütközhetett (két különböző lead → egy orderId → a platform összevonja őket).
+  const orderId = (await sha256Hex(`${body.lead_id}_${body.status}`)).slice(0, 32);
+
   let uploadedToGads = false;
   let gadsErrorCode: string | undefined;
 
@@ -152,10 +159,6 @@ export async function handleLeadStatus(
       body.user_data ?? {},
       siteConfig.country_code as CountryCode
     );
-    // Ütközésbiztos, determinisztikus orderId: a (lead_id, status) SHA-256-ja.
-    // A naiv `${lead_id}_${status}`.slice(0,64) hosszú lead_id-knál csonkolt és
-    // ütközhetett (két különböző lead → egy orderId → Google Ads összevonja őket).
-    const orderId = (await sha256Hex(`${body.lead_id}_${body.status}`)).slice(0, 32);
     const gadsPayload: GAdsPayload = {
       event_name: eventName,
       event_id: orderId,
@@ -181,6 +184,32 @@ export async function handleLeadStatus(
     );
   }
 
+  // Offline GA4 MP (§4.4) — a szerver legitim „augment" GA4 szerepe a CRM-fázis
+  // eventekre, UGYANAZZAL a determinisztikus orderId-vel (event_id). NEM ad-platform
+  // (analytics, nincs PII) → nem a consentBlocked ad-kapu gat-eli; a site `ga4` blokkja
+  // nélkül no-op skip. A böngésző itt nincs jelen (CRM-webhook) → nincs on-site dupla.
+  let uploadedToGa4 = false;
+  if (siteConfig.ga4) {
+    const ga4Result = await sendToGA4MP(siteConfig, {
+      event_name: eventName,
+      event_id: orderId,
+      client_id: undefined,
+      value: body.value,
+      currency: body.currency ?? siteConfig.currency
+    });
+    uploadedToGa4 = ga4Result.success;
+    ctx.waitUntil(
+      recordDeliveries(env, {
+        event_id: orderId,
+        lead_id: body.lead_id,
+        site_id: siteConfig.site_id,
+        event_name: eventName,
+        origin: 'offline',
+        records: [normalizeDelivery('ga4', { status: 'fulfilled', value: ga4Result })]
+      })
+    );
+  }
+
   ctx.waitUntil(
     recordLeadStatus(env, {
       lead_id: body.lead_id,
@@ -200,11 +229,20 @@ export async function handleLeadStatus(
     site_id: siteConfig.site_id,
     event_name: eventName,
     uploaded_to_gads: uploadedToGads,
+    uploaded_to_ga4: uploadedToGa4,
     consent_blocked: consentBlocked,
     duration_ms: Date.now() - startedAt
   });
 
-  return json({ ok: true, uploaded_to_gads: uploadedToGads, consent_blocked: consentBlocked }, 200);
+  return json(
+    {
+      ok: true,
+      uploaded_to_gads: uploadedToGads,
+      uploaded_to_ga4: uploadedToGa4,
+      consent_blocked: consentBlocked
+    },
+    200
+  );
 }
 
 function json(obj: unknown, status: number): Response {
