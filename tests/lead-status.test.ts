@@ -69,4 +69,15 @@ describe('validateLeadStatusBody', () => {
     const r = validateLeadStatusBody({ ...base, occurred_at: '2026-06-26T10:30:00+02:00' });
     expect(r?.occurred_at).toBe('2026-06-26T08:30:00.000Z');
   });
+
+  it('accepts ad_allowed boolean, rejects non-boolean', () => {
+    expect(validateLeadStatusBody({ ...base, ad_allowed: true })?.ad_allowed).toBe(true);
+    expect(validateLeadStatusBody({ ...base, ad_allowed: false })?.ad_allowed).toBe(false);
+    expect(validateLeadStatusBody({ ...base, ad_allowed: 'yes' })).toBeNull();
+    expect(validateLeadStatusBody({ ...base, ad_allowed: 1 })).toBeNull();
+  });
+
+  it('leaves ad_allowed undefined when absent (ledger fallback)', () => {
+    expect(validateLeadStatusBody(base)?.ad_allowed).toBeUndefined();
+  });
 });

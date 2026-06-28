@@ -72,9 +72,11 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
   const eventId = (record.event_payload.event_id as string) || 'unknown';
   const safeEventId = eventId.slice(0, 40).replace(/[^a-zA-Z0-9-]/g, '_');
 
+  // A 'dead' marad a 2. szegmens (isDeadKey ezt nézi), de a dátum is bekerül
+  // UTÁNA, hogy a dead archívum is lexikálisan dátum-rendezhető/scan-elhető legyen.
   const prefix =
     record.retry_count >= MAX_RETRIES
-      ? `${record.site_id}/${record.platform}/dead`
+      ? `${record.site_id}/${record.platform}/dead/${dateStr}`
       : `${record.site_id}/${record.platform}/${dateStr}`;
 
   // Egyediség-suffix: a kulcs másodperc-felbontású, és event_id hiányában a
@@ -112,9 +114,11 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
 }
 
 export function isDeadKey(key: string): boolean {
-  // Key format: {site_id}/{platform}/{date_or_dead}/{filename}.json
-  // Use segment-match instead of substring to avoid false positives if a
-  // site_id ever contained "/dead/" in its name.
+  // Pending key:  {site_id}/{platform}/{date}/{filename}.json
+  // Dead key:     {site_id}/{platform}/dead/{date}/{filename}.json
+  // A 'dead' MINDIG a 2. szegmens → segment-match (NEM substring), így egy
+  // "dead"-et tartalmazó site_id sem ad hamis pozitívot. Mindkét régi és új
+  // dead-kulcs-formátum egyezik (a 'dead' marad a 2. szegmensen).
   const segments = key.split('/');
   return segments.length >= 4 && segments[2] === 'dead';
 }

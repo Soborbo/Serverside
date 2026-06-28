@@ -108,8 +108,11 @@ export default {
       // archívum purge a megőrzési ablakon túl. Alacsony forgalmú időben (3:30).
       ctx.waitUntil(handleRetention(env));
     } else if (event.cron === '0 * * * *') {
-      // Csak akkor releváns, ha NINCS Queues binding (R2-fallback üzemmód).
-      // Queues-módban a consumer (queue handler) végzi az újrapróbálkozást.
+      // R2-alapú DLQ retry. Queues-módban a consumer (queue handler) végzi a fő
+      // újrapróbálkozást — EKKOR a cron NEM duplikál, mert egy rekord vagy a Queue-
+      // ban van, vagy (ha a DLQ.send dobott) az R2 fallback-ben, sosem mindkettőben.
+      // Ezért a cron SZÁNDÉKOSAN fut Queues mellett is: így az R2-fallback rekordok
+      // (Queue-kimaradás) sem maradnak árván. A 'dead' kulcsokat az isDeadKey kihagyja.
       ctx.waitUntil(handleScheduledRetry(event, env));
     }
   },
