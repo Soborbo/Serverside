@@ -186,12 +186,18 @@ export async function sendToDataManager(
 
     const responseBody = (await response.json().catch(() => ({}))) as {
       requestId?: string;
-      error?: { code?: number; message?: string; status?: string };
+      error?: { code?: number; message?: string; status?: string; details?: unknown[] };
     };
 
     if (!response.ok || responseBody.error) {
       const errorCode = classifyError(response.status, responseBody.error?.message);
       const sanitizedError = sanitizeErrorMessage(responseBody.error?.message);
+      // The top-level message is generic ("There was a problem with the request.").
+      // The actionable per-field validation errors live in error.details[] — log a
+      // capped, sanitized snapshot so a 400 is diagnosable without guessing.
+      const detailSnippet = responseBody.error?.details
+        ? sanitizeErrorMessage(JSON.stringify(responseBody.error.details))?.slice(0, 5000)
+        : undefined;
       logStructured({
         level:
           errorCode === TrackingErrorCode.DATAMANAGER_AUTH_REJECTED ||
@@ -204,13 +210,15 @@ export async function sendToDataManager(
         event_name: payload.event_name,
         status: response.status,
         dm_error: sanitizedError,
+        dm_error_status: responseBody.error?.status,
+        dm_error_details: detailSnippet,
         validate_only: validateOnly,
         duration_ms: Date.now() - startedAt
       });
       return {
         success: false,
         error_code: errorCode,
-        error: sanitizedError,
+        error: detailSnippet ? `${sanitizedError} | ${detailSnippet}` : sanitizedError,
         status: response.status
       };
     }
