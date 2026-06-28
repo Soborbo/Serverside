@@ -203,7 +203,11 @@ function crmSecretEnv(cfg, token) {
     `# (wrangler secret put / dashboard). A token plaintextje CSAK ITT szerepel —\n` +
     `# a Worker KV-jében csak a SHA-256 hash van. Ne commitold.\n` +
     `TRACKING_WORKER_URL=${url}\n` +
-    `TRACKING_ADMIN_TOKEN=${token}\n`
+    `TRACKING_ADMIN_TOKEN=${token}\n` +
+    `# A CRM ezekkel konvertál minor→major értéket és tölti a user_data.country-t\n` +
+    `# (a Worker omit esetén a site currency-jére esik vissza).\n` +
+    `TRACKING_CURRENCY=${cfg.currency}\n` +
+    `TRACKING_COUNTRY_CODE=${cfg.country_code}\n`
   );
 }
 
