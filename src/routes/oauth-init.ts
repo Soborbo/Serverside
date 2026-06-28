@@ -3,7 +3,13 @@ import { authenticateAdmin } from '../lib/admin-auth';
 import { issueOAuthState } from '../lib/oauth-state';
 
 const GOOGLE_OAUTH_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
+// Data Manager API (offline conversions / ECL via lib/datamanager.ts) needs the
+// `datamanager` scope. `adwords` is kept for the dormant uploadClickConversions
+// path + general Google Ads access. Space-separated → one consent grants both.
+// NOTE: existing refresh tokens minted before this change are adwords-only and
+// must be re-consented (re-run /api/event/oauth-init) to gain datamanager.
+const GADS_SCOPE =
+  'https://www.googleapis.com/auth/datamanager https://www.googleapis.com/auth/adwords';
 
 /**
  * Admin-only: starts the Google Ads OAuth flow for a given customer_id.
