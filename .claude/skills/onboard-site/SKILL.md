@@ -60,7 +60,15 @@ Az input alakja (lásd a validátort a scriptben):
 }
 ```
 A generátor validál (hibás ID → exit 1) és kiírja: `site-config.json`, `routes.toml`,
-`kv-put.sh`, `INTEGRATION.md`. Ha validációs hiba van, javítsd az inputot, ne a scriptet.
+`kv-put.sh`, `crm-secret.env`, `INTEGRATION.md`. Ha validációs hiba van, javítsd az inputot,
+ne a scriptet.
+
+**Per-site CRM token:** ha a site CRM-et köt be (offline-loop), a generátor egy per-site
+tokent állít elő — a KV-be CSAK a `crm_token_sha256` kerül, a plaintext a `crm-secret.env`-be.
+Ezt add át a CRM-deploynak (`TRACKING_WORKER_URL` + `TRACKING_ADMIN_TOKEN` secret); a stdout-on
+kiírt generált token CSAK egyszer látszik. Determinisztikus újrafuttatáshoz add meg az inputban
+a `crm_token`-t (≥16 char), különben minden futás új tokent generál. Ezzel a globális
+ADMIN_API_TOKEN már nem ír ehhez a site-hoz → tenant-izoláció.
 
 ### 3. Töltsd fel a KV-t
 A `kv-put.sh`-ban lévő parancsokkal (wrangler), VAGY a Cloudflare MCP `kv_put`
