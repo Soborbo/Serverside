@@ -1,17 +1,27 @@
 import type { Env } from '../env';
-import { logStructured, isValidConversionPayload, type ConversionRequestPayload } from '../types';
+import {
+  logStructured,
+  isValidConversionPayload,
+  canonicalizeEventName,
+  ALLOWED_EVENT_NAMES,
+  type ConversionRequestPayload
+} from '../types';
 import { corsHeaders } from '../worker';
 import { getSiteConfig, type SiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
 import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
-import { sendToGA4MP, type GA4Payload, type GA4Result } from '../lib/ga4';
-import { sendToGoogleAdsCAPI, type GAdsPayload, type GAdsResult } from '../lib/gads';
+// Modell 2 (§0/§4.3): az on-site fan-outból a GA4 ÉS a Google Ads láb kikerült.
+// On-site GA4 = csak böngésző (GA4 nem dedup-ol event_id-re → dupla lenne).
+// On-site Google Ads = csak böngésző (AWCT + Enhanced Conversions). A szerver a
+// Google Adset KIZÁRÓLAG offline-ként küldi (routes/lead-status.ts). Meta CAPI +
+// a click-ID forwarderek (TikTok/LinkedIn/MsAds) maradnak (event_id-dedup, mint a Meta).
 import { sendToTikTok, type TikTokPayload, type TikTokResult } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload, type LinkedInResult } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload, type MsAdsResult } from '../lib/msads';
 import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
+import { isValidProvenance } from '../lib/provenance';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTokenlessLowRiskAcceptable, degradedRateLimit } from '../lib/degraded';
 import {
@@ -33,11 +43,13 @@ import {
   type DeliveryRecord
 } from '../lib/ledger';
 
+// Kanonikus nevek (ingress-normalizálás után). Ezek az events a 60 perces quote-
+// alarmot „felülírják": ha aktív quote van, az event a quote event_id-jét/értékét örökli.
 const QUOTE_UPGRADE_EVENTS = new Set([
-  'callback_conversion',
-  'phone_conversion',
-  'email_conversion',
-  'whatsapp_conversion'
+  'callback_request_submitted',
+  'phone_number_clicked',
+  'email_address_clicked',
+  'whatsapp_button_clicked'
 ]);
 
 export async function handleConversion(
@@ -93,14 +105,40 @@ export async function handleConversion(
   }
 
   if (!isValidConversionPayload(payload)) {
+    // TRK-EVT-001 ha specifikusan az event_name ismeretlen (nincs az ALLOWED-ban);
+    // egyébként strukturális hiba. Mindkettő 204 (a kliens felé nem szivárog hiba).
+    const rawName = (payload as { event_name?: unknown } | null)?.event_name;
+    const unknownEvent = typeof rawName === 'string' && !ALLOWED_EVENT_NAMES.has(rawName);
+    const errorCode = unknownEvent
+      ? TrackingErrorCode.UNKNOWN_EVENT_NAME
+      : TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE;
     logStructured({
       level: 'info',
-      error_code: TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE,
-      message: ERROR_DESCRIPTIONS[TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE],
+      error_code: errorCode,
+      message: ERROR_DESCRIPTIONS[errorCode],
       hostname,
       duration_ms: Date.now() - startedAt
     });
     return new Response(null, { status: 204, headers: cors });
+  }
+
+  // Ingress-normalizálás (§1 migráció): legacy GA4 alias → kanonikus név, hogy MINDEN
+  // downstream (special-case logika, forwarderek, Meta-map, ledger) egységesen a
+  // kanonikus nevet lássa. A régi kliensek/tesztek így sem törnek.
+  payload.event_name = canonicalizeEventName(payload.event_name);
+
+  // §3 lead_provenance — csak a három engedélyezett érték mehet tovább; bármi más
+  // → drop (TRK-PROV-001 warn), de az event maga megy.
+  if (payload.lead_provenance !== undefined && !isValidProvenance(payload.lead_provenance)) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.INVALID_LEAD_PROVENANCE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.INVALID_LEAD_PROVENANCE],
+      hostname,
+      event_name: payload.event_name,
+      duration_ms: Date.now() - startedAt
+    });
+    payload.lead_provenance = undefined;
   }
 
   const siteConfig = await getSiteConfig(hostname, env);
@@ -180,15 +218,9 @@ export async function handleConversion(
   const consentState = parseConsent(payload.consent);
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
   const attribution = parseAttribution(payload.attribution);
-  // session_id a GA4 numerikus session timestamp — bound + charset check, hogy
-  // ne továbbítsunk korlátlan attacker-stringet a GA4 MP felé.
-  const sessionId =
-    typeof payload.session_id === 'string' && /^\d{1,20}$/.test(payload.session_id)
-      ? payload.session_id
-      : undefined;
 
   if (
-    payload.event_name === 'quote_calculator_conversion' &&
+    payload.event_name === 'quote_calculator_submitted' &&
     typeof payload.client_id === 'string' &&
     typeof payload.value === 'number' &&
     typeof payload.currency === 'string' &&
@@ -279,12 +311,10 @@ export async function handleConversion(
     remoteIp,
     userAgent,
     consentDecision,
-    sessionId,
     attribution,
     leadId,
     env,
-    ctx,
-    idem.suppressGa4
+    ctx
   );
 
   const totalDuration = Date.now() - startedAt;
@@ -350,7 +380,7 @@ async function handleQuoteCompletion(
     const viewContentPromise = sendToMetaCAPI(
       siteConfig,
       {
-        event_name: 'quote_calculator_first_view',
+        event_name: 'quote_calculator_opened',
         event_id: `${payload.event_id}_vc`,
         event_time: payload.event_time,
         value: payload.value,
@@ -360,7 +390,8 @@ async function handleQuoteCompletion(
         fbp: payload.fbp,
         fbc: payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time),
         client_ip: remoteIp,
-        client_user_agent: userAgent
+        client_user_agent: userAgent,
+        lead_provenance: payload.lead_provenance
       },
       hashedUserData
     ).then(async (result) => {
@@ -402,12 +433,10 @@ function fanOut(
   remoteIp: string | undefined,
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
-  sessionId: string | undefined,
   attribution: AttributionParams | undefined,
   leadId: string | undefined,
   env: Env,
-  ctx: ExecutionContext,
-  suppressGa4: boolean
+  ctx: ExecutionContext
 ): void {
   try {
   const adAllowed = consentDecision.adAllowed;
@@ -454,37 +483,8 @@ function fanOut(
     fbp: payload.fbp,
     fbc,
     client_ip: remoteIp,
-    client_user_agent: userAgent
-  };
-
-  const ga4Payload: GA4Payload = {
-    event_name: payload.event_name,
-    event_id: payload.event_id,
-    client_id: payload.client_id,
-    value: payload.value,
-    currency: payload.currency,
-    source: payload.source,
-    service: payload.service,
-    page_location: payload.event_source_url,
-    user_agent: userAgent,
-    session_id: sessionId,
-    consent: consentDecision.consent,
-    attribution
-  };
-
-  const gadsPayload: GAdsPayload = {
-    event_name: payload.event_name,
-    event_id: payload.event_id,
-    event_time: payload.event_time,
-    value: payload.value,
-    currency: payload.currency,
-    city: payload.user_data?.city,
-    postal_code: payload.user_data?.postal_code,
-    country: payload.user_data?.country,
-    consent: consentDecision.consent,
-    gclid: attribution?.gclid,
-    gbraid: attribution?.gbraid,
-    wbraid: attribution?.wbraid
+    client_user_agent: userAgent,
+    lead_provenance: payload.lead_provenance
   };
 
   // TASK 3 — click-ID forwarderek. A click ID-k a validált `attribution`
@@ -518,19 +518,11 @@ function fanOut(
   };
 
   // adAllowed=false → minden ad-platform no-op success (nincs hívás, nincs DLQ).
+  // Modell 2: NINCS GA4 és NINCS Google Ads on-site láb (a böngésző birtokolja).
+  // A szerver a Google Adset kizárólag offline-ként küldi (routes/lead-status.ts).
   const metaStart = Date.now();
   const metaPromise: Promise<MetaCAPIResult> = adAllowed
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
-    : Promise.resolve({ success: true });
-  const ga4Start = Date.now();
-  // GA4 nem dedup-ol event_id-re (#16) → in-flight dupla-submitnél a GA4-leget
-  // kihagyjuk (skipped success), hogy ne duplázódjon a konverzió/revenue.
-  const ga4Promise: Promise<GA4Result> = (suppressGa4 || !siteConfig.ga4)
-    ? Promise.resolve({ success: true, skipped: true })
-    : sendToGA4MP(siteConfig, ga4Payload);
-  const gadsStart = Date.now();
-  const gadsPromise: Promise<GAdsResult> = adAllowed
-    ? sendToGoogleAdsCAPI(siteConfig, env, gadsPayload, hashedUserData)
     : Promise.resolve({ success: true });
   const tiktokStart = Date.now();
   const tiktokPromise: Promise<TikTokResult> = adAllowed
@@ -547,15 +539,12 @@ function fanOut(
 
   const fanout = Promise.allSettled([
     metaPromise,
-    ga4Promise,
-    gadsPromise,
     tiktokPromise,
     linkedinPromise,
     msadsPromise
   ]).then(
     async (results) => {
-      const [metaResult, ga4Result, gadsResult, tiktokResult, linkedinResult, msadsResult] =
-        results;
+      const [metaResult, tiktokResult, linkedinResult, msadsResult] = results;
       const completedAt = Date.now();
       const nowIso = new Date(completedAt).toISOString();
       const dlqWrites: Promise<void>[] = [];
@@ -622,20 +611,6 @@ function fanOut(
         true,
         metaStart
       );
-      handleResult(
-        'ga4',
-        ga4Result,
-        ga4Payload as unknown as Record<string, unknown>,
-        false,
-        ga4Start
-      );
-      handleResult(
-        'gads',
-        gadsResult,
-        gadsPayload as unknown as Record<string, unknown>,
-        true,
-        gadsStart
-      );
       // TASK 3 — extra platformok. TikTok/LinkedIn hashed user_data-t használ a
       // matcheléshez → includeUserData=true (DLQ-retry-hoz). Microsoft csak
       // msclkid → false.
@@ -647,8 +622,6 @@ function fanOut(
       // ad-platform 'skipped' (consent-tiltás, nem hiba); a GA4 mindig megy.
       const deliveryRecords: DeliveryRecord[] = [
         normalizeDelivery('meta', metaResult, { skipped: !adAllowed }),
-        normalizeDelivery('ga4', ga4Result),
-        normalizeDelivery('gads', gadsResult, { skipped: !adAllowed }),
         normalizeDelivery('tiktok', tiktokResult, { skipped: !adAllowed }),
         normalizeDelivery('linkedin', linkedinResult, { skipped: !adAllowed }),
         normalizeDelivery('msads', msadsResult, { skipped: !adAllowed })
@@ -677,8 +650,6 @@ function fanOut(
         site_id: siteConfig.site_id,
         event_name: payload.event_name,
         meta_success: metaResult.status === 'fulfilled' && metaResult.value.success,
-        ga4_success: ga4Result.status === 'fulfilled' && ga4Result.value.success,
-        gads_success: gadsResult.status === 'fulfilled' && gadsResult.value.success,
         tiktok_success: tiktokResult.status === 'fulfilled' && tiktokResult.value.success,
         linkedin_success: linkedinResult.status === 'fulfilled' && linkedinResult.value.success,
         msads_success: msadsResult.status === 'fulfilled' && msadsResult.value.success,

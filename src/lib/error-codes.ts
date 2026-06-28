@@ -85,7 +85,18 @@ export enum TrackingErrorCode {
   RECON_QUERY_FAILED = 'TRK-950-003',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
-  RETENTION_R2_FAILED = 'TRK-960-002'
+  RETENTION_R2_FAILED = 'TRK-960-002',
+
+  // §8 — kanonikus event-szerződés (events.json). A *-002 kódok BUILD-IDŐBEN
+  // fognak el (drift / parity / reserved-name) → CI-blokk, nem éles forgalom.
+  // A többi runtime observability a gateway-en.
+  UNKNOWN_EVENT_NAME = 'TRK-EVT-001',
+  RESERVED_EVENT_NAME = 'TRK-EVT-002',
+  GA4_ONSITE_FANOUT = 'TRK-GA4-002',
+  BROWSER_SERVER_META_MISMATCH = 'TRK-META-002',
+  INVALID_LEAD_PROVENANCE = 'TRK-PROV-001',
+  INVALID_SITE_CONFIG_SCHEMA = 'TRK-CFG-001',
+  MISSING_CONVERSION_ACTIONS_CONFIG = 'TRK-CFG-002'
 }
 
 export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
@@ -158,7 +169,20 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Eligible events did not reach the platform — coverage drift (reconciliation)',
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed',
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
-  [TrackingErrorCode.RETENTION_R2_FAILED]: 'Dead-letter R2 retention purge failed'
+  [TrackingErrorCode.RETENTION_R2_FAILED]: 'Dead-letter R2 retention purge failed',
+  [TrackingErrorCode.UNKNOWN_EVENT_NAME]: 'event_name not in the canonical ALLOWED set (events.json)',
+  [TrackingErrorCode.RESERVED_EVENT_NAME]:
+    'Canonical event name collides with a GA4 reserved/automatic name (build-time guard)',
+  [TrackingErrorCode.GA4_ONSITE_FANOUT]:
+    'GA4 MP invoked from the on-site fan-out — must never happen under Model 2 (on-site GA4 is browser-only)',
+  [TrackingErrorCode.BROWSER_SERVER_META_MISMATCH]:
+    'Browser vs server Meta event-name parity drift (build-time parity guard)',
+  [TrackingErrorCode.INVALID_LEAD_PROVENANCE]:
+    'lead_provenance not in {cold,post_quote,from_quote_email} — param dropped, event proceeds',
+  [TrackingErrorCode.INVALID_SITE_CONFIG_SCHEMA]:
+    'Site config failed JSON Schema validation (generator / KV load)',
+  [TrackingErrorCode.MISSING_CONVERSION_ACTIONS_CONFIG]:
+    'gads.customer_id present but no conversion_actions configured'
 };
 
 export type ErrorSeverity = 'critical' | 'warning' | 'info';
@@ -229,5 +253,13 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'info',
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'info',
   [TrackingErrorCode.INVALID_TURNSTILE_TOKEN]: 'info',
-  [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'info'
+  [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'info',
+
+  [TrackingErrorCode.RESERVED_EVENT_NAME]: 'critical',
+  [TrackingErrorCode.GA4_ONSITE_FANOUT]: 'critical',
+  [TrackingErrorCode.BROWSER_SERVER_META_MISMATCH]: 'critical',
+  [TrackingErrorCode.INVALID_SITE_CONFIG_SCHEMA]: 'critical',
+  [TrackingErrorCode.MISSING_CONVERSION_ACTIONS_CONFIG]: 'warning',
+  [TrackingErrorCode.UNKNOWN_EVENT_NAME]: 'info',
+  [TrackingErrorCode.INVALID_LEAD_PROVENANCE]: 'info'
 };

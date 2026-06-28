@@ -31,11 +31,12 @@ const SITE_CONFIG = {
   currency: 'GBP',
   // Meta konfigurálva → tényleg hív (graph.facebook.com).
   meta: { pixel_id: '1234567890', access_token: 'TOKEN' },
-  // GA4 konfigurálva → tényleg hív (google-analytics.com).
+  // GA4 konfigurálva, DE Modell 2-ben az on-site fan-out NEM hív GA4-et
+  // (a böngésző birtokolja az on-site GA4-et → nincs dupla).
   ga4: { measurement_id: 'G-X', api_secret: 'S' },
   // gads customer_id null → no-op success (nincs hívás, nincs DLQ).
   gads: { customer_id: null, login_customer_id: null }
-  // require_consent unset → fail-open: adAllowed=true → Meta + GA4 is megy.
+  // require_consent unset → fail-open: adAllowed=true → Meta megy (GA4/gads on-site nélkül).
 };
 
 function makeEnv(deadLetterPut: (key: string, body: string) => void): any {
@@ -56,7 +57,7 @@ function conversionRequest(): Request {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      event_name: 'contact_form_submit', // NEM quote/upgrade event → kihagyja a DO-t
+      event_name: 'contact_form_submitted', // NEM quote/upgrade event → kihagyja a DO-t
       event_id: 'evt-iso-1',
       event_time: Math.floor(Date.now() / 1000),
       turnstile_token: 'tok',
@@ -114,7 +115,7 @@ describe('fan-out platform isolation (handleConversion → fanOut)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('Meta fails (500) → client still 204, GA4 still fired, ONLY Meta lands in DLQ', async () => {
+  it('Meta fails (500) → client still 204, GA4 NOT fired on-site (Model 2), ONLY Meta lands in DLQ', async () => {
     installFetch(500);
     const deadKeys: string[] = [];
     const env = makeEnv((key) => deadKeys.push(key));
@@ -125,8 +126,8 @@ describe('fan-out platform isolation (handleConversion → fanOut)', () => {
 
     await Promise.allSettled(tasks); // bevárjuk a háttér fan-outot
 
-    // GA4 (és Meta) ténylegesen meghívódott → a bukás nem blokkolta a többit.
-    expect(fetchedUrls.some((u) => u.includes('google-analytics.com'))).toBe(true);
+    // Modell 2: a GA4 on-site NEM hívódik (a böngésző birtokolja); a Meta IGEN.
+    expect(fetchedUrls.some((u) => u.includes('google-analytics.com'))).toBe(false);
     expect(fetchedUrls.some((u) => u.includes('facebook.com'))).toBe(true);
 
     // Pontosan a Meta ment DLQ-ba; GA4/gads/tiktok/linkedin/msads nem.

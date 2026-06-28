@@ -8,6 +8,7 @@
     "tail": "wrangler tail",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
+    "check:events": "node server/check-event-contract.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

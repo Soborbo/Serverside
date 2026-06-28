@@ -16,21 +16,27 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { argv, stdin, exit } from 'node:process';
+import { argv, exit } from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 // A wrangler.toml-ban rögzített SITE_CONFIG KV namespace (alapértelmezett).
 const DEFAULT_SITE_CONFIG_NS = 'edd34e28eee847c09c26f9d9e3ea04ab';
 
-// A worker által elfogadott event-nevek (src/types.ts ALLOWED_EVENT_NAMES tükre).
-const ALLOWED_EVENT_NAMES = new Set([
-  'quote_calculator_conversion',
-  'callback_conversion',
-  'contact_form_submit',
-  'phone_conversion',
-  'email_conversion',
-  'whatsapp_conversion',
-  'quote_calculator_first_view',
-  'video_play'
+// Kanonikus event-forrás — a repó SINGLE SOURCE OF TRUTH-ja (src/events.json).
+// NINCS kézi másolat: a generátor pontosan azt fogadja el, amit a worker (§1).
+const EVENTS = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../src/events.json', import.meta.url)), 'utf8')
+);
+// A kliens által küldhető (ingress) event-nevek: server-csatornás, NEM offline.
+const INGRESS_EVENT_NAMES = EVENTS.filter(
+  (e) => e.channels.includes('server') && e.kind !== 'offline'
+).map((e) => e.name);
+// gads.conversion_actions kulcsai BÁRMELY kanonikus event lehetnek (Modell 2-ben
+// jellemzően az offline CRM-eventek: lead_qualified, booking_confirmed, …), plusz a
+// legacy GA4 aliasok a migráció alatt.
+const VALID_ACTION_EVENTS = new Set([
+  ...EVENTS.map((e) => e.name),
+  ...EVENTS.map((e) => e.legacy_ga4).filter(Boolean)
 ]);
 
 const ALLOWED_COUNTRIES = new Set(['GB', 'HU', 'EU', 'US', 'DE', 'FR', 'IT', 'ES']);
@@ -123,8 +129,8 @@ function validate(cfg, opts = {}) {
       err(`gads.login_customer_id 10 számjegy kötőjel nélkül vagy null, kapott: ${lcid}`);
     if (cfg.gads.conversion_actions) {
       for (const [ev, id] of Object.entries(cfg.gads.conversion_actions)) {
-        if (!ALLOWED_EVENT_NAMES.has(ev))
-          err(`gads.conversion_actions ismeretlen event-név: ${ev} (engedett: ${[...ALLOWED_EVENT_NAMES].join(', ')}).`);
+        if (!VALID_ACTION_EVENTS.has(ev))
+          err(`gads.conversion_actions ismeretlen event-név: ${ev} (engedett: ${[...VALID_ACTION_EVENTS].join(', ')}).`);
         if (!/^\d+$/.test(String(id)))
           err(`gads.conversion_actions["${ev}"] numerikus conversionAction ID kell, kapott: ${id}`);
       }
@@ -201,7 +207,7 @@ ${cfg.meta.test_event_code ? '- [ ] ⚠️ test_event_code KIVÉVE a KV-ből él
       (\`<div id="cf-turnstile-invisible">\`)
 - [ ] CookieYes (GTM-ből) aktív → a consent automatikusan a cookieyes-consent cookie-ból jön
 - [ ] Konverziós pontokon: \`trackConversion('<event_name>', { value, currency, user_data })\`
-      Engedett event-nevek: ${[...ALLOWED_EVENT_NAMES].join(', ')}
+      Engedett event-nevek: ${INGRESS_EVENT_NAMES.join(', ')}
 
 ## Ellenőrzés (deploy után)
 - [ ] curl https://${host}/api/event/health → {"status":"ok"}

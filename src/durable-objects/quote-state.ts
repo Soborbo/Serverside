@@ -25,6 +25,8 @@ export interface QuoteStateData {
   // Attribúció a quote időpontjában (gclid/fbclid/UTM stb.) — a +60 perces
   // tüzeléskor a click ID-k még érvényesek a feltöltéshez.
   attribution?: AttributionParams;
+  // §3 lead-útvonal a quote időpontjában; a +60 perces Meta-fire custom_data-ba teszi.
+  lead_provenance?: string;
 }
 
 const STORAGE_KEY = 'quote';
@@ -95,7 +97,8 @@ export class QuoteStateObject implements DurableObject {
       view_content_fired: previous?.view_content_fired ?? false,
       consent: newQuote.consent,
       ad_allowed: newQuote.ad_allowed,
-      attribution: newQuote.attribution
+      attribution: newQuote.attribution,
+      lead_provenance: newQuote.lead_provenance
     };
 
     await this.state.storage.put(STORAGE_KEY, quote);
@@ -148,12 +151,14 @@ export class QuoteStateObject implements DurableObject {
   }
 
   /**
-   * Alarm: 60 perccel a quote completion után tüzel a 3-way fan-out
-   * (Meta + GA4 + Google Ads). Failure → DLQ.
+   * Alarm: 60 perccel a quote completion után tüzel a késleltetett Meta-fire.
+   * Modell 2: NINCS GA4 és NINCS Google Ads on-site láb (a böngésző birtokolja).
+   * Ez a Meta CAPI Lead a böngésző-pixellel az event_id-n DEDUPLIKÁL — ez a
+   * késleltetett mechanizmus lényege. Failure → DLQ.
    *
    * Idempotency: CF DOs guarantee at-least-once alarm delivery (max 6 retries
-   * on throw). We set `fired_at` BEFORE fan-out to ensure double-firing
-   * doesn't duplicate conversions across all 3 platforms.
+   * on throw). We set `fired_at` BEFORE the fire to ensure double-firing
+   * doesn't duplicate the Meta conversion (event_id dedup).
    */
   async alarm(): Promise<void> {
     const quote = await this.state.storage.get<QuoteStateData>(STORAGE_KEY);
@@ -170,8 +175,7 @@ export class QuoteStateObject implements DurableObject {
       // (max 6×) újrapróbálja — különben a finally+deleteAll csendben elveszítené a
       // 60 perces késleltetett konverziót. A platform-szintű hibák amúgy is a
       // Promise.allSettled-en belül DLQ-ba mennek, ide csak igazán váratlan hiba jut.
-      // A re-fire Meta/GAds-re event_id-vel dedup-ol; a GA4 ritkán duplázódhat, ami
-      // elfogadható a teljes vesztéssel szemben.
+      // A re-fire Meta-ra event_id-vel dedup-ol, így a max 6 retry biztonságos.
       quote.fired_at = null;
       await this.state.storage.put(STORAGE_KEY, quote);
       throw err;
@@ -182,8 +186,6 @@ export class QuoteStateObject implements DurableObject {
   private async fireDelayedConversion(quote: QuoteStateData): Promise<void> {
     const { getSiteConfig } = await import('../lib/config');
     const { sendToMetaCAPI } = await import('../lib/meta');
-    const { sendToGA4MP } = await import('../lib/ga4');
-    const { sendToGoogleAdsCAPI } = await import('../lib/gads');
     const { buildFbcFromFbclid } = await import('../lib/attribution');
     const { enqueueFailure } = await import('../lib/deadletter');
     const { logStructured } = await import('../types');
@@ -200,11 +202,11 @@ export class QuoteStateObject implements DurableObject {
       return;
     }
 
-    const event_name = 'quote_calculator_conversion';
+    const event_name = 'quote_calculator_submitted';
     const event_time = quote.event_time;
     const userData = quote.user_data || {};
-    // Consent gating: ha az ad-platform tiltott, a Meta + Google Ads hívást
-    // teljesen kihagyjuk (no-op success, nincs DLQ). GA4 mindig megy.
+    // Consent gating: ha az ad-platform tiltott, a Meta hívást teljesen kihagyjuk
+    // (no-op success, nincs DLQ). Modell 2: itt nincs GA4/Google Ads láb.
     const adAllowed = quote.ad_allowed !== false;
     const attr = quote.attribution;
 
@@ -216,48 +218,23 @@ export class QuoteStateObject implements DurableObject {
       currency: quote.currency,
       source: 'delayed_60min',
       event_source_url: `https://${quote.hostname}/quote`,
-      fbc: buildFbcFromFbclid(attr?.fbclid, event_time)
-    };
-    const ga4Payload = {
-      event_name,
-      event_id: quote.event_id,
-      client_id: quote.client_id,
-      value: quote.value,
-      currency: quote.currency,
-      source: 'delayed_60min',
-      service: quote.service,
-      consent: quote.consent,
-      attribution: attr
-    };
-    const gadsPayload = {
-      event_name,
-      event_id: quote.event_id,
-      event_time,
-      value: quote.value,
-      currency: quote.currency,
-      consent: quote.consent,
-      gclid: attr?.gclid,
-      gbraid: attr?.gbraid,
-      wbraid: attr?.wbraid
+      fbc: buildFbcFromFbclid(attr?.fbclid, event_time),
+      lead_provenance: quote.lead_provenance
     };
 
     const noopSuccess: Promise<{ success: true; error?: string }> = Promise.resolve({
       success: true
     });
     const results = await Promise.allSettled([
-      adAllowed ? sendToMetaCAPI(siteConfig, metaPayload, userData) : noopSuccess,
-      sendToGA4MP(siteConfig, ga4Payload),
-      adAllowed ? sendToGoogleAdsCAPI(siteConfig, this.env, gadsPayload, userData) : noopSuccess
+      adAllowed ? sendToMetaCAPI(siteConfig, metaPayload, userData) : noopSuccess
     ]);
 
     const nowIso = new Date().toISOString();
-    const platforms = ['meta', 'ga4', 'gads'] as const;
+    const platforms = ['meta'] as const;
     const payloads: Record<string, unknown>[] = [
-      metaPayload as unknown as Record<string, unknown>,
-      ga4Payload as unknown as Record<string, unknown>,
-      gadsPayload as unknown as Record<string, unknown>
+      metaPayload as unknown as Record<string, unknown>
     ];
-    const userDataMap = [true, false, true];
+    const userDataMap = [true];
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
@@ -288,9 +265,7 @@ export class QuoteStateObject implements DurableObject {
       message: 'Delayed quote conversion fired (60min alarm)',
       site_id: siteConfig.site_id,
       event_name,
-      meta_success: results[0].status === 'fulfilled' && results[0].value.success,
-      ga4_success: results[1].status === 'fulfilled' && results[1].value.success,
-      gads_success: results[2].status === 'fulfilled' && results[2].value.success
+      meta_success: results[0].status === 'fulfilled' && results[0].value.success
     });
   }
 }

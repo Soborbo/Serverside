@@ -30,7 +30,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('TikTok forwarder', () => {
   const payload = {
-    event_name: 'contact_form_submit',
+    event_name: 'contact_form_submitted',
     event_id: 'evt-1',
     event_time: 1750000000,
     value: 100,
@@ -54,7 +54,7 @@ describe('TikTok forwarder', () => {
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
     const data = body.data[0];
     expect(body.event_source_id).toBe('PIX');
-    expect(data.event).toBe(TIKTOK_DEFAULT_EVENT_MAP['contact_form_submit']); // SubmitForm
+    expect(data.event).toBe(TIKTOK_DEFAULT_EVENT_MAP['contact_form_submitted']); // SubmitForm
     expect(data.user.ttclid).toBe('TT-123');
     expect(data.user.email).toBe(HASHED.em);
     expect(data.user.phone).toBe(HASHED.ph);
@@ -72,7 +72,7 @@ describe('TikTok forwarder', () => {
   it('honors a per-site event-name override', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ code: 0 }));
     const cfg = siteConfig({
-      tiktok: { pixel_code: 'PIX', access_token: 'TT', event_names: { contact_form_submit: 'Lead' } }
+      tiktok: { pixel_code: 'PIX', access_token: 'TT', event_names: { contact_form_submitted: 'Lead' } }
     });
     await sendToTikTok(cfg, payload, HASHED);
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
@@ -82,7 +82,7 @@ describe('TikTok forwarder', () => {
 
 describe('LinkedIn forwarder', () => {
   const payload = {
-    event_name: 'contact_form_submit',
+    event_name: 'contact_form_submitted',
     event_time: 1750000000,
     value: 50,
     currency: 'GBP',
@@ -102,7 +102,7 @@ describe('LinkedIn forwarder', () => {
     const cfg = siteConfig({
       linkedin: {
         access_token: 'BEARER',
-        conversion_rules: { contact_form_submit: 'urn:lla:llaPartnerConversion:99' }
+        conversion_rules: { contact_form_submitted: 'urn:lla:llaPartnerConversion:99' }
       }
     });
     const r = await sendToLinkedIn(cfg, payload, HASHED);
@@ -119,9 +119,9 @@ describe('LinkedIn forwarder', () => {
   it('skips when there is no matchable identifier', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const cfg = siteConfig({
-      linkedin: { access_token: 'B', conversion_rules: { contact_form_submit: 'urn:x' } }
+      linkedin: { access_token: 'B', conversion_rules: { contact_form_submitted: 'urn:x' } }
     });
-    const r = await sendToLinkedIn(cfg, { event_name: 'contact_form_submit', event_time: 1 }, {});
+    const r = await sendToLinkedIn(cfg, { event_name: 'contact_form_submitted', event_time: 1 }, {});
     expect(r.skipped).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -129,7 +129,7 @@ describe('LinkedIn forwarder', () => {
   it('non-2xx = failure', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('bad', { status: 400 }));
     const cfg = siteConfig({
-      linkedin: { access_token: 'B', conversion_rules: { contact_form_submit: 'urn:x' } }
+      linkedin: { access_token: 'B', conversion_rules: { contact_form_submitted: 'urn:x' } }
     });
     const r = await sendToLinkedIn(cfg, payload, HASHED);
     expect(r.success).toBe(false);
@@ -139,7 +139,7 @@ describe('LinkedIn forwarder', () => {
 
 describe('Microsoft Ads forwarder (scaffold)', () => {
   const payload = {
-    event_name: 'phone_conversion',
+    event_name: 'phone_number_clicked',
     event_time: 1750000000,
     value: 0,
     currency: 'GBP',
@@ -148,12 +148,12 @@ describe('Microsoft Ads forwarder (scaffold)', () => {
 
   it('buildOfflineConversion returns null without config or msclkid', () => {
     expect(buildOfflineConversion(siteConfig(), payload)).toBeNull();
-    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_conversion: 'Phone' } } });
+    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_number_clicked: 'Phone' } } });
     expect(buildOfflineConversion(cfg, { ...payload, msclkid: undefined })).toBeNull();
   });
 
   it('buildOfflineConversion builds the canonical record (omits value:0)', () => {
-    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_conversion: 'Phone Lead' } } });
+    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_number_clicked: 'Phone Lead' } } });
     const rec = buildOfflineConversion(cfg, payload);
     expect(rec).toEqual({
       microsoftClickId: 'MS-123',
@@ -165,7 +165,7 @@ describe('Microsoft Ads forwarder (scaffold)', () => {
 
   it('sendToMsAds never fires a live call; returns scaffolded+skipped when configured', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_conversion: 'Phone' } } });
+    const cfg = siteConfig({ microsoft_ads: { conversion_names: { phone_number_clicked: 'Phone' } } });
     const r = await sendToMsAds(cfg, payload, HASHED);
     expect(r.success).toBe(true);
     expect(r.scaffolded).toBe(true);

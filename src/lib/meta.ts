@@ -1,6 +1,6 @@
 import type { SiteConfig } from './config';
 import type { HashedUserData } from './hash';
-import { logStructured } from '../types';
+import { logStructured, EVENT_NAME_MAP } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import { sanitizeErrorMessage } from './log-sanitize';
 
@@ -19,20 +19,13 @@ export interface MetaCAPIPayload {
   fbc?: string;
   client_ip?: string;
   client_user_agent?: string;
+  // §3 — automatikus lead-útvonal (cold|post_quote|from_quote_email). A Meta
+  // custom_data-ba kerül; nem PII. Ingress-validált (lib/provenance.ts).
+  lead_provenance?: string;
 }
 
-const EVENT_NAME_MAP: Record<string, string> = {
-  quote_calculator_conversion: 'Lead',
-  callback_conversion: 'Lead',
-  contact_form_submit: 'Contact',
-  phone_conversion: 'Contact',
-  email_conversion: 'Contact',
-  whatsapp_conversion: 'Contact',
-  quote_calculator_first_view: 'ViewContent',
-  video_play: 'ViewContent',
-  booking_click: 'InitiateCheckout'
-};
-
+// internal event_name → Meta standard event. A térkép az events.json-ból
+// generálódik (lib ../types EVENT_NAME_MAP); ismeretlen név → passthrough.
 function mapEventName(internalName: string): string {
   return EVENT_NAME_MAP[internalName] || internalName;
 }
@@ -81,6 +74,9 @@ export async function sendToMetaCAPI(
     custom_data.value = payload.value;
     custom_data.currency = payload.currency;
   }
+  // §3 lead_provenance — Meta custom_data paraméter (nem PII). Modell 2-ben a
+  // Meta a fő on-site sink (a GA4/Google Ads on-site láb kikerült).
+  if (payload.lead_provenance) custom_data.lead_provenance = payload.lead_provenance;
 
   const event: Record<string, unknown> = {
     event_name: mapEventName(payload.event_name),
