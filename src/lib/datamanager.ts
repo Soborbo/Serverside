@@ -131,9 +131,28 @@ export async function sendToDataManager(
   if (typeof payload.value === 'number' && payload.value > 0) {
     event.conversionValue = payload.value;
   }
-  if (payload.currency) event.currency = payload.currency;
+  // currency CSAK conversionValue mellett — érték nélküli currency-t a Data
+  // Manager validáció elutasíthatja, és önmagában értelme sincs.
+  if (payload.currency && event.conversionValue !== undefined) {
+    event.currency = payload.currency;
+  }
 
   if (userIdentifiers.length > 0) event.userData = { userIdentifiers };
+
+  // A Data Manager eventenként LEGALÁBB EGY azonosítót követel (userData vagy
+  // adIdentifiers). Enélkül a hívás determinisztikus 400 — PERMANENS hiba, amit
+  // a DLQ-retry sosem nyerne vissza, csak zajt termelne. Skip-success, mint a
+  // MISSING_CONVERSION_ACTION eset.
+  if (userIdentifiers.length === 0 && !event.adIdentifiers) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS],
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name
+    });
+    return { success: true };
+  }
 
   if (payload.consent) {
     const consent: Record<string, string> = {};

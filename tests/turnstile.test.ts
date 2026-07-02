@@ -197,4 +197,50 @@ describe('validateTurnstile — verdict cache (TASK 1: 4-min token reuse)', () =
     await validateTurnstile('tok-B', undefined, env);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('lenient duplicate-elfogadás rate-limitelve DEGRADED_LIMITER-rel (token-replay bound)', async () => {
+    // friss Response minden hívásra (a body csak egyszer olvasható)
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ success: false, 'error-codes': ['timeout-or-duplicate'] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+    );
+    const usedKeys: string[] = [];
+    let allow = true;
+    const env = makeEnv({
+      DEGRADED_LIMITER: {
+        limit: async ({ key }: { key: string }) => {
+          usedKeys.push(key);
+          return { success: allow };
+        }
+      }
+    } as Partial<Env>);
+
+    // budgeten belül: elfogadva
+    const r1 = await validateTurnstile('replayed-tok', '203.0.113.5', env);
+    expect(r1.valid).toBe(true);
+    expect(usedKeys[0]).toBe('tsdup:203.0.113.5');
+
+    // budget kimerítve: elutasítva
+    allow = false;
+    const r2 = await validateTurnstile('replayed-tok-2', '203.0.113.5', env);
+    expect(r2.valid).toBe(false);
+    expect(r2.errorCodes).toContain('reused_token_rate_limited');
+  });
+
+  it('limiter-hiba esetén a lenient elfogadás megmarad (fail-open)', async () => {
+    mockFetch({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    const env = makeEnv({
+      DEGRADED_LIMITER: {
+        limit: async () => {
+          throw new Error('limiter down');
+        }
+      }
+    } as Partial<Env>);
+    const r = await validateTurnstile('replayed-tok', '203.0.113.5', env);
+    expect(r.valid).toBe(true);
+    expect(r.errorCodes).toContain('reused_token_accepted');
+  });
 });

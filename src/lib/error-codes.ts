@@ -76,6 +76,7 @@ export enum TrackingErrorCode {
   DATAMANAGER_AUTH_REJECTED = 'TRK-840-004',
   DATAMANAGER_RATE_LIMITED = 'TRK-840-005',
   DATAMANAGER_NOT_ALLOWLISTED = 'TRK-840-006',
+  DATAMANAGER_NO_IDENTIFIERS = 'TRK-840-007',
 
   MSADS_DISPATCH_FAILED = 'TRK-810-001',
   MSADS_API_TIMEOUT = 'TRK-810-002',
@@ -167,6 +168,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'Data Manager API returned non-2xx with error response',
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'Data Manager API rejected authentication (401)',
   [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'Data Manager API rate limit exceeded',
+  [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]:
+    'Data Manager event skipped: no user identifiers and no click ID (would be a permanent 400)',
   [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]:
     'Data Manager destination/feature not allowlisted for this account (e.g. multi-source / store sales)',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'Microsoft Ads offline conversion upload failed',
@@ -231,6 +234,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DATAMANAGER_API_NETWORK_ERROR]: 'warning',
   [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'warning',
   [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]: 'warning',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'warning',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'warning',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'warning',

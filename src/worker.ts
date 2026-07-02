@@ -22,6 +22,7 @@ import {
   MAX_RETRIES,
   type DeadLetterRecord
 } from './lib/deadletter';
+import { recordDeliveries } from './lib/ledger';
 
 export { QuoteStateObject };
 
@@ -138,18 +139,35 @@ export default {
       try {
         const ok = await retrySingle(env, record);
         if (ok) {
+          // 'retry' origin-nal könyvelünk (mint a cron-retry) — enélkül a
+          // reconciliation hamis coverage_drift CRITICAL-t adna minden Queues-ból
+          // sikeresen visszanyert kézbesítésre (csak a 'fanout'+'retry' origint
+          // számolja accepted-ként).
+          await recordDeliveries(env, {
+            event_id: String(record.event_payload.event_id ?? ''),
+            site_id: record.site_id,
+            event_name: String(record.event_payload.event_name ?? ''),
+            origin: 'retry',
+            records: [{ platform: record.platform, status: 'accepted' }]
+          });
           msg.ack();
           continue;
         }
         // attempts a Queues által számolt kézbesítési kísérlet (1-től).
         if (msg.attempts > MAX_RETRIES) {
           // Kimerült retry → R2 'dead' archívum (SLO-check / daily-digest látja).
-          await writeDeadLetter(env, {
+          // Csak sikeres archív-írás után ack-olunk — különben az event nyomtalanul
+          // eltűnne; írási hiba esetén a platform-retry (max_retries=5) újrapróbálja.
+          const archived = await writeDeadLetter(env, {
             ...record,
             retry_count: MAX_RETRIES,
             last_attempted_at: new Date().toISOString()
           });
-          msg.ack();
+          if (archived) {
+            msg.ack();
+          } else {
+            msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
+          }
         } else {
           msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
         }
@@ -163,7 +181,19 @@ export default {
           error: err instanceof Error ? err.message : String(err)
         });
         if (msg.attempts > MAX_RETRIES) {
-          msg.ack();
+          // Throw + kimerülés: a korábbi puszta ack az eventet nyomtalanul
+          // elnyelte. Dead-archívumba írjuk, hogy az SLO/digest/admin lássa.
+          const archived = await writeDeadLetter(env, {
+            ...record,
+            retry_count: MAX_RETRIES,
+            failure_reason: `queue consumer threw: ${err instanceof Error ? err.message : String(err)}`,
+            last_attempted_at: new Date().toISOString()
+          }).catch(() => false);
+          if (archived) {
+            msg.ack();
+          } else {
+            msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
+          }
         } else {
           msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
         }

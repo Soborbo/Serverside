@@ -171,9 +171,18 @@ export async function storeRefreshToken(
 ): Promise<void> {
   const refreshKey = `gads:${customerId}:refresh_token`;
   await env.OAUTH_TOKENS.put(refreshKey, refreshToken);
+  // A cache-elt access token a RÉGI consent scope-jával él (akár 55 percig) —
+  // re-consent után (pl. az új `datamanager` scope felvételekor) ez 403-akat
+  // adna, mintha a re-consent nem sikerült volna. Töröljük: a következő
+  // getAccessToken az ÚJ refresh tokennel, az új scope-pal frissít.
+  try {
+    await env.OAUTH_TOKENS.delete(`gads:${customerId}:access_token`);
+  } catch {
+    // best-effort: ha a delete elbukik, a stale token legfeljebb a TTL-ig él
+  }
   logStructured({
     level: 'info',
-    message: 'Stored Google Ads refresh token',
+    message: 'Stored Google Ads refresh token (stale access-token cache cleared)',
     customer_id: customerId
   });
 }

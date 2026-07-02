@@ -139,7 +139,11 @@ export async function sendToGoogleAdsCAPI(
   if (typeof payload.value === 'number' && payload.value > 0) {
     conversion.conversionValue = payload.value;
   }
-  if (payload.currency) conversion.currencyCode = payload.currency;
+  // currencyCode csak conversionValue mellett — érték nélkül nincs értelme, és
+  // a validáció elutasíthatja.
+  if (payload.currency && conversion.conversionValue !== undefined) {
+    conversion.currencyCode = payload.currency;
+  }
   // Enhanced Conversions for Leads (userIdentifiers) CSAK gclid mellett (vagy
   // click ID nélkül) engedett. gbraid/wbraid mellett a Google VALUE_MUST_BE_UNSET
   // hibát ad → partialFailure-rel csendben elbukna a sor. Ezért braid esetén

@@ -64,7 +64,13 @@ export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promis
   await writeDeadLetter(env, record);
 }
 
-export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promise<void> {
+/**
+ * R2 DLQ-írás. `true` = a rekord biztosan perzisztálva van; `false` = az írás
+ * elbukott (logolva). A hívónak a visszatérési értéket ELLENŐRIZNIE kell, ha az
+ * írás után törölné a rekord korábbi példányát — különben egy tranziens R2-hiba
+ * az event egyetlen példányát is megsemmisítené (write-then-delete atomicity).
+ */
+export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promise<boolean> {
   const date = new Date(record.last_attempted_at);
   const dateStr = date.toISOString().slice(0, 10);
   const timeStr = date.toISOString().slice(11, 19).replace(/:/g, '-');
@@ -101,6 +107,7 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
       retry_count: record.retry_count,
       r2_key: key
     });
+    return true;
   } catch (err) {
     logStructured({
       level: 'error',
@@ -110,6 +117,7 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
       platform: record.platform,
       error: err instanceof Error ? err.message : String(err)
     });
+    return false;
   }
 }
 
@@ -123,15 +131,29 @@ export function isDeadKey(key: string): boolean {
   return segments.length >= 4 && segments[2] === 'dead';
 }
 
+export interface PendingRetryScan {
+  pending: { key: string; record: DeadLetterRecord }[];
+  /**
+   * A retry-ablakon túli (vagy retry_count-kimerült) PENDING rekordok. Ezeket a
+   * hívó (cron retry) dead-archívumba mozgatja — enélkül halhatatlanok lennének:
+   * a retention csak 'dead' kulcsot töröl, a scan viszont mindig végigolvassa
+   * őket, ami riasztás-zajt és (10k+ rekordnál) retry-éhezést okoz, mert a
+   * lexikálisan korábbi lejárt kulcsok kiszorítják a friss retry-olhatókat.
+   */
+  expired: { key: string; record: DeadLetterRecord }[];
+}
+
 export async function listPendingRetries(
   env: Env,
   sitePrefix?: string,
-  maxResults = 100
-): Promise<{ key: string; record: DeadLetterRecord }[]> {
+  maxResults = 100,
+  maxExpired = 200
+): Promise<PendingRetryScan> {
   const now = Date.now();
   const cutoffMs = RETRY_WINDOW_HOURS * 60 * 60 * 1000;
 
   const results: { key: string; record: DeadLetterRecord }[] = [];
+  const expired: { key: string; record: DeadLetterRecord }[] = [];
   let cursor: string | undefined = undefined;
   let iterations = 0;
   const MAX_ITERATIONS = 10;
@@ -145,7 +167,7 @@ export async function listPendingRetries(
 
     for (const obj of listResult.objects) {
       if (isDeadKey(obj.key)) continue;
-      if (results.length >= maxResults) break;
+      if (results.length >= maxResults && expired.length >= maxExpired) break;
 
       try {
         const body = await env.DEAD_LETTER.get(obj.key);
@@ -153,10 +175,12 @@ export async function listPendingRetries(
         const record = (await body.json()) as DeadLetterRecord;
 
         const firstFailedMs = new Date(record.first_failed_at).getTime();
-        if (now - firstFailedMs > cutoffMs) continue;
-        if (record.retry_count >= MAX_RETRIES) continue;
+        if (now - firstFailedMs > cutoffMs || record.retry_count >= MAX_RETRIES) {
+          if (expired.length < maxExpired) expired.push({ key: obj.key, record });
+          continue;
+        }
 
-        results.push({ key: obj.key, record });
+        if (results.length < maxResults) results.push({ key: obj.key, record });
       } catch (err) {
         logStructured({
           level: 'warn',
@@ -168,18 +192,19 @@ export async function listPendingRetries(
       }
     }
 
-    if (results.length >= maxResults) break;
+    if (results.length >= maxResults && expired.length >= maxExpired) break;
     if (!listResult.truncated) break;
     cursor = listResult.cursor;
     iterations++;
   }
 
-  return results;
+  return { pending: results, expired };
 }
 
-export async function deleteDeadLetter(env: Env, key: string): Promise<void> {
+export async function deleteDeadLetter(env: Env, key: string): Promise<boolean> {
   try {
     await env.DEAD_LETTER.delete(key);
+    return true;
   } catch (err) {
     logStructured({
       level: 'warn',
@@ -188,5 +213,26 @@ export async function deleteDeadLetter(env: Env, key: string): Promise<void> {
       r2_key: key,
       error: err instanceof Error ? err.message : String(err)
     });
+    return false;
   }
+}
+
+/**
+ * Lejárt pending rekord átmozgatása a dead-archívumba (retention onnan purge-öl).
+ * A retry_count-ot MAX_RETRIES-re emeljük, hogy a kulcs a 'dead' prefixre
+ * kerüljön; az eredeti kulcs CSAK sikeres archív-írás után törlődik.
+ */
+export async function archiveExpiredRecord(
+  env: Env,
+  key: string,
+  record: DeadLetterRecord
+): Promise<boolean> {
+  const wrote = await writeDeadLetter(env, {
+    ...record,
+    retry_count: Math.max(record.retry_count, MAX_RETRIES),
+    failure_reason: `${record.failure_reason} [expired: retry window elapsed]`,
+    last_attempted_at: new Date().toISOString()
+  });
+  if (!wrote) return false;
+  return deleteDeadLetter(env, key);
 }

@@ -83,6 +83,7 @@ describe('TikTok forwarder', () => {
 describe('LinkedIn forwarder', () => {
   const payload = {
     event_name: 'contact_form_submitted',
+    event_id: 'evt-shared-123',
     event_time: 1750000000,
     value: 50,
     currency: 'GBP',
@@ -114,6 +115,8 @@ describe('LinkedIn forwarder', () => {
     expect(idTypes).toContain('SHA256_EMAIL');
     expect(idTypes).toContain('LINKEDIN_FIRST_PARTY_ADS_TRACKING_UUID');
     expect(body.conversionValue).toEqual({ currencyCode: 'GBP', amount: '50.00' });
+    // Megosztott event_id → LinkedIn eventId dedup-kulcs (retry-biztos, CLAUDE.md #16)
+    expect(body.eventId).toBe('evt-shared-123');
   });
 
   it('skips when there is no matchable identifier', async () => {

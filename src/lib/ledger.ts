@@ -227,6 +227,38 @@ export async function markDispatched(
   }
 }
 
+/**
+ * Admin "discard" támogatás: az event (site, name, id) hármasát véglegesen
+ * do_not_replay=1-re jelöli az idempotency táblában — így egy később beérkező
+ * duplikátum vagy replay sem fan-outol újra. Upsert: akkor is működik, ha az
+ * event még nem járt az idempotency táblában (pl. D1 épp nem élt az ingestkor).
+ */
+export async function markDoNotReplay(
+  env: Env,
+  siteId: string,
+  eventName: string,
+  eventId: string
+): Promise<boolean> {
+  if (!env.LEDGER) return false;
+  const now = new Date().toISOString();
+  try {
+    await env.LEDGER.prepare(
+      `INSERT INTO idempotency
+         (idempotency_key, site_id, event_name, event_id, first_seen_at, last_seen_at, seen_count, dispatched, do_not_replay)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1)
+       ON CONFLICT(idempotency_key) DO UPDATE SET
+         do_not_replay = 1,
+         last_seen_at = excluded.last_seen_at`
+    )
+      .bind(buildIdempotencyKey(siteId, eventName, eventId), siteId, eventName, eventId, now, now)
+      .run();
+    return true;
+  } catch (err) {
+    ledgerError('markDoNotReplay', err, { site_id: siteId, event_name: eventName });
+    return false;
+  }
+}
+
 export interface EventRawInput {
   event_id: string;
   lead_id?: string;

@@ -203,9 +203,35 @@ describe('handleAdmin — dlq replay validation', () => {
     expect(res.status).toBe(400);
   });
 
-  it('discard by key deletes the record (do-not-replay)', async () => {
+  it('discard by key deletes the record and flags do_not_replay in D1', async () => {
     const deleted: string[] = [];
-    const env = makeEnv({ DEAD_LETTER: { delete: async (k: string) => { deleted.push(k); } } });
+    const record = {
+      platform: 'meta',
+      site_id: 'painless',
+      hostname: 'painlessremovals.com',
+      event_payload: { event_name: 'contact_form_submitted', event_id: 'evt-discard-1' },
+      failure_reason: 'x',
+      retry_count: 3,
+      first_failed_at: '2026-06-01T00:00:00Z',
+      last_attempted_at: '2026-06-01T00:00:00Z'
+    };
+    const boundArgs: unknown[][] = [];
+    const env = makeEnv({
+      DEAD_LETTER: {
+        get: async () => ({ json: async () => record }),
+        delete: async (k: string) => {
+          deleted.push(k);
+        }
+      },
+      LEDGER: {
+        prepare: () => ({
+          bind: (...args: unknown[]) => {
+            boundArgs.push(args);
+            return { run: async () => ({}) };
+          }
+        })
+      }
+    });
     const res = await handleAdmin(
       req('d2.example.com', 'POST', '/api/event/admin/dlq/replay', TOKEN, {
         key: 'painless/meta/dead/x.json',
@@ -217,6 +243,35 @@ describe('handleAdmin — dlq replay validation', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(await res.text());
     expect(body.action).toBe('discard');
+    expect(body.do_not_replay_flagged).toBe(true);
     expect(deleted).toContain('painless/meta/dead/x.json');
+    // a do_not_replay upsert a rekord (site, name, id) hármasával fut
+    expect(boundArgs[0]).toContain('painless');
+    expect(boundArgs[0]).toContain('contact_form_submitted');
+    expect(boundArgs[0]).toContain('evt-discard-1');
+  });
+
+  it('discard tolerates a missing R2 object (delete only, no flag)', async () => {
+    const deleted: string[] = [];
+    const env = makeEnv({
+      DEAD_LETTER: {
+        get: async () => null,
+        delete: async (k: string) => {
+          deleted.push(k);
+        }
+      }
+    });
+    const res = await handleAdmin(
+      req('d2.example.com', 'POST', '/api/event/admin/dlq/replay', TOKEN, {
+        key: 'painless/meta/dead/gone.json',
+        discard: true
+      }),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    expect(body.do_not_replay_flagged).toBe(false);
+    expect(deleted).toContain('painless/meta/dead/gone.json');
   });
 });

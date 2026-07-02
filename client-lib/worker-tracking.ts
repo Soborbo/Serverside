@@ -68,6 +68,10 @@ export interface ConversionPayload {
   event_source_url?: string;
   consent?: ConsentState;
   attribution?: AttributionParams;
+  // Stabil lead-azonosító (UUID, NEM PII) — a szerver-ledger ezzel köti össze a
+  // konverziót a CRM offline-loop státuszokkal (lead_qualified → revenue_confirmed).
+  // Nélküle az offline upload működik, de a ledger/consent-audit join nem.
+  lead_id?: string;
 }
 
 let cachedTurnstileToken: string | undefined;
@@ -79,10 +83,20 @@ let turnstileWidgetId: string | undefined;
 let pendingResolver:
   | { resolve: (v: string | undefined) => void; timeout: ReturnType<typeof setTimeout> }
   | undefined;
+// Párhuzamos hívások UGYANAZT a folyamatban lévő challenge-t várják meg (a
+// Worker a token-újrahasználatot verdikt-cache-sel támogatja). A korábbi
+// viselkedés — az első függő kérés undefined-dal eldobása — gyors egymás utáni
+// két konverziónál (pl. tel-klikk form-submit közben) az ELSŐ event szerver-
+// lábát némán elvesztette.
+let pendingTokenPromise: Promise<string | undefined> | undefined;
 
 export async function getTurnstileToken(): Promise<string | undefined> {
   if (cachedTurnstileToken && Date.now() < cachedTokenExpiresAt) {
     return cachedTurnstileToken;
+  }
+
+  if (pendingTokenPromise) {
+    return pendingTokenPromise;
   }
 
   if (!window.turnstile) {
@@ -90,19 +104,12 @@ export async function getTurnstileToken(): Promise<string | undefined> {
     return undefined;
   }
 
-  return new Promise((resolve) => {
+  pendingTokenPromise = new Promise<string | undefined>((resolve) => {
     const container = document.getElementById('cf-turnstile-invisible');
     if (!container) {
       console.warn('[tracking] Turnstile container not found');
       resolve(undefined);
       return;
-    }
-
-    // If a previous request is still pending, resolve it as undefined
-    // (we'll start a fresh challenge).
-    if (pendingResolver) {
-      clearTimeout(pendingResolver.timeout);
-      pendingResolver.resolve(undefined);
     }
 
     const timeout = setTimeout(() => {
@@ -146,7 +153,11 @@ export async function getTurnstileToken(): Promise<string | undefined> {
       });
       window.turnstile!.execute(container);
     }
+  }).finally(() => {
+    pendingTokenPromise = undefined;
   });
+
+  return pendingTokenPromise;
 }
 
 function getCookie(name: string): string | undefined {
@@ -319,6 +330,29 @@ export function collectAttribution(): AttributionParams {
   return merged;
 }
 
+// Landolási attribúció-perzisztálás. KRITIKUS, hogy ez page-load-kor fusson
+// (Astro: `astro:page-load` a BaseLayout-ban): a collectAttribution() korábban
+// csak konverziókor hívódott, így aki MÁS oldalon konvertált, mint ahol landolt,
+// annak az fbclid/gbraid/wbraid/msclkid/ttclid/UTM jelei elvesztek (csak a gclid
+// élte túl a _gcl_aw cookie-n át). Ez a hívás menti őket localStorage-ba, amíg
+// az URL-paraméterek még jelen vannak.
+//
+// Consent-race (EEA): ha landoláskor még nincs ad-consent, a click ID-k nem
+// tárolódnak (fail-closed, szándékos). A CookieYes `cookieyes_consent_update`
+// eventjére újra gyűjtünk — a bannert tipikusan még a landing oldalon fogadják
+// el, amikor az URL click ID-i még ott vannak.
+let attributionInitDone = false;
+export function initAttribution(): void {
+  if (typeof window === 'undefined') return;
+  collectAttribution();
+  if (!attributionInitDone) {
+    attributionInitDone = true;
+    document.addEventListener('cookieyes_consent_update', () => {
+      collectAttribution();
+    });
+  }
+}
+
 export async function sendToWorker(payload: ConversionPayload): Promise<boolean> {
   const turnstileToken = await getTurnstileToken();
   if (!turnstileToken) {
@@ -377,6 +411,7 @@ export async function trackConversion(
     service?: string;
     user_data?: UserData;
     consent?: ConsentState;
+    lead_id?: string;
   } = {}
 ): Promise<void> {
   const eventId = params.event_id || generateUUID();
@@ -406,6 +441,7 @@ export async function trackConversion(
     source: params.source,
     service: params.service,
     user_data: params.user_data,
-    consent: params.consent
+    consent: params.consent,
+    lead_id: params.lead_id
   });
 }

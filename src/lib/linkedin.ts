@@ -30,6 +30,9 @@ export interface LinkedInPayload {
   value?: number;
   currency?: string;
   li_fat_id?: string;
+  // Megosztott event_id (CLAUDE.md #16) → LinkedIn `eventId` dedup-kulcs. Enélkül
+  // egy DLQ-retry egy kétes kimenetelű (timeout utáni) hívás után duplán számolna.
+  event_id?: string;
 }
 
 export interface LinkedInResult {
@@ -66,6 +69,8 @@ export async function sendToLinkedIn(
     conversionHappenedAt: payload.event_time * 1000, // ms
     user: { userIds }
   };
+  // Idempotency: a LinkedIn az eventId-n dedup-ol — retry-biztos újraküldés.
+  if (payload.event_id) body.eventId = payload.event_id;
   if (typeof payload.value === 'number' && payload.value > 0 && payload.currency) {
     body.conversionValue = { currencyCode: payload.currency, amount: payload.value.toFixed(2) };
   }

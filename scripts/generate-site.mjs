@@ -109,9 +109,14 @@ function validate(cfg, opts = {}) {
     }
   }
 
-  // GA4
-  if (!cfg.ga4 || typeof cfg.ga4 !== 'object') err('ga4 blokk kötelező.');
-  else {
+  // GA4 — OPCIONÁLIS: migration site (pl. beautyflow) kihagyhatja, ha a böngésző
+  // GA4-e már GTM-ből tüzel — a szerver-oldali MP itt duplázna (GA4 nem dedup-ol
+  // event_id-re). Hiányzó blokk → a Worker GA4 MP lába no-op skip (SiteConfig.ga4?).
+  if (cfg.ga4 === undefined || cfg.ga4 === null) {
+    warn('ga4 blokk hiányzik — a szerver-oldali GA4 MP láb (offline augment) kimarad ennél a site-nál.');
+  } else if (typeof cfg.ga4 !== 'object') {
+    err('ga4 blokk objektum kell legyen (vagy hagyd el teljesen).');
+  } else {
     if (!/^G-[A-Z0-9]+$/.test(String(cfg.ga4.measurement_id || '')))
       err(`ga4.measurement_id érvénytelen (G-XXXX formátum kell), kapott: ${cfg.ga4.measurement_id}`);
     if (!cfg.ga4.api_secret) err('ga4.api_secret kötelező (MP api_secret a GA4 admin felületről).');
@@ -164,15 +169,18 @@ function toSiteConfig(cfg) {
       pixel_id: String(cfg.meta.pixel_id),
       access_token: cfg.meta.access_token
     },
-    ga4: {
-      measurement_id: cfg.ga4.measurement_id,
-      api_secret: cfg.ga4.api_secret
-    },
     gads: {
       customer_id: cfg.gads.customer_id ?? null,
       login_customer_id: cfg.gads.login_customer_id ?? null
     }
   };
+  // ga4 opcionális (migration site): hiányzó blokk → a Worker GA4 MP lába skip.
+  if (cfg.ga4) {
+    sc.ga4 = {
+      measurement_id: cfg.ga4.measurement_id,
+      api_secret: cfg.ga4.api_secret
+    };
+  }
   if (cfg.meta.test_event_code) sc.meta.test_event_code = cfg.meta.test_event_code;
   if (cfg.gads.conversion_actions) sc.gads.conversion_actions = cfg.gads.conversion_actions;
   if (cfg.require_consent === true) sc.require_consent = true;
