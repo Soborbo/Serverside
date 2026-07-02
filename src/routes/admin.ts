@@ -3,7 +3,7 @@ import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
 import { getSiteConfig } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
-import { getLeadTrail, isValidLeadId } from '../lib/ledger';
+import { getLeadTrail, isValidLeadId, markDoNotReplay, recordDeliveries } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
 import {
   listPendingRetries,
@@ -144,9 +144,32 @@ async function handleDlqReplay(
   if (typeof body.key === 'string') {
     const key = body.key;
     if (body.discard === true) {
+      // A do_not_replay flag a D1 idempotency táblában a valós elnyomó — az R2
+      // objektum törlése önmagában NEM akadályozná meg, hogy egy duplikátum vagy
+      // re-ingest újra fan-outoljon. Előbb kiolvassuk a rekordot a flaghez.
+      const obj = await env.DEAD_LETTER.get(key);
+      let flagged = false;
+      if (obj) {
+        try {
+          const record = (await obj.json()) as DeadLetterRecord;
+          flagged = await markDoNotReplay(
+            env,
+            record.site_id,
+            String(record.event_payload.event_name ?? ''),
+            String(record.event_payload.event_id ?? '')
+          );
+        } catch {
+          // corrupt rekord → csak törlés (nincs mit flagelni)
+        }
+      }
       await deleteDeadLetter(env, key);
-      logStructured({ level: 'info', message: 'Admin DLQ discard (do-not-replay)', r2_key: key });
-      return json({ action: 'discard', key, ok: true }, 200);
+      logStructured({
+        level: 'info',
+        message: 'Admin DLQ discard (do-not-replay)',
+        r2_key: key,
+        do_not_replay_flagged: flagged
+      });
+      return json({ action: 'discard', key, ok: true, do_not_replay_flagged: flagged }, 200);
     }
     const obj = await env.DEAD_LETTER.get(key);
     if (!obj) return json({ error: 'key_not_found', key }, 404);
@@ -157,7 +180,18 @@ async function handleDlqReplay(
       return json({ error: 'corrupt_record', key }, 422);
     }
     const ok = await retrySingle(env, record);
-    if (ok) await deleteDeadLetter(env, key);
+    if (ok) {
+      // 'retry' origin-nal könyvelünk, mint a cron — különben a reconciliation
+      // hamis coverage_drift-et adna a visszanyert kézbesítésre.
+      await recordDeliveries(env, {
+        event_id: String(record.event_payload.event_id ?? ''),
+        site_id: record.site_id,
+        event_name: String(record.event_payload.event_name ?? ''),
+        origin: 'retry',
+        records: [{ platform: record.platform, status: 'accepted' }]
+      });
+      await deleteDeadLetter(env, key);
+    }
     logStructured({
       level: 'info',
       message: 'Admin DLQ single replay',
@@ -176,7 +210,7 @@ async function handleDlqReplay(
   const sitePrefix = typeof body.site_id === 'string' && body.site_id ? `${body.site_id}/` : undefined;
   let pending: { key: string; record: DeadLetterRecord }[];
   try {
-    pending = await listPendingRetries(env, sitePrefix, max);
+    ({ pending } = await listPendingRetries(env, sitePrefix, max));
   } catch (err) {
     logStructured({
       level: 'error',
@@ -193,6 +227,13 @@ async function handleDlqReplay(
     try {
       const ok = await retrySingle(env, record);
       if (ok) {
+        await recordDeliveries(env, {
+          event_id: String(record.event_payload.event_id ?? ''),
+          site_id: record.site_id,
+          event_name: String(record.event_payload.event_name ?? ''),
+          origin: 'retry',
+          records: [{ platform: record.platform, status: 'accepted' }]
+        });
         await deleteDeadLetter(env, key);
         succeeded++;
       } else {

@@ -173,9 +173,11 @@ describe('sendToDataManager — request shape', () => {
       baseSiteConfig,
       envWithCachedToken(),
       { ...basePayload, value: 0, currency: 'GBP' },
-      {}
+      { em: 'EMHASH' }
     );
     expect(captured.events[0].conversionValue).toBeUndefined();
+    // currency conversionValue nélkül szintén kimarad
+    expect(captured.events[0].currency).toBeUndefined();
   });
 
   it('maps consent signals to CONSENT_GRANTED / CONSENT_DENIED', async () => {
@@ -188,7 +190,7 @@ describe('sendToDataManager — request shape', () => {
       baseSiteConfig,
       envWithCachedToken(),
       { ...basePayload, consent: { ad_user_data: 'GRANTED', ad_personalization: 'DENIED' } },
-      {}
+      { em: 'EMHASH' }
     );
     expect(captured.events[0].consent).toEqual({
       adUserData: 'CONSENT_GRANTED',
@@ -206,9 +208,34 @@ describe('sendToDataManager — request shape', () => {
       baseSiteConfig,
       envWithCachedToken({ DATAMANAGER_VALIDATE_ONLY: '1' } as Partial<Env>),
       basePayload,
-      {}
+      { em: 'EMHASH' }
     );
     expect(captured.validateOnly).toBe(true);
+  });
+
+  it('skips (success, no HTTP) when there is no identifier at all — permanent 400 elkerülése', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, {});
+    expect(result.success).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a click ID alone counts as an identifier (no userData needed)', async () => {
+    let captured: any = null;
+    vi.stubGlobal('fetch', async (_u: string, init: any) => {
+      captured = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ requestId: 'r' }) } as any;
+    });
+    const result = await sendToDataManager(
+      baseSiteConfig,
+      envWithCachedToken(),
+      { ...basePayload, gclid: 'Cj0KCQtest' },
+      {}
+    );
+    expect(result.success).toBe(true);
+    expect(captured.events[0].adIdentifiers).toEqual({ gclid: 'Cj0KCQtest' });
+    expect(captured.events[0].userData).toBeUndefined();
   });
 });
 
@@ -219,7 +246,9 @@ describe('sendToDataManager — error handling', () => {
       status: 401,
       json: async () => ({ error: { code: 401, message: 'invalid auth' } })
     }));
-    const result = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, {});
+    const result = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, {
+      em: 'EMHASH'
+    });
     expect(result.success).toBe(false);
     expect(result.error_code).toBe('TRK-840-004');
   });
@@ -230,7 +259,9 @@ describe('sendToDataManager — error handling', () => {
       status: 400,
       json: async () => ({ error: { code: 400, message: 'destination NOT_ALLOWLISTED for feature' } })
     }));
-    const result = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, {});
+    const result = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, {
+      em: 'EMHASH'
+    });
     expect(result.success).toBe(false);
     expect(result.error_code).toBe('TRK-840-006');
   });

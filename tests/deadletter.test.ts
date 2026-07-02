@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { isDeadKey, writeDeadLetter, type DeadLetterRecord } from '../src/lib/deadletter';
+import {
+  isDeadKey,
+  writeDeadLetter,
+  listPendingRetries,
+  archiveExpiredRecord,
+  MAX_RETRIES,
+  type DeadLetterRecord
+} from '../src/lib/deadletter';
 import type { Env } from '../src/env';
 
 describe('isDeadKey — segment match', () => {
@@ -69,5 +76,136 @@ describe('writeDeadLetter — key uniqueness (audit #9)', () => {
     // mindkettő ugyanazt a másodperc-prefixet kapja, csak a suffix tér el
     expect(keys[0].startsWith('painless/meta/2026-06-26/12-00-00_unknown_0_')).toBe(true);
     expect(keys[1].startsWith('painless/meta/2026-06-26/12-00-00_unknown_0_')).toBe(true);
+  });
+
+  it('returns true on success and false when the R2 put throws (write-then-delete guard)', async () => {
+    const okEnv = {
+      DEAD_LETTER: { put: async () => undefined }
+    } as unknown as Env;
+    expect(await writeDeadLetter(okEnv, recordWithoutEventId())).toBe(true);
+
+    const failEnv = {
+      DEAD_LETTER: {
+        put: async () => {
+          throw new Error('R2 down');
+        }
+      }
+    } as unknown as Env;
+    expect(await writeDeadLetter(failEnv, recordWithoutEventId())).toBe(false);
+  });
+});
+
+describe('listPendingRetries — expired-rekordok szétválasztása', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function makeRecord(overrides: Partial<DeadLetterRecord> = {}): DeadLetterRecord {
+    return {
+      platform: 'meta',
+      site_id: 'painless',
+      hostname: 'painless.com',
+      event_payload: { event_id: 'e1', event_name: 'contact_form_submitted' },
+      failure_reason: 'boom',
+      retry_count: 0,
+      first_failed_at: new Date().toISOString(),
+      last_attempted_at: new Date().toISOString(),
+      ...overrides
+    };
+  }
+
+  function envWithObjects(objects: Record<string, DeadLetterRecord>): Env {
+    return {
+      DEAD_LETTER: {
+        list: async () => ({
+          objects: Object.keys(objects).map((key) => ({ key })),
+          truncated: false
+        }),
+        get: async (key: string) =>
+          objects[key] ? { json: async () => objects[key] } : null
+      }
+    } as unknown as Env;
+  }
+
+  it('friss rekord → pending; 24h-nál öregebb → expired; retry-kimerült → expired', async () => {
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const env = envWithObjects({
+      'painless/meta/2026-06-30/a.json': makeRecord(),
+      'painless/meta/2026-06-28/b.json': makeRecord({ first_failed_at: old }),
+      'painless/meta/2026-06-30/c.json': makeRecord({ retry_count: MAX_RETRIES })
+    });
+
+    const { pending, expired } = await listPendingRetries(env);
+    expect(pending.map((p) => p.key)).toEqual(['painless/meta/2026-06-30/a.json']);
+    expect(expired.map((e) => e.key).sort()).toEqual([
+      'painless/meta/2026-06-28/b.json',
+      'painless/meta/2026-06-30/c.json'
+    ]);
+  });
+
+  it('dead-kulcsokat továbbra is kihagyja (se pending, se expired)', async () => {
+    const env = envWithObjects({
+      'painless/meta/dead/2026-06-01/x.json': makeRecord({ retry_count: MAX_RETRIES })
+    });
+    const { pending, expired } = await listPendingRetries(env);
+    expect(pending).toHaveLength(0);
+    expect(expired).toHaveLength(0);
+  });
+});
+
+describe('archiveExpiredRecord — dead-archívumba mozgatás', () => {
+  it('sikeres archív-írás után törli az eredetit', async () => {
+    const puts: string[] = [];
+    const deletes: string[] = [];
+    const env = {
+      DEAD_LETTER: {
+        put: async (k: string) => {
+          puts.push(k);
+        },
+        delete: async (k: string) => {
+          deletes.push(k);
+        }
+      }
+    } as unknown as Env;
+    const record: DeadLetterRecord = {
+      platform: 'meta',
+      site_id: 'painless',
+      hostname: 'painless.com',
+      event_payload: { event_id: 'e-exp' },
+      failure_reason: 'boom',
+      retry_count: 1,
+      first_failed_at: '2026-06-01T00:00:00Z',
+      last_attempted_at: '2026-06-01T00:00:00Z'
+    };
+    const ok = await archiveExpiredRecord(env, 'painless/meta/2026-06-01/old.json', record);
+    expect(ok).toBe(true);
+    // a retry_count MAX_RETRIES-re emelve → dead prefixű kulcs
+    expect(puts[0]).toMatch(/^painless\/meta\/dead\//);
+    expect(deletes).toEqual(['painless/meta/2026-06-01/old.json']);
+  });
+
+  it('ha az archív-írás elbukik, az eredeti kulcs MEGMARAD', async () => {
+    const deletes: string[] = [];
+    const env = {
+      DEAD_LETTER: {
+        put: async () => {
+          throw new Error('R2 down');
+        },
+        delete: async (k: string) => {
+          deletes.push(k);
+        }
+      }
+    } as unknown as Env;
+    const record: DeadLetterRecord = {
+      platform: 'ga4',
+      site_id: 'painless',
+      hostname: 'painless.com',
+      event_payload: { event_id: 'e-exp2' },
+      failure_reason: 'boom',
+      retry_count: 0,
+      first_failed_at: '2026-06-01T00:00:00Z',
+      last_attempted_at: '2026-06-01T00:00:00Z'
+    };
+    const ok = await archiveExpiredRecord(env, 'painless/ga4/2026-06-01/old.json', record);
+    expect(ok).toBe(false);
+    expect(deletes).toHaveLength(0);
   });
 });

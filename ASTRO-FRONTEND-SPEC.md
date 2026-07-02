@@ -8,9 +8,9 @@
 |---|---|---|---|---|
 | 1 | `page_view` | nem | igen (auto) | `PageView` (auto + SPA-only manuális fix) |
 | 2 | `pricing_view` | nem | igen | — |
-| 3 | `form_start` | nem | igen | — |
+| 3 | `form_started` | nem | igen | — |
 | 4 | `form_step_complete` | nem | igen | — |
-| 5 | `form_abandonment` | nem | igen (best-effort) | — |
+| 5 | `form_abandoned` | nem | igen (best-effort) | — |
 | 6 | `quote_calculator_complete` | nem (engagement) | igen | `ViewContent` (csak első, value nélkül) |
 | 7 | `quote_calculator_conversion` | **IGEN** | igen | `Lead` |
 | 8 | `callback_conversion` | **IGEN** | igen | `Lead` |
@@ -20,9 +20,15 @@
 | 12 | `whatsapp_conversion` | **IGEN** | igen | `Contact` |
 | 13 | `video_play` | nem | igen | `ViewContent` |
 | 14 | `video_progress_25/50/75` | nem | igen | — |
-| 15 | `video_complete` | nem | igen | — |
-| 16 | `scroll_50` | nem | igen | — |
-| 17 | `scroll_90` | nem | igen | — |
+| 15 | `video_completed` | nem | igen | — |
+| 16 | `scroll_depth` (percent=50) | nem | igen | — |
+| 17 | `scroll_depth` (percent=90) | nem | igen | — |
+
+> **Event-név szabály:** a `form_start`, `video_complete`, `scroll` nevek a GA4
+> enhanced measurement RESERVED auto-eventjeivel ütköznek (dupla számolás) — ezért
+> a fenti saját nevek (`form_started`, `video_completed`, `scroll_depth`). A
+> kanonikus névlista a `src/events.json` (a szerver `check-event-contract` is ezt
+> ellenőrzi); a `form_abandonment` régi neve is `form_abandoned`-ra igazodott.
 
 ## Critical implementation rules
 
@@ -59,12 +65,15 @@
    In GTM: Variables → New → User-Provided Data → "Manual Configuration".
    (Vagy server-side úton, Sprint 9-ben.)
 
-7. **`form_abandonment` is best-effort, not guaranteed.**
-   Use both `pagehide` and `visibilitychange` events, and use
-   `navigator.sendBeacon()` to a dedicated endpoint for reliability on mobile.
+7. **`form_abandoned` is best-effort, not guaranteed.**
+   Use both `pagehide` and `visibilitychange` events. NINCS dedikált worker
+   endpoint hozzá (a `/api/event/abandonment` SOSEM létezett a workerben — oda
+   beacon-ölni néma 404) — az event dataLayer-only, a GA4 böngésző-tag viszi.
 
 8. **`crypto.randomUUID()` requires HTTPS or localhost.**
-   Use a UUID v4 fallback for non-secure contexts.
+   NINCS Math.random() fallback — a client-lib/uuid.ts szándékosan hibát dob
+   nem-secure kontextusban (a gyenge random event_id a Meta dedup-ot rontaná).
+   A production site-ok mind HTTPS-en futnak; localhost dev is támogatott.
 
 9. **Manual Meta `PageView` fires ONLY on SPA navigation, not on initial load.**
    The base Pixel snippet fires `PageView` automatically on first load.
@@ -81,7 +90,7 @@ src/lib/
 ├── uuid.ts                # UUID generator with HTTPS fallback
 ├── tracking.ts            # trackEvent + setUserDataOnDOM (PII-safe)
 ├── conversion-state.ts    # 60-min upgrade-window logic
-├── form-tracking.ts       # form_start, form_step, form_abandonment
+├── form-tracking.ts       # form_started, form_step, form_abandoned
 ├── global-listeners.ts    # click (phone/email/whatsapp), scroll
 └── worker-tracking.ts     # sendToWorker (Sprint 9)
 ```
@@ -92,21 +101,17 @@ src/lib/
 export const CURRENCY = 'GBP';
 export const QUOTE_TIMEOUT_MS = 60 * 60 * 1000;
 export const QUOTE_POST_WINDOW_MS = 24 * 60 * 60 * 1000;
-export const ABANDONMENT_BEACON_URL = '/api/event/abandonment';
 ```
 
 ## `src/lib/uuid.ts`
 
+A kanonikus implementáció a repo `client-lib/uuid.ts` — MÁSOLD azt, ne ezt a
+vázlatot. Lényege: `crypto.randomUUID()` (HTTPS/localhost), fallbackként
+`crypto.getRandomValues`-alapú v4; **Math.random() fallback TILOS** (gyenge
+random event_id → Meta dedup-ütközés kockázat).
+
 ```typescript
-export function generateUUID(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
+export { generateUUID } from '../../client-lib/uuid'; // vagy copy-paste a fájl
 ```
 
 ## `src/lib/tracking.ts`
@@ -331,7 +336,6 @@ export function resumeQuoteTimer() {
 
 ```typescript
 import { trackEvent } from './tracking';
-import { ABANDONMENT_BEACON_URL } from './tracking-config';
 
 type FormState = {
   formName: string;
@@ -356,7 +360,8 @@ export function initFormTracking(formId: string, formName: string) {
 
     if (!activeForms.has(formId)) {
       activeForms.set(formId, { formName, startedAt: Date.now(), submitted: false });
-      trackEvent('form_start', {
+      // NEM 'form_start' — az a GA4 enhanced measurement reserved auto-eventje.
+      trackEvent('form_started', {
         form_name: formName,
         page_path: location.pathname,
         page_title: document.title
@@ -388,7 +393,7 @@ export function trackFormStep(formId: string, stepName: string, stepNumber: numb
 
 function reportAbandonment(state: FormState) {
   const payload = {
-    event: 'form_abandonment',
+    event: 'form_abandoned',
     form_name: state.formName,
     last_step: state.lastStep || 'unknown',
     last_field: state.lastField || 'unknown',
@@ -399,14 +404,9 @@ function reportAbandonment(state: FormState) {
     timestamp: Date.now()
   };
 
-  if (typeof navigator.sendBeacon === 'function') {
-    try {
-      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-      navigator.sendBeacon(ABANDONMENT_BEACON_URL, blob);
-    } catch { /* swallow */ }
-  }
-
-  trackEvent('form_abandonment', payload);
+  // dataLayer-only (GA4 böngésző-tag) — a workernek NINCS abandonment endpointja,
+  // a korábbi sendBeacon('/api/event/abandonment') néma 404 volt.
+  trackEvent('form_abandoned', payload);
 }
 
 function handleAbandonment() {
@@ -486,8 +486,9 @@ export function initGlobalListeners() {
   let fired50 = false, fired90 = false;
   window.addEventListener('scroll', () => {
     const pct = (window.scrollY + window.innerHeight) / document.documentElement.scrollHeight * 100;
-    if (pct >= 50 && !fired50) { fired50 = true; trackEvent('scroll_50'); }
-    if (pct >= 90 && !fired90) { fired90 = true; trackEvent('scroll_90'); }
+    // 'scroll_depth' + percent param — a puszta 'scroll' a GA4 reserved neve.
+    if (pct >= 50 && !fired50) { fired50 = true; trackEvent('scroll_depth', { percent: 50 }); }
+    if (pct >= 90 && !fired90) { fired90 = true; trackEvent('scroll_depth', { percent: 90 }); }
   }, { passive: true, signal });
 }
 
@@ -547,6 +548,7 @@ const GTM_ID = 'GTM-W8V3BVGD';
     import { initGlobalListeners, cleanupGlobalListeners } from '../lib/global-listeners';
     import { initAbandonmentListeners, cleanupAbandonmentListeners } from '../lib/form-tracking';
     import { trackEvent } from '../lib/tracking';
+    import { initAttribution } from '../lib/worker-tracking';
 
     let isFirstLoad = true;
 
@@ -572,6 +574,9 @@ const GTM_ID = 'GTM-W8V3BVGD';
       resumeQuoteTimer();
       initGlobalListeners();
       initAbandonmentListeners();
+      // KRITIKUS: landolási attribúció-mentés (fbclid/gbraid/UTM → localStorage).
+      // Enélkül a más oldalon konvertáló user click ID-i elvesznek.
+      initAttribution();
     }
 
     function onBeforeSwap() {
@@ -645,7 +650,7 @@ Custom Event triggerek minden eventre.
 | Konverziós lépcső | Kalkulátor → 30s → tel: click | Csak 1 konverzió, kalkulátor érték rajta |
 | Multi-completion | Kalkulátor 3× | Csak 1× ViewContent Meta-ba |
 | View Transitions | 5 oldal-navigáció | Click listener nem duplikálódik |
-| `form_abandonment` mobile | iPhone Safari, swap app | sendBeacon endpoint logba |
+| `form_abandoned` mobile | iPhone Safari, swap app | dataLayer/GA4 DebugView-ban megjelenik |
 | PII leak teszt | Console: `JSON.stringify(window.dataLayer)` | NINCS email/phone/név |
 
 ## A 60 perces upgrade-ablak trade-off

@@ -130,8 +130,9 @@ export const EVENT_NAME_MAP: Record<string, string> = (() => {
   return m;
 })();
 
-// Meta CAPI event_id cap (CLAUDE.md #2/#16). A valós id egy 36 karakteres UUID,
-// így a derived ViewContent id (`${event_id}_vc`, +3) is bőven 40 alatt marad.
+// Meta CAPI event_id cap (CLAUDE.md #2/#16). A valós id egy 36 karakteres UUID.
+// (A derived ViewContent is a quote event_id-jét használja suffix nélkül — a Meta
+// az (event_name, event_id) PÁRON dedup-ol, így ez a böngésző-pixellel egyezik.)
 const MAX_EVENT_ID_LENGTH = 40;
 const MIN_EVENT_TIME = 1_500_000_000; // 2017-07-14
 const MAX_VALUE = 1_000_000_000;

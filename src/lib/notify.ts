@@ -5,7 +5,6 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from './error-c
 
 const ALERT_FROM = 'tracking-alerts@soborbo.com';
 const ADMIN_EMAIL = 'laszlo@soborbo.com';
-const ADMIN_PHONE = '+447XXXXXXXXX';
 
 export async function sendAdminEmail(
   env: Env,
@@ -57,13 +56,23 @@ export async function sendCriticalSMS(env: Env, message: string): Promise<void> 
     });
     return;
   }
+  // A célszám secretből jön (wrangler secret put ADMIN_PHONE, E.164 formátum) —
+  // a korábbi hardcoded placeholder (+447XXXXXXXXX) miatt MINDEN kritikus SMS
+  // csendben elbukott a Twilio-nál, hiába voltak a Twilio-secretek beállítva.
+  if (!env.ADMIN_PHONE) {
+    logStructured({
+      level: 'warn',
+      message: 'ADMIN_PHONE not configured, skipping SMS alert'
+    });
+    return;
+  }
 
   try {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`;
     const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
     const formData = new URLSearchParams();
     formData.set('From', env.TWILIO_FROM_NUMBER);
-    formData.set('To', ADMIN_PHONE);
+    formData.set('To', env.ADMIN_PHONE);
     formData.set('Body', message.slice(0, 160));
 
     const response = await fetch(url, {

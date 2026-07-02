@@ -4,8 +4,6 @@ import { countSiteConfigs } from '../lib/config';
 import { logStructured } from '../types';
 
 export async function handleDailyDigest(env: Env): Promise<void> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
   const siteCount = await countSiteConfigs(env);
 
   let totalDlqRecords = 0;
@@ -37,7 +35,7 @@ export async function handleDailyDigest(env: Env): Promise<void> {
 
   const html = `
     <h2>Soborbo Tracking — Daily Digest</h2>
-    <p><strong>Period:</strong> Last 24h (since ${since})</p>
+    <p><strong>Snapshot:</strong> ${new Date().toISOString()} (a DLQ-számok a teljes bucket pillanatképe, nem 24h-s ablak)</p>
 
     <h3>Active sites</h3>
     <p>${siteCount} sites configured</p>

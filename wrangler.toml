@@ -63,30 +63,34 @@ head_sampling_rate = 1.0
 # 100 kérés / 60s, IP+hostname kulcsra. Élesítés: vedd ki a kommentből + redeploy.
 # (A `period` csak 10 vagy 60 lehet; a limiter per-location, eventually consistent.)
 #
-# [[ratelimits]]
-# name = "INGEST_LIMITER"
-# namespace_id = "1001"
-# simple = { limit = 100, period = 60 }
-#
+[[ratelimits]]
+name = "INGEST_LIMITER"
+namespace_id = "1001"
+simple = { limit = 100, period = 60 }
+
 # ── TASK 2: degradált-módú (token-nélküli low-risk) rate limiter ─────────────
 # Szűk budget IP+host kulcsra, mert ezek az eventek token nélkül jönnek. Ha nincs
 # bekötve, a degradált elfogadás a felső szintű INGEST_LIMITER-re támaszkodik.
-# [[ratelimits]]
-# name = "DEGRADED_LIMITER"
-# namespace_id = "1002"
-# simple = { limit = 10, period = 60 }
+# Ugyanez a limiter bound-olja a Turnstile lenient duplicate-elfogadást is
+# (token-replay elleni védelem — lásd lib/turnstile.ts).
+[[ratelimits]]
+name = "DEGRADED_LIMITER"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }
 
 # Cron Triggers — DLQ retry, daily digest, SLO check.
-# Sprint 1 test-deploy alatt kikommentezve (Email binding nélkül a daily-digest
-# úgyis soft-skip-pel megy). Sprint 8.5 production-előtt aktiváld újra.
-# [triggers]
-# crons = [
-#   "0 8 * * *",        # Daily digest at 8 AM GMT
-#   "15 8 * * *",       # Reconciliation drift-check (D1 ledger) at 8:15 AM GMT
-#   "*/30 * * * *",     # SLO check every 30 min
-#   "30 3 * * *",       # Retention cleanup (D1 ledger + R2 'dead' archive) at 3:30 AM GMT
-#   "0 * * * *"         # DLQ retry every hour
-# ]
+# AKTÍV: a Sprint 9 route-ok élnek, ezért a scheduled-alrendszernek futnia KELL —
+# enélkül a DLQ-retry/retention/reconciliation/SLO sosem fut, és minden DLQ-ba
+# került konverzió a 24 órás ablak után végleg elveszne (CLAUDE.md 11).
+# (Email binding nélkül a daily-digest soft-skip-pel megy — a cron attól még fut.)
+[triggers]
+crons = [
+  "0 8 * * *",        # Daily digest at 8 AM GMT
+  "15 8 * * *",       # Reconciliation drift-check (D1 ledger) at 8:15 AM GMT
+  "*/30 * * * *",     # SLO check every 30 min
+  "30 3 * * *",       # Retention cleanup (D1 ledger + R2 'dead' archive) at 3:30 AM GMT
+  "0 * * * *"         # DLQ retry every hour
+]
 
 # Analytics Engine dataset for metrics
 [[analytics_engine_datasets]]

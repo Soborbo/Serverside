@@ -5,8 +5,8 @@
 #
 # Mit csinál:
 #   1) Lekér minden szükséges Painless adatot (Pixel ID, Meta CAPI token,
-#      GA4 measurement_id + secret, GAds customer_id + 6 conversion action,
-#      Turnstile secret, OAuth client + secret, GAds developer token).
+#      GA4 measurement_id + secret, GAds customer_id + 3 OFFLINE conversion
+#      action, Turnstile secret, OAuth client + secret, GAds developer token).
 #   2) Felépíti a SITE_CONFIG JSON-t és feltölti KV-be.
 #   3) Wrangler secret-eket állít be (TURNSTILE_SECRET_KEY,
 #      GADS_OAUTH_CLIENT_ID, GADS_OAUTH_CLIENT_SECRET, GADS_DEVELOPER_TOKEN).
@@ -22,9 +22,9 @@
 #
 # Env override (CI-ben hasznos):
 #   PIXEL_ID, META_ACCESS_TOKEN, GA4_MEASUREMENT_ID, GA4_API_SECRET,
-#   GADS_CUSTOMER_ID, GADS_LOGIN_CUSTOMER_ID, GADS_CA_QUOTE,
-#   GADS_CA_CALLBACK, GADS_CA_CONTACT, GADS_CA_PHONE, GADS_CA_EMAIL,
-#   GADS_CA_WHATSAPP, TURNSTILE_SECRET_KEY, GADS_OAUTH_CLIENT_ID,
+#   GADS_CUSTOMER_ID, GADS_LOGIN_CUSTOMER_ID, GADS_CA_LEAD_QUALIFIED,
+#   GADS_CA_BOOKING_CONFIRMED, GADS_CA_REVENUE_CONFIRMED,
+#   TURNSTILE_SECRET_KEY, GADS_OAUTH_CLIENT_ID,
 #   GADS_OAUTH_CLIENT_SECRET, GADS_DEVELOPER_TOKEN
 #
 # Előfeltétel: wrangler login már lefutott, vagy CLOUDFLARE_API_TOKEN env
@@ -111,12 +111,14 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "kv" ]; then
   ask_secret GA4_API_SECRET     "Painless GA4 Measurement Protocol API secret"
   ask_plain GADS_CUSTOMER_ID    "Painless Google Ads Customer ID (10 digit, no dashes)"
   ask_plain GADS_LOGIN_CUSTOMER_ID "Painless GAds login_customer_id (MCC ID, vagy üres ha nincs MCC)"
-  ask_plain GADS_CA_QUOTE       "Painless conversion_action ID — quote_calculator_conversion"
-  ask_plain GADS_CA_CALLBACK    "Painless conversion_action ID — callback_conversion"
-  ask_plain GADS_CA_CONTACT     "Painless conversion_action ID — contact_form_submit"
-  ask_plain GADS_CA_PHONE       "Painless conversion_action ID — phone_conversion"
-  ask_plain GADS_CA_EMAIL       "Painless conversion_action ID — email_conversion"
-  ask_plain GADS_CA_WHATSAPP    "Painless conversion_action ID — whatsapp_conversion"
+  # Modell 2: a szerver KIZÁRÓLAG offline (Enhanced Conversions for Leads)
+  # Google Ads konverziót küld a CRM-fázisokra (lead-status webhook). A kulcsok
+  # ezért az OFFLINE event-nevek (events.json kind:offline) — a régi on-site
+  # nevekkel (phone_conversion stb.) a lookup MISSING_CONVERSION_ACTION-nel
+  # csendben kimaradna. Lásd painless-config.template.json.
+  ask_plain GADS_CA_LEAD_QUALIFIED    "Painless conversion_action ID — lead_qualified (offline)"
+  ask_plain GADS_CA_BOOKING_CONFIRMED "Painless conversion_action ID — booking_confirmed (offline)"
+  ask_plain GADS_CA_REVENUE_CONFIRMED "Painless conversion_action ID — revenue_confirmed (offline)"
 
   if [ "$PHASE" = "production" ]; then
     TEST_EVENT_BLOCK="null"
@@ -138,12 +140,9 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "kv" ]; then
     --arg gads_cid        "$GADS_CUSTOMER_ID" \
     --argjson login_cid   "$LOGIN_CID_BLOCK" \
     --argjson test_code   "$TEST_EVENT_BLOCK" \
-    --arg ca_quote        "$GADS_CA_QUOTE" \
-    --arg ca_callback     "$GADS_CA_CALLBACK" \
-    --arg ca_contact      "$GADS_CA_CONTACT" \
-    --arg ca_phone        "$GADS_CA_PHONE" \
-    --arg ca_email        "$GADS_CA_EMAIL" \
-    --arg ca_whatsapp     "$GADS_CA_WHATSAPP" \
+    --arg ca_lead_qualified    "$GADS_CA_LEAD_QUALIFIED" \
+    --arg ca_booking_confirmed "$GADS_CA_BOOKING_CONFIRMED" \
+    --arg ca_revenue_confirmed "$GADS_CA_REVENUE_CONFIRMED" \
     '{
       site_id: "painless",
       country_code: "GB",
@@ -163,12 +162,9 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "kv" ]; then
         customer_id: $gads_cid,
         login_customer_id: $login_cid,
         conversion_actions: {
-          quote_calculator_conversion: $ca_quote,
-          callback_conversion: $ca_callback,
-          contact_form_submit: $ca_contact,
-          phone_conversion: $ca_phone,
-          email_conversion: $ca_email,
-          whatsapp_conversion: $ca_whatsapp
+          lead_qualified: $ca_lead_qualified,
+          booking_confirmed: $ca_booking_confirmed,
+          revenue_confirmed: $ca_revenue_confirmed
         }
       }
     }')

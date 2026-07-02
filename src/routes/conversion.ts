@@ -219,42 +219,64 @@ export async function handleConversion(
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
   const attribution = parseAttribution(payload.attribution);
 
+  // Quote-state DO kulcs: client_id (_ga cookie) az elsődleges; ha a GA cookie
+  // blokkolt/kései, az fbp a fallback — így a 60 perces halasztott-Lead flow nem
+  // esik némán vissza azonnali fan-outra egy third-party cookie-race miatt.
+  // A kliens mindkét oldalon (submit + upgrade klikk) ugyanígy küldi őket, így a
+  // kulcs konzisztens.
+  const quoteKey =
+    typeof payload.client_id === 'string'
+      ? payload.client_id
+      : typeof payload.fbp === 'string'
+        ? payload.fbp
+        : undefined;
+
   if (
     payload.event_name === 'quote_calculator_submitted' &&
-    typeof payload.client_id === 'string' &&
     typeof payload.value === 'number' &&
     typeof payload.currency === 'string' &&
     typeof payload.service === 'string'
   ) {
-    return await handleQuoteCompletion(
-      {
-        ...payload,
-        client_id: payload.client_id,
-        value: payload.value,
-        currency: payload.currency,
-        service: payload.service
-      },
-      siteConfig,
-      hashedUserData,
+    if (quoteKey) {
+      return await handleQuoteCompletion(
+        {
+          ...payload,
+          value: payload.value,
+          currency: payload.currency,
+          service: payload.service
+        },
+        quoteKey,
+        siteConfig,
+        hashedUserData,
+        hostname,
+        remoteIp,
+        userAgent,
+        consentDecision,
+        attribution,
+        env,
+        ctx,
+        cors,
+        startedAt
+      );
+    }
+    // Se client_id, se fbp → nincs stabil DO-kulcs; az event a normál fan-outra
+    // esik (azonnali Lead, event_id-dedup a böngésző-pixellel). Logoljuk, hogy a
+    // szemantika-váltás látható legyen, ne néma degradáció.
+    logStructured({
+      level: 'warn',
+      message: 'quote_calculator_submitted without client_id/fbp — immediate fan-out (no 60min deferral)',
       hostname,
-      remoteIp,
-      userAgent,
-      consentDecision,
-      attribution,
-      env,
-      ctx,
-      cors,
-      startedAt
-    );
+      site_id: siteConfig.site_id
+    });
   }
 
   const leadId = typeof payload.lead_id === 'string' ? payload.lead_id : undefined;
 
   let effectivePayload: ConversionRequestPayload = payload;
-  if (QUOTE_UPGRADE_EVENTS.has(payload.event_name) && typeof payload.client_id === 'string') {
-    const activeQuote = await getQuoteState(env, payload.client_id);
+  if (QUOTE_UPGRADE_EVENTS.has(payload.event_name) && quoteKey) {
+    const activeQuote = await getQuoteState(env, quoteKey);
     if (activeQuote) {
-      await markQuoteUpgraded(env, payload.client_id);
+      await markQuoteUpgraded(env, quoteKey);
       effectivePayload = {
         ...payload,
         event_id: activeQuote.event_id,
@@ -341,11 +363,11 @@ export async function handleConversion(
 
 async function handleQuoteCompletion(
   payload: ConversionRequestPayload & {
-    client_id: string;
     value: number;
     currency: string;
     service: string;
   },
+  quoteKey: string,
   siteConfig: SiteConfig,
   hashedUserData: HashedUserData,
   hostname: string,
@@ -358,10 +380,16 @@ async function handleQuoteCompletion(
   cors: HeadersInit,
   startedAt: number
 ): Promise<Response> {
-  const previousState = await getQuoteState(env, payload.client_id);
+  const previousState = await getQuoteState(env, quoteKey);
 
-  await setQuoteState(env, payload.client_id, {
-    client_id: payload.client_id,
+  // Az fbc-t már ingest-időben feloldjuk (cookie > fbclid-ből épített) és a
+  // state-ben tároljuk az fbp-vel együtt — a +60 perces DO-alarm tüzelésekor a
+  // request-kontextus (cookie-k) már nem elérhető, e nélkül a halasztott Lead
+  // match-minősége (EMQ) csendben gyengülne.
+  const resolvedFbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
+
+  await setQuoteState(env, quoteKey, {
+    client_id: quoteKey,
     value: payload.value,
     currency: payload.currency,
     service: payload.service,
@@ -372,7 +400,10 @@ async function handleQuoteCompletion(
     hostname,
     consent: consentDecision.consent,
     ad_allowed: consentDecision.adAllowed,
-    attribution
+    attribution,
+    fbp: payload.fbp,
+    fbc: resolvedFbc,
+    lead_provenance: payload.lead_provenance
   });
 
   // ViewContent csak akkor, ha az ad-platform engedett (Meta-only event).
@@ -381,14 +412,18 @@ async function handleQuoteCompletion(
       siteConfig,
       {
         event_name: 'quote_calculator_opened',
-        event_id: `${payload.event_id}_vc`,
+        // UGYANAZ az event_id, mint a quote-é: a böngésző-pixel ViewContent-je is
+        // a quote eventId-jével tüzel (spec), és a Meta (event_name, event_id)
+        // PÁRON dedup-ol — a korábbi `_vc` suffix miatt a kettő nem dedup-olt,
+        // dupla ViewContent-et számolva.
+        event_id: payload.event_id,
         event_time: payload.event_time,
         value: payload.value,
         currency: payload.currency,
         source: payload.source,
         event_source_url: payload.event_source_url,
         fbp: payload.fbp,
-        fbc: payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time),
+        fbc: resolvedFbc,
         client_ip: remoteIp,
         client_user_agent: userAgent,
         lead_provenance: payload.lead_provenance
@@ -396,13 +431,12 @@ async function handleQuoteCompletion(
       hashedUserData
     ).then(async (result) => {
       if (result.success) {
-        await markViewContentFired(env, payload.client_id);
+        await markViewContentFired(env, quoteKey);
       } else {
         logStructured({
           level: 'warn',
           message: 'ViewContent Meta call failed; not marking view_content_fired (will retry on next quote)',
           site_id: siteConfig.site_id,
-          client_id: payload.client_id,
           error_code: result.error_code
         });
       }
@@ -417,7 +451,7 @@ async function handleQuoteCompletion(
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
-    client_id: payload.client_id,
+    quote_key_source: typeof payload.client_id === 'string' ? 'client_id' : 'fbp',
     fired_view_content: !previousState?.view_content_fired,
     duration_ms: Date.now() - startedAt
   });
@@ -504,6 +538,7 @@ function fanOut(
   };
   const linkedinPayload: LinkedInPayload = {
     event_name: payload.event_name,
+    event_id: payload.event_id,
     event_time: payload.event_time,
     value: payload.value,
     currency: payload.currency,

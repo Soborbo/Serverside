@@ -107,4 +107,8 @@ export interface Env {
   TWILIO_ACCOUNT_SID?: string;
   TWILIO_AUTH_TOKEN?: string;
   TWILIO_FROM_NUMBER?: string;
+  // A kritikus SMS-riasztás célszáma E.164-ben (`wrangler secret put ADMIN_PHONE`).
+  // Ha nincs beállítva, az SMS-láb soft-skip (a korábbi hardcoded placeholder
+  // minden SMS-t csendben elbuktatott).
+  ADMIN_PHONE?: string;
 }

@@ -184,6 +184,13 @@ export async function handleLeadStatus(
       body.user_data ?? {},
       siteConfig.country_code as CountryCode
     );
+    // Consent Mode jelek a Data Manager eventre. EEA/DMA alatt a jelöletlen
+    // (unspecified) consentű eventet a Google csendben kizárhatja az ads-
+    // mérésből — ha van POZITÍV consent-evidenciánk (a CRM autoritatív
+    // ad_allowed=true jele, vagy a ledger consent-receipt), azt explicit
+    // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site) a
+    // mező kimarad — consentet nem találunk ki.
+    const consentEvidence = body.ad_allowed === true || leadConsent?.ad_allowed === true;
     const gadsPayload: GAdsPayload = {
       event_name: eventName,
       event_id: orderId,
@@ -193,7 +200,10 @@ export async function handleLeadStatus(
       // city is dropped by the Data Manager (no AddressInfo.city field); only
       // postal_code/country (plain) are carried into the address identifier.
       postal_code: body.user_data?.postal_code ?? undefined,
-      country: body.user_data?.country ?? undefined
+      country: body.user_data?.country ?? undefined,
+      consent: consentEvidence
+        ? { ad_user_data: 'GRANTED', ad_personalization: 'GRANTED' }
+        : undefined
     };
     const result = await sendToDataManager(siteConfig, env, gadsPayload, hashed);
     uploadedToGads = result.success;

@@ -25,6 +25,10 @@ export interface QuoteStateData {
   // Attribúció a quote időpontjában (gclid/fbclid/UTM stb.) — a +60 perces
   // tüzeléskor a click ID-k még érvényesek a feltöltéshez.
   attribution?: AttributionParams;
+  // Meta browser ID + click ID a quote időpontjában — a +60 perces alarm-fire
+  // kérés-kontextus nélkül fut, e nélkül a halasztott Lead EMQ-ja gyengülne.
+  fbp?: string;
+  fbc?: string;
   // §3 lead-útvonal a quote időpontjában; a +60 perces Meta-fire custom_data-ba teszi.
   lead_provenance?: string;
 }
@@ -98,6 +102,8 @@ export class QuoteStateObject implements DurableObject {
       consent: newQuote.consent,
       ad_allowed: newQuote.ad_allowed,
       attribution: newQuote.attribution,
+      fbp: newQuote.fbp,
+      fbc: newQuote.fbc,
       lead_provenance: newQuote.lead_provenance
     };
 
@@ -218,7 +224,10 @@ export class QuoteStateObject implements DurableObject {
       currency: quote.currency,
       source: 'delayed_60min',
       event_source_url: `https://${quote.hostname}/quote`,
-      fbc: buildFbcFromFbclid(attr?.fbclid, event_time),
+      // Ingest-időben tárolt fbp/fbc az elsődleges (EMQ); az fbclid-ből épített
+      // fbc csak fallback a régi (fbp/fbc nélküli) state-rekordokhoz.
+      fbp: quote.fbp,
+      fbc: quote.fbc || buildFbcFromFbclid(attr?.fbclid, event_time),
       lead_provenance: quote.lead_provenance
     };
 

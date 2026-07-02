@@ -4,7 +4,9 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 
 export interface SiteConfig {
   site_id: string;
-  country_code: 'GB' | 'HU' | 'EU' | 'US';
+  // A hash.ts CountryCode-jával egyező unió — a generate-site.mjs DE/FR/IT/ES-t
+  // is kibocsát, a szűkebb típus hazudott volna (a runtime cast eddig elfedte).
+  country_code: 'GB' | 'HU' | 'EU' | 'US' | 'DE' | 'FR' | 'IT' | 'ES';
   currency: string;
   meta: {
     pixel_id: string;

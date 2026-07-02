@@ -105,6 +105,28 @@ export async function validateTurnstile(
     // Lenient (default): a token valódi volt, csak már beváltották (legit
     // újrahasználat, amit a cache KV-késés miatt nem fogott el). Elfogadjuk és
     // cache-eljük, hogy a további újrahasználat gyors legyen.
+    //
+    // Replay-bound: a lenient elfogadás önmagában KORLÁTLAN token-újrajátszást
+    // engedne (egy megszerzett token a lejárta után is örökké duplicate-ként
+    // jönne vissza → spam-konverziók). Ezért IP-kulcsos szűk rate limit védi
+    // (DEGRADED_LIMITER, 10/60s) — a legit kliens-újrahasználatot a verdikt-cache
+    // szolgálja ki, ide jellemzően csak cache-miss/KV-lag jut, amit a budget bőven
+    // fedez. Limiter-binding nélkül a régi (bound nélküli) viselkedés marad.
+    if (env.DEGRADED_LIMITER && remoteIp) {
+      try {
+        const { success } = await env.DEGRADED_LIMITER.limit({ key: `tsdup:${remoteIp}` });
+        if (!success) {
+          logStructured({
+            level: 'warn',
+            message: 'Turnstile duplicate-token acceptance rate-limited (possible replay)',
+            cache_present: Boolean(cache)
+          });
+          return { valid: false, errorCodes: ['reused_token_rate_limited'] };
+        }
+      } catch {
+        // Limiter-hiba → fail-open a lenient elfogadásra (mint eddig).
+      }
+    }
     await cacheVerdict(cache, key, 'valid', VERDICT_TTL_SECONDS);
     logStructured({
       level: 'info',
