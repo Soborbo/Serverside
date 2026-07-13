@@ -75,6 +75,14 @@ export async function handleConversion(
         hostname,
         duration_ms: Date.now() - startedAt
       });
+      recordConversionMetric(env, {
+        hostname,
+        site_id: 'unknown',
+        event_name: 'unknown',
+        accepted: false,
+        error_code: 'rate_limited',
+        total_duration_ms: Date.now() - startedAt
+      });
       return new Response(null, { status: 429, headers: cors });
     }
   }
@@ -119,6 +127,16 @@ export async function handleConversion(
       hostname,
       duration_ms: Date.now() - startedAt
     });
+    recordConversionMetric(env, {
+      hostname,
+      site_id: 'unknown',
+      // Ismert-formájú de nem engedélyezett event_name mehet blobba (bounded
+      // cardinality nem sérül: az AE-riport error_code+hostname szerint aggregál).
+      event_name: unknownEvent && typeof rawName === 'string' ? rawName.slice(0, 64) : 'unknown',
+      accepted: false,
+      error_code: errorCode,
+      total_duration_ms: Date.now() - startedAt
+    });
     return new Response(null, { status: 204, headers: cors });
   }
 
@@ -151,6 +169,14 @@ export async function handleConversion(
       event_name: payload.event_name,
       duration_ms: Date.now() - startedAt
     });
+    recordConversionMetric(env, {
+      hostname,
+      site_id: 'unknown',
+      event_name: payload.event_name,
+      accepted: false,
+      error_code: TrackingErrorCode.NO_SITE_CONFIG,
+      total_duration_ms: Date.now() - startedAt
+    });
     return new Response('Not configured', { status: 404, headers: cors });
   }
 
@@ -173,6 +199,14 @@ export async function handleConversion(
           site_id: siteConfig.site_id,
           event_name: payload.event_name,
           duration_ms: Date.now() - startedAt
+        });
+        recordConversionMetric(env, {
+          hostname,
+          site_id: siteConfig.site_id,
+          event_name: payload.event_name,
+          accepted: false,
+          error_code: TrackingErrorCode.DEGRADED_RATE_LIMITED,
+          total_duration_ms: Date.now() - startedAt
         });
         return new Response(null, { status: 429, headers: cors });
       }
@@ -201,6 +235,14 @@ export async function handleConversion(
         event_name: payload.event_name,
         error: turnstileResult.errorCodes?.join(',') || 'unknown',
         duration_ms: Date.now() - startedAt
+      });
+      recordConversionMetric(env, {
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        accepted: false,
+        error_code: errorCode,
+        total_duration_ms: Date.now() - startedAt
       });
       return new Response('Invalid token', { status: 403, headers: cors });
     }

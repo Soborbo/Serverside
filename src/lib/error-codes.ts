@@ -35,6 +35,7 @@ export enum TrackingErrorCode {
   LEAD_STATUS_UNAUTHORIZED = 'TRK-400-007',
   DEGRADED_TOKENLESS_ACCEPTED = 'TRK-400-008',
   DEGRADED_RATE_LIMITED = 'TRK-400-009',
+  TURNSTILE_SECRET_INVALID = 'TRK-400-010',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -131,6 +132,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED]:
     'Token-less low-risk event accepted in degraded mode (Turnstile unavailable client-side)',
   [TrackingErrorCode.DEGRADED_RATE_LIMITED]: 'Token-less degraded event dropped by the degraded-mode rate limiter',
+  [TrackingErrorCode.TURNSTILE_SECRET_INVALID]:
+    'Turnstile siteverify rejected OUR secret (invalid/missing-input-secret) — server misconfig, form conversions blocked until fixed',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -282,6 +285,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'info',
   [TrackingErrorCode.INVALID_TURNSTILE_TOKEN]: 'info',
   [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'info',
+  [TrackingErrorCode.TURNSTILE_SECRET_INVALID]: 'critical',
 
   [TrackingErrorCode.RESERVED_EVENT_NAME]: 'critical',
   [TrackingErrorCode.GA4_ONSITE_FANOUT]: 'critical',

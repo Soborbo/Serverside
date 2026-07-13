@@ -114,12 +114,11 @@ binding = "OAUTH_TOKENS"
 id = "f464647802e24a5dac60cacd66a9876a"
 
 # Turnstile token-verdikt cache (TASK 1). A kliens 4 percig újrahasználja a
-# tokent; enélkül a binding nélkül a 2.+ event "timeout-or-duplicate"-tal 403-azna
-# (konverzió-vesztés). A kód guardolt: binding nélkül a régi per-request verify
-# marad. Élesítés: `wrangler kv namespace create TURNSTILE_CACHE` → id ide.
-# [[kv_namespaces]]
-# binding = "TURNSTILE_CACHE"
-# id = "<wrangler kv namespace create kiírja>"
+# tokent; a cache nélkül minden újrahasználat siteverify-ra megy (lenient
+# duplicate-accept + DEGRADED_LIMITER budget). Élesítve 2026-07-13.
+[[kv_namespaces]]
+binding = "TURNSTILE_CACHE"
+id = "36d8182879964f3caa58859c7c493645"
 
 # Durable Objects — quote state (60-min upgrade window, strong consistency)
 [[durable_objects.bindings]]
@@ -211,12 +210,14 @@ zone_name = "painlessremovals.com"
 # zone_name = "trapezlemezes.hu"
 #
 # Hét 4-5: BeautyFlow + szelloztessokosan + olcsokontenerhaz
-# [[routes]]
-# pattern = "beautyflow.pro/api/event/*"
-# zone_name = "beautyflow.pro"
-# [[routes]]
-# pattern = "www.beautyflow.pro/api/event/*"
-# zone_name = "beautyflow.pro"
+# BeautyFlow AKTÍV — a route már 2026-07-13 előtt élt a live workeren (lokális
+# deployból), itt szinkronizálva, hogy egy repo-állapotú deploy ne dobja el.
+[[routes]]
+pattern = "beautyflow.pro/api/event/*"
+zone_name = "beautyflow.pro"
+[[routes]]
+pattern = "www.beautyflow.pro/api/event/*"
+zone_name = "beautyflow.pro"
 #
 # [[routes]]
 # pattern = "szelloztessokosan.hu/api/event/*"

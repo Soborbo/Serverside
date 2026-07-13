@@ -132,6 +132,36 @@ export async function countSiteConfigs(env: Env): Promise<number> {
   return count;
 }
 
+/**
+ * A konfigurált site_id-k halmaza (www/apex dedup a config JSON `site_id`-ján).
+ * A daily-digest zero-accepted ellenőrzése használja. Hibatűrő: KV-hiba esetén
+ * az addig összegyűjtött halmazt adja vissza (a riasztás inkább maradjon el,
+ * mint hogy fals pozitívot adjon részleges lista miatt).
+ */
+export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
+  const siteIds = new Set<string>();
+  try {
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await env.SITE_CONFIG.list({ limit: 1000, cursor });
+      for (const k of page.keys) {
+        const cfg = await env.SITE_CONFIG.get<SiteConfig>(k.name, { type: 'json' });
+        if (cfg?.site_id) siteIds.add(cfg.site_id);
+      }
+      if (page.list_complete) break;
+      cursor = page.cursor;
+    }
+  } catch (err) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.KV_READ_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.KV_READ_FAILED],
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  return siteIds;
+}
+
 export async function getSiteConfig(hostname: string, env: Env): Promise<SiteConfig | null> {
   if (negativeCacheHit(hostname)) {
     return null;

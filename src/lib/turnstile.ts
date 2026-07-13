@@ -99,6 +99,22 @@ export async function validateTurnstile(
     return { valid: true, errorCodes: codes };
   }
 
+  // A secret a MI konfigurációnk — ha a siteverify szerint érvénytelen/hiányzó,
+  // az szerver-oldali misconfig, NEM bot-jelzés a kliensről. Nem hard-403-azzuk
+  // el érte a látogatót: infrastruktúra-hibaként kezeljük (failOpenOrClosed →
+  // a degraded-accept a low-risk tel/mailto eventeket így is átengedi), és
+  // CRITICAL szinten logoljuk, mert amíg fennáll, minden form-konverzió elvész
+  // (pont ez történt a 2026-06-28→07-13 incidensben, néma 403-okkal).
+  if (codes.includes('invalid-input-secret') || codes.includes('missing-input-secret')) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.TURNSTILE_SECRET_INVALID,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.TURNSTILE_SECRET_INVALID],
+      error: codes.join(',')
+    });
+    return failOpenOrClosed(env);
+  }
+
   // success:false — definitív Cloudflare-elutasítás.
   const duplicate = codes.includes('timeout-or-duplicate');
   if (duplicate && env.TURNSTILE_STRICT !== '1') {

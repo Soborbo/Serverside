@@ -32,13 +32,13 @@ const EVENTS = JSON.parse(
 const INGRESS_EVENT_NAMES = EVENTS.filter(
   (e) => e.channels.includes('server') && e.kind !== 'offline'
 ).map((e) => e.name);
-// gads.conversion_actions kulcsai BÁRMELY kanonikus event lehetnek (Modell 2-ben
-// jellemzően az offline CRM-eventek: lead_qualified, booking_confirmed, …), plusz a
-// legacy GA4 aliasok a migráció alatt.
-const VALID_ACTION_EVENTS = new Set([
-  ...EVENTS.map((e) => e.name),
-  ...EVENTS.map((e) => e.legacy_ga4).filter(Boolean)
-]);
+// gads.conversion_actions kulcsai CSAK kanonikus event-nevek lehetnek (Modell
+// 2-ben jellemzően az offline CRM-eventek: lead_qualified, booking_confirmed, …).
+// A legacy GA4 aliasokat SZÁNDÉKOSAN nem fogadjuk el: az ingress a lookup előtt
+// kanonikusra normalizál (conversion.ts canonicalizeEventName), így egy
+// legacy-kulcsú map SOHA nem matchelne futásidőben — a generátor eddig
+// csendben átengedte az ilyen halott configot (2026-07-13-i auditlelet).
+const VALID_ACTION_EVENTS = new Set(EVENTS.map((e) => e.name));
 
 const ALLOWED_COUNTRIES = new Set(['GB', 'HU', 'EU', 'US', 'DE', 'FR', 'IT', 'ES']);
 const EEA_COUNTRIES = new Set(['HU', 'EU', 'DE', 'FR', 'IT', 'ES']);
