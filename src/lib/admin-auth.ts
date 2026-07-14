@@ -39,6 +39,40 @@ export async function authenticateLeadStatus(
 }
 
 /**
+ * Szerver-szerver ingress auth a /api/event/conversion-höz.
+ *
+ * Ez a Turnstile ALTERNATÍVÁJA: egy megbízható szerver (a site saját Astro
+ * backendje) a lead-endpointjából közvetlenül küldi a konverziót, ahol nincs és
+ * nem is lehet Turnstile-token (nincs böngésző a hurokban).
+ *
+ * Szándékos ELTÉRÉS az authenticateLeadStatus-tól: itt NINCS visszaesés a
+ * globális ADMIN_API_TOKEN-re. A /lead-status-nál a fallback operator-default a
+ * még-nem-kiadott site-okhoz; itt viszont a fallback azt jelentené, hogy EGY
+ * globális token az ÖSSZES site Turnstile-kapuját megnyitja — pontosan az a
+ * blast-radius, amit a per-site modell kizár. Ha a site-nak nincs saját
+ * `crm_token_sha256`-ja, a szerver-ingress egyszerűen nem létezik rá.
+ *
+ * Háromállapotú szándékosan: az 'invalid' (jelen lévő, de rossz token) NEM esik
+ * vissza a Turnstile-ágra — az elnyelné a misconfigot (rossz secret → csendben
+ * 403 „bot" néven). Külön 401-et adunk, hogy a hiba látható legyen.
+ */
+export type ServerIngressAuth = 'absent' | 'valid' | 'invalid';
+
+export async function authenticateServerIngress(
+  request: Request,
+  site: SiteConfig
+): Promise<ServerIngressAuth> {
+  const provided = request.headers.get('X-Admin-Token');
+  if (provided === null) return 'absent';
+  // Header jelen van, de a site-nak nincs kiadott tokenje → invalid (NEM absent):
+  // a hívó szerver-ingresst szándékozott, csak a site nincs provisionálva. Ezt
+  // 401-gyel jelezzük, nem némán Turnstile-ra ejtjük.
+  if (!site.crm_token_sha256) return 'invalid';
+  const providedHash = await sha256Hex(provided);
+  return siteTokenMatches(providedHash, site.crm_token_sha256) ? 'valid' : 'invalid';
+}
+
+/**
  * Pure constant-time hex-hash összehasonlítás (unit-tesztelt). Mindkét oldal a
  * provided/expected token SHA-256 hex-e — sosem a nyers token.
  */

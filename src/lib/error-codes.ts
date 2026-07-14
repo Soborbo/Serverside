@@ -36,6 +36,8 @@ export enum TrackingErrorCode {
   DEGRADED_TOKENLESS_ACCEPTED = 'TRK-400-008',
   DEGRADED_RATE_LIMITED = 'TRK-400-009',
   TURNSTILE_SECRET_INVALID = 'TRK-400-010',
+  SERVER_INGRESS_UNAUTHORIZED = 'TRK-400-011',
+  SERVER_INGRESS_ACCEPTED = 'TRK-400-012',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -134,6 +136,10 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.DEGRADED_RATE_LIMITED]: 'Token-less degraded event dropped by the degraded-mode rate limiter',
   [TrackingErrorCode.TURNSTILE_SECRET_INVALID]:
     'Turnstile siteverify rejected OUR secret (invalid/missing-input-secret) — server misconfig, form conversions blocked until fixed',
+  [TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED]:
+    'X-Admin-Token present on /conversion but did not match the site crm_token_sha256 — rejected (no Turnstile fallback)',
+  [TrackingErrorCode.SERVER_INGRESS_ACCEPTED]:
+    'Conversion accepted via server-to-server ingress (per-site token) — Turnstile bypassed by design',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -280,6 +286,8 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',
   [TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED]: 'info',
+  [TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED]: 'warning',
+  [TrackingErrorCode.SERVER_INGRESS_ACCEPTED]: 'info',
   [TrackingErrorCode.DEGRADED_RATE_LIMITED]: 'info',
   [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'info',
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'info',

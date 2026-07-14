@@ -9,6 +9,7 @@ import {
 import { corsHeaders } from '../worker';
 import { getSiteConfig, type SiteConfig } from '../lib/config';
 import { validateTurnstile } from '../lib/turnstile';
+import { authenticateServerIngress } from '../lib/admin-auth';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
 import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
 // Modell 2 (§0/§4.3): az on-site fan-outból a GA4 ÉS a Google Ads láb kikerült.
@@ -181,7 +182,44 @@ export async function handleConversion(
   }
 
   const remoteIp = request.headers.get('CF-Connecting-IP') || undefined;
-  const turnstileResult = await validateTurnstile(payload.turnstile_token, remoteIp, env);
+
+  // ── Szerver-szerver ingress: a Turnstile ALTERNATÍVÁJA (nem megkerülése) ────
+  // A site saját backendje (Astro lead-endpoint) a `X-Admin-Token`-nel hitelesíti
+  // magát, a site KV-jében tárolt `crm_token_sha256` ellen (ugyanaz a per-site
+  // tenant-határ, mint a /lead-status-on — lásd lib/admin-auth.ts). Ott nincs
+  // böngésző, tehát Turnstile-token sem lehet; enélkül a szerveroldali lead-láb
+  // sosem tudna konverziót küldeni.
+  //
+  // A böngésző-ág (token nélküli/érvénytelen POST) posture-je VÁLTOZATLAN: aki
+  // nem hoz érvényes per-site tokent, az pontosan a régi Turnstile-kapun megy át.
+  const serverAuth = await authenticateServerIngress(request, siteConfig);
+  if (serverAuth === 'invalid') {
+    // Jelen lévő, de rossz token → 401. NEM esünk vissza a Turnstile-ágra: az
+    // elnyelné a misconfigot (rossz secret → csendes 403 „bot"-ként).
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED],
+      hostname,
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      duration_ms: Date.now() - startedAt
+    });
+    recordConversionMetric(env, {
+      hostname,
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      accepted: false,
+      error_code: TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED,
+      total_duration_ms: Date.now() - startedAt
+    });
+    return new Response('Unauthorized', { status: 401, headers: cors });
+  }
+  const serverIngress = serverAuth === 'valid';
+
+  const turnstileResult = serverIngress
+    ? { valid: true, errorCodes: ['server_ingress'] }
+    : await validateTurnstile(payload.turnstile_token, remoteIp, env);
   let degraded = false;
   if (!turnstileResult.valid) {
     // TASK 2 — degradált elfogadás: token-NÉLKÜLI (vagy Turnstile-elérhetetlen)
@@ -253,7 +291,16 @@ export async function handleConversion(
     siteConfig.country_code as CountryCode
   );
 
-  const userAgent = request.headers.get('User-Agent') || undefined;
+  // Szerver-ingressen a transport-IP/UA a HÍVÓ WORKERÉ, nem a végfelhasználóé —
+  // ha ezt küldenénk a Metának, rossz geo + romló EMQ lenne (CLAUDE.md #2: az
+  // ip/ua plain pass-through). Ezért hitelesített hívónál a body-ban átadott
+  // valódi kliens-jeleket használjuk. Böngésző-ágon ezeket SZÁNDÉKOSAN eldobjuk:
+  // ott a request-header az egyetlen igazságforrás (különben bárki spoofolna).
+  const clientIp = serverIngress && payload.client_ip_address ? payload.client_ip_address : remoteIp;
+  const userAgent =
+    serverIngress && payload.client_user_agent
+      ? payload.client_user_agent
+      : request.headers.get('User-Agent') || undefined;
 
   // Consent feloldása (Consent Mode v2). adAllowed=false → Meta + Google Ads
   // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
@@ -291,7 +338,7 @@ export async function handleConversion(
         siteConfig,
         hashedUserData,
         hostname,
-        remoteIp,
+        clientIp,
         userAgent,
         consentDecision,
         attribution,
@@ -372,7 +419,7 @@ export async function handleConversion(
     siteConfig,
     hashedUserData,
     hostname,
-    remoteIp,
+    clientIp,
     userAgent,
     consentDecision,
     attribution,
@@ -393,6 +440,12 @@ export async function handleConversion(
   logStructured({
     level: 'info',
     message: 'Conversion event accepted',
+    // A szerver-ingressen elfogadott eventet KÜLÖN kódon logoljuk: enélkül nem
+    // lehetne megkülönböztetni a böngésző-ágtól, és pont az új út némulása
+    // maradna láthatatlan (ez volt a 2026-06→07 néma kiesés tanulsága).
+    ...(serverIngress
+      ? { error_code: TrackingErrorCode.SERVER_INGRESS_ACCEPTED, server_ingress: true }
+      : {}),
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
@@ -413,7 +466,7 @@ async function handleQuoteCompletion(
   siteConfig: SiteConfig,
   hashedUserData: HashedUserData,
   hostname: string,
-  remoteIp: string | undefined,
+  clientIp: string | undefined,
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
   attribution: AttributionParams | undefined,
@@ -466,7 +519,7 @@ async function handleQuoteCompletion(
         event_source_url: payload.event_source_url,
         fbp: payload.fbp,
         fbc: resolvedFbc,
-        client_ip: remoteIp,
+        client_ip: clientIp,
         client_user_agent: userAgent,
         lead_provenance: payload.lead_provenance
       },
@@ -506,7 +559,7 @@ function fanOut(
   siteConfig: SiteConfig,
   hashedUserData: HashedUserData,
   hostname: string,
-  remoteIp: string | undefined,
+  clientIp: string | undefined,
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
   attribution: AttributionParams | undefined,
@@ -558,7 +611,7 @@ function fanOut(
     event_source_url: payload.event_source_url,
     fbp: payload.fbp,
     fbc,
-    client_ip: remoteIp,
+    client_ip: clientIp,
     client_user_agent: userAgent,
     lead_provenance: payload.lead_provenance
   };
@@ -575,7 +628,7 @@ function fanOut(
     currency: payload.currency,
     event_source_url: payload.event_source_url,
     ttclid: attribution?.ttclid,
-    client_ip: remoteIp,
+    client_ip: clientIp,
     client_user_agent: userAgent
   };
   const linkedinPayload: LinkedInPayload = {

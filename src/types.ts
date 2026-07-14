@@ -37,7 +37,19 @@ export interface ConversionRequestPayload {
   event_name: string;
   event_id: string;
   event_time: number;
-  turnstile_token: string;
+  // Böngésző-ágon kötelező (a Turnstile-kapu enélkül 403-at ad low-risk eventen
+  // kívül). Szerver-szerver ingressen (X-Admin-Token) NINCS böngésző, tehát nincs
+  // token sem → a mező opcionális. A kapu maga változatlan: token nélkül csak a
+  // hitelesített szerver-hívás VAGY a degradált low-risk ág jut át.
+  turnstile_token?: string;
+
+  // CSAK szerver-szerver ingressen (hitelesített hívó) veendő figyelembe: a VALÓDI
+  // végfelhasználó IP-je / User-Agentje. A hívó szerver a saját request-headereiből
+  // olvassa ki és továbbítja, különben a Meta a hívó Worker IP/UA-ját látná (rossz
+  // geo, romló EMQ). Böngésző-ágon a request-header az igazságforrás, és ezeket a
+  // mezőket SZÁNDÉKOSAN eldobjuk — különben bárki spoofolhatná az IP-t.
+  client_ip_address?: string;
+  client_user_agent?: string;
 
   value?: number;
   currency?: string;
@@ -157,7 +169,26 @@ export function isValidConversionPayload(payload: unknown): payload is Conversio
   ) {
     return false;
   }
-  if (typeof p.turnstile_token !== 'string') return false;
+  // turnstile_token: opcionális (szerver-szerver ingress nem küld), de ha jelen
+  // van, stringnek KELL lennie. A hiánya NEM jelent elfogadást — a route
+  // Turnstile-kapuja dönt (403, hacsak nem hitelesített szerver-hívás vagy
+  // degradált low-risk event).
+  if (p.turnstile_token !== undefined && typeof p.turnstile_token !== 'string') return false;
+  // client_ip_address / client_user_agent: csak szerver-ingressen érvényesül (a
+  // route dobja el böngésző-ágon). Itt csak strukturális + hossz-korlát, hogy egy
+  // óriás UA-string ne fusson be a Meta-payloadba.
+  if (
+    p.client_ip_address !== undefined &&
+    (typeof p.client_ip_address !== 'string' || p.client_ip_address.length > 45)
+  ) {
+    return false;
+  }
+  if (
+    p.client_user_agent !== undefined &&
+    (typeof p.client_user_agent !== 'string' || p.client_user_agent.length > 512)
+  ) {
+    return false;
+  }
   if (
     p.value !== undefined &&
     (typeof p.value !== 'number' || !Number.isFinite(p.value) || p.value < 0 || p.value > MAX_VALUE)

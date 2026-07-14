@@ -126,8 +126,33 @@ describe('isValidConversionPayload — structural', () => {
     expect(isValidConversionPayload(42)).toBe(false);
   });
 
-  it('rejects missing turnstile_token', () => {
+  // SZERZŐDÉS-VÁLTÁS (szerver-szerver ingress): a hiányzó turnstile_token már
+  // STRUKTURÁLISAN érvényes — a szerver-ingressen nincs böngésző, tehát nincs
+  // token sem. Az elfogadásról NEM a validátor dönt, hanem a route Turnstile-
+  // kapuja (lásd tests/server-ingress.test.ts: token nélkül, érvényes per-site
+  // token nélkül → 403). A validátor csak azt köti ki, hogy HA jelen van, string legyen.
+  it('accepts a missing turnstile_token structurally (the route gate decides, not the validator)', () => {
     const { turnstile_token: _, ...p } = validBase;
-    expect(isValidConversionPayload(p)).toBe(false);
+    expect(isValidConversionPayload(p)).toBe(true);
+  });
+
+  it('rejects a non-string turnstile_token', () => {
+    expect(isValidConversionPayload({ ...validBase, turnstile_token: 123 })).toBe(false);
+  });
+
+  it('rejects an over-long client_user_agent / client_ip_address', () => {
+    expect(
+      isValidConversionPayload({ ...validBase, client_user_agent: 'x'.repeat(513) })
+    ).toBe(false);
+    expect(isValidConversionPayload({ ...validBase, client_ip_address: 'x'.repeat(46) })).toBe(
+      false
+    );
+    expect(
+      isValidConversionPayload({
+        ...validBase,
+        client_ip_address: '203.0.113.9',
+        client_user_agent: 'Mozilla/5.0'
+      })
+    ).toBe(true);
   });
 });
