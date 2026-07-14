@@ -35,10 +35,10 @@ const ctx = {
   passThroughOnException() {}
 } as unknown as ExecutionContext;
 
-function post(path: string): Request {
+function post(path: string, headers: Record<string, string> = {}): Request {
   return new Request(`https://gateway.example.com${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: '{}'
   });
 }
@@ -61,6 +61,17 @@ describe('global catch — status code by route class (Fix 4)', () => {
 
   it('/api/event/conversion-server → 500 (the caller must be able to retry)', async () => {
     const res = await worker.fetch(post('/api/event/conversion-server'), explodingEnv, ctx);
+    expect(res.status).toBe(500);
+  });
+
+  it('legacy /api/event/conversion WITH X-Admin-Token → 500 (authenticated backend, not a beacon)', async () => {
+    // A path önmagában nem dönt: token-t hozó hívó szerver-ingress a legacy
+    // útvonalon is — 204-re sosem retry-olna, az event némán veszne el.
+    const res = await worker.fetch(
+      post('/api/event/conversion', { 'X-Admin-Token': 'site-token' }),
+      explodingEnv,
+      ctx
+    );
     expect(res.status).toBe(500);
   });
 

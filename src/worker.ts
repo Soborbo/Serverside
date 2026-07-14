@@ -106,12 +106,19 @@ export default {
         error: err instanceof Error ? err.message : String(err),
         duration_ms: Date.now() - startedAt
       });
-      // A 204 CSAK a böngésző-beacon útvonalnak jár (a sendBeacon úgysem olvas
-      // választ, és a kliens felé nem szivárogtatunk hibát). Minden szerver-
-      // szerver hívónak (conversion-server, lead-status, admin, OAuth) 500 jár:
-      // egy CRM/backend hívó a 204-et sikernek venné és SOSEM retry-olna —
-      // pontosan az a néma veszteség, amit ez a rendszer hivatott megfogni.
-      if (url.pathname === '/api/event/conversion') {
+      // A 204 CSAK a böngésző-beaconnek jár (a sendBeacon úgysem olvas választ,
+      // és a kliens felé nem szivárogtatunk hibát). Minden szerver-szerver
+      // hívónak (conversion-server, lead-status, admin, OAuth) 500 jár: egy
+      // CRM/backend hívó a 204-et sikernek venné és SOSEM retry-olna — pontosan
+      // az a néma veszteség, amit ez a rendszer hivatott megfogni.
+      //
+      // A path önmagában NEM elég: a legacy /api/event/conversion útvonalon is
+      // jöhet hitelesített szerver-hívó (X-Admin-Token) — annak is 500 jár,
+      // különben a backendje sikernek könyvelné a bukott konverziót.
+      const browserBeacon =
+        url.pathname === '/api/event/conversion' &&
+        request.headers.get('X-Admin-Token') === null;
+      if (browserBeacon) {
         return new Response(null, { status: 204 });
       }
       return new Response('Internal error', { status: 500 });
