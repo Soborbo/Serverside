@@ -51,6 +51,20 @@ export interface ConversionRequestPayload {
   client_ip_address?: string;
   client_user_agent?: string;
 
+  // CSAK szerver-szerver ingressen (hitelesített hívó) veendő figyelembe. Egy
+  // szintetikus proof-eventet ezzel lehet GARANTÁLTAN a Meta Test stream-jébe
+  // küldeni, a KV site-config PISZKÁLÁSA NÉLKÜL.
+  //
+  // Miért nem elég a KV `meta.test_event_code`: a site-config edge-cache-elt
+  // (cacheTtl=300s, lib/config.ts). A „KV-be beírom → azonnal lövök" mintában a
+  // teszt-event könnyen egy MÉG RÉGI configot látó PoP-ra fut, és a PRODUCTION
+  // stream-be kerül — pontosan ez szivárogtatott 2 szintetikus eventet a Painless
+  // prod-ba. Fordítva ugyanez: a kivétel után még ~5 percig VALÓDI leadek
+  // mehetnek a Test stream-be (CLAUDE.md 17 csendes hibája).
+  // A per-request override mindkét ablakot megszünteti: determinisztikus, és
+  // élő configot nem kell módosítani. Böngésző-ágon SZÁNDÉKOSAN eldobjuk.
+  test_event_code?: string;
+
   value?: number;
   currency?: string;
   source?: string;
@@ -186,6 +200,17 @@ export function isValidConversionPayload(payload: unknown): payload is Conversio
   if (
     p.client_user_agent !== undefined &&
     (typeof p.client_user_agent !== 'string' || p.client_user_agent.length > 512)
+  ) {
+    return false;
+  }
+  // test_event_code: csak szerver-ingressen érvényesül (a route dobja el böngésző-
+  // ágon). Meta-formátum: rövid alfanumerikus (pl. TEST12345).
+  if (
+    p.test_event_code !== undefined &&
+    (typeof p.test_event_code !== 'string' ||
+      p.test_event_code.length === 0 ||
+      p.test_event_code.length > 40 ||
+      !/^[A-Za-z0-9_-]+$/.test(p.test_event_code))
   ) {
     return false;
   }

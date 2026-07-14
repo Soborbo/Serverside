@@ -6,3 +6,7 @@ dist/
 .dev.vars
 *.log
 .DS_Store
+
+# Go-live token material — plaintext per-site tokens + rotated admin token.
+# NEVER commit: the KV side stores only the SHA-256.
+secrets/

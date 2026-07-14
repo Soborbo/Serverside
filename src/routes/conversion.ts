@@ -382,6 +382,14 @@ export async function handleConversion(
       ? payload.client_user_agent
       : request.headers.get('User-Agent') || undefined;
 
+  // A Test-stream override ugyanebbe a bizalmi osztályba tartozik: KIZÁRÓLAG
+  // hitelesített szerver-hívó terelhet a Meta Test stream-jébe. Böngésző-ágon
+  // eldobjuk — különben bárki a Test stream-be küldhetné az oldal VALÓDI
+  // konverzióit, ami néma ROAS-kiesés (a CLAUDE.md 17 hibája, kívülről kiváltva).
+  if (!serverIngress) {
+    payload.test_event_code = undefined;
+  }
+
   // Consent feloldása (Consent Mode v2). adAllowed=false → Meta + Google Ads
   // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
   const consentState = parseConsent(payload.consent);
@@ -692,7 +700,10 @@ function fanOut(
     fbc,
     client_ip: clientIp,
     client_user_agent: userAgent,
-    lead_provenance: payload.lead_provenance
+    lead_provenance: payload.lead_provenance,
+    // Böngésző-ágon ez már undefined (a route fentebb eldobta) — ide csak
+    // hitelesített szerver-ingressről juthat érték.
+    test_event_code: payload.test_event_code
   };
 
   // TASK 3 — click-ID forwarderek. A click ID-k a validált `attribution`

@@ -22,6 +22,9 @@ export interface MetaCAPIPayload {
   // §3 — automatikus lead-útvonal (cold|post_quote|from_quote_email). A Meta
   // custom_data-ba kerül; nem PII. Ingress-validált (lib/provenance.ts).
   lead_provenance?: string;
+  // Per-request Test-stream override. Csak a hitelesített szerver-ingress tölti ki
+  // (routes/conversion.ts); ELŐBBRE való a KV `meta.test_event_code`-nál.
+  test_event_code?: string;
 }
 
 // internal event_name → Meta standard event. A térkép az events.json-ból
@@ -105,8 +108,12 @@ export async function sendToMetaCAPI(
     body.data_processing_options_state = 0;
   }
 
-  if (siteConfig.meta.test_event_code) {
-    body.test_event_code = siteConfig.meta.test_event_code;
+  // A per-request kód ELŐBBRE való a KV-confignál: így egy szintetikus proof-event
+  // determinisztikusan a Test stream-be megy, anélkül hogy az élő site-configot
+  // (és vele a valódi leadek útját) módosítanánk. Lásd types.ts test_event_code.
+  const testEventCode = payload.test_event_code || siteConfig.meta.test_event_code;
+  if (testEventCode) {
+    body.test_event_code = testEventCode;
   }
 
   const controller = new AbortController();
