@@ -291,8 +291,8 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 ## TRK-900-007 — Retry record could not be stored anywhere
 
 **Severity**: Critical
-**Description**: Platform-hívás elbukott ÉS a retry-rekord sem a Queue-ba, sem az R2 DLQ-ba nem került be. Az event dispatched=0 marad, hogy egy kliens-retry újrakézbesíthesse (vendor event_id-dedup véd).
-**Action**: 1) Queues + R2 status a Cloudflare dashboardon. 2) A logból azonosítsd az event_id-t; ha nem jön kliens-retry, a konverzió kézi újraküldést igényel a site backendjéből.
+**Description**: Platform-hívás elbukott ÉS a retry-rekord sem a Queue-ba, sem az R2 DLQ-ba nem került be. Az event dispatched=0 marad (a kézi replay-t az idempotencia így nem nyeli el; vendor event_id-dedup véd).
+**Action**: 1) Queues + R2 status a Cloudflare dashboardon. 2) A logból azonosítsd az event_id-t. 3) **Kézi újraküldés kell**: a hívó (böngésző-beacon vagy site backend) ekkorra már megkapta a válaszát, automatikus retry NEM jön — küldd újra az eventet a site backendjéből (ugyanazzal az event_id-vel), vagy a CRM-ből a lead-status-t.
 
 ## TRK-950-004 — Accepted without vendor HTTP status (invariant violation)
 

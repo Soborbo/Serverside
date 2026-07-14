@@ -6,6 +6,7 @@ import { hashUserDataForGoogle, sha256Hex, type CountryCode, type PlainUserData 
 import { type GAdsPayload } from '../lib/gads';
 import { sendToDataManager } from '../lib/datamanager';
 import { enqueueFailure } from '../lib/deadletter';
+import { sendAlert } from '../lib/notify';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   isValidLeadId,
@@ -228,28 +229,49 @@ export async function handleLeadStatus(
     // Conversion-t (P0: „melyik leadből lett valódi pénz"). event_id-vel dedup-ol.
     if (!result.success) {
       const nowIso = new Date().toISOString();
+      const leadIdForDlq = body.lead_id;
+      const statusForLog = body.status;
       ctx.waitUntil(
         enqueueFailure(env, {
           platform: 'gads',
           site_id: siteConfig.site_id,
           hostname,
+          lead_id: leadIdForDlq,
           event_payload: gadsPayload as unknown as Record<string, unknown>,
           hashed_user_data: hashed as unknown as Record<string, unknown>,
           failure_reason: result.error || gadsErrorCode || 'unknown',
           retry_count: 0,
           first_failed_at: nowIso,
           last_attempted_at: nowIso
+        }).then((stored): Promise<void> | void => {
+          // Hármas kiesés (Data Manager fail + Queue fail + R2 fail): a retry-
+          // példány SEHOL sincs, és a CRM már 200-at kapott (uploaded_to_gads:
+          // false), tehát nem fog retry-olni → a visszanyerés útja a CRITICAL
+          // riasztás nyomán kézi újraküldés a CRM-ből. Ugyanaz a védelem, mint a
+          // fan-out RETRY_PERSIST_FAILED őre (conversion.ts).
+          if (!stored) {
+            logStructured({
+              level: 'error',
+              error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
+              message: ERROR_DESCRIPTIONS[TrackingErrorCode.RETRY_PERSIST_FAILED],
+              site_id: siteConfig.site_id,
+              hostname,
+              event_name: eventName,
+              lead_status: statusForLog
+            });
+            return sendAlert(env, TrackingErrorCode.RETRY_PERSIST_FAILED, {
+              site_id: siteConfig.site_id,
+              hostname,
+              platform: 'gads',
+              event_name: eventName,
+              lead_status: statusForLog
+            }).catch(() => {});
+          }
         })
       );
     }
   }
 
-  // Offline GA4 láb KIKAPCSOLVA (Run 6). A CRM-webhooknál nincs böngésző-
-  // kontextus, tehát nincs client_id/session_id — a `client_id: undefined` miatt
-  // minden státusz egy ÚJ szintetikus GA4 clientbe esett (ga4.ts fallback),
-  // session-stitching nélkül ez rosszabb, mint a semmi. Az offline Google Ads
-  // Data Manager upload (fent) marad — az PII-hash alapján match-el, nem clienten.
-  const uploadedToGa4 = false;
 
   ctx.waitUntil(
     recordLeadStatus(env, {
@@ -270,7 +292,10 @@ export async function handleLeadStatus(
     site_id: siteConfig.site_id,
     event_name: eventName,
     uploaded_to_gads: uploadedToGads,
-    uploaded_to_ga4: uploadedToGa4,
+    // Az offline GA4 láb kikapcsolt (Run 6): client_id nélkül minden státusz új
+    // szintetikus GA4-clientbe esett volna. A mező a válasz-séma stabilitásáért
+    // marad, értéke definíció szerint false.
+    uploaded_to_ga4: false,
     consent_blocked: consentBlocked,
     duration_ms: Date.now() - startedAt
   });
@@ -279,7 +304,7 @@ export async function handleLeadStatus(
     {
       ok: true,
       uploaded_to_gads: uploadedToGads,
-      uploaded_to_ga4: uploadedToGa4,
+      uploaded_to_ga4: false,
       consent_blocked: consentBlocked
     },
     200

@@ -10,7 +10,13 @@ import { handleOAuthDebug } from './routes/oauth-debug';
 import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
-import { handleScheduledRetry, retrySingle } from './scheduled/retry';
+import {
+  handleScheduledRetry,
+  retrySingle,
+  isRealRetrySuccess,
+  recordRetryDelivery,
+  logSkippedRetry
+} from './scheduled/retry';
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
 import { handleReconciliation } from './scheduled/reconciliation';
@@ -21,7 +27,6 @@ import {
   MAX_RETRIES,
   type DeadLetterRecord
 } from './lib/deadletter';
-import { recordDeliveries, normalizeDelivery } from './lib/ledger';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -167,23 +172,15 @@ export default {
       const record = msg.body;
       try {
         const result = await retrySingle(env, record);
-        if (result.success) {
-          // 'retry' origin-nal könyvelünk (mint a cron-retry) — enélkül a
-          // reconciliation hamis coverage_drift CRITICAL-t adna minden Queues-ból
-          // sikeresen visszanyert kézbesítésre (csak a 'fanout'+'retry' origint
-          // számolja accepted-ként). A normalizeDelivery viszi a vendor HTTP-
-          // státuszt is — accepted sosem íródik nélküle; egy skip (közben
-          // eltávolított config) 'skipped'-ként könyvelődik, nem accepted-ként.
-          await recordDeliveries(env, {
-            event_id: String(record.event_payload.event_id ?? ''),
-            site_id: record.site_id,
-            event_name: String(record.event_payload.event_name ?? ''),
-            origin: 'retry',
-            records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
-          });
+        // Skip-siker (közben eltávolított config) NEM kézbesítés: nem ack-olunk,
+        // a rekord a backoff/expiry úton marad, hogy a config visszaállítása
+        // után még kézbesíthető legyen (lásd isRealRetrySuccess).
+        if (isRealRetrySuccess(result)) {
+          await recordRetryDelivery(env, record, result);
           msg.ack();
           continue;
         }
+        if (result.skipped) logSkippedRetry(record);
         // attempts a Queues által számolt kézbesítési kísérlet (1-től).
         if (msg.attempts > MAX_RETRIES) {
           // Kimerült retry → R2 'dead' archívum (SLO-check / daily-digest látja).

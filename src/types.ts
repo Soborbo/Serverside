@@ -234,15 +234,11 @@ export function isValidConversionPayload(payload: unknown): payload is Conversio
   ) {
     return false;
   }
-  // lead_id opcionális; ha jelen van, korlátozott charset+hossz (NEM PII).
-  if (
-    p.lead_id !== undefined &&
-    (typeof p.lead_id !== 'string' ||
-      p.lead_id.length < 8 ||
-      p.lead_id.length > 64 ||
-      !/^[a-zA-Z0-9_-]+$/.test(p.lead_id))
-  ) {
-    return false;
-  }
+  // lead_id: SZÁNDÉKOSAN nem itt validáljuk. A lead_id opcionális metaadat — ha
+  // érvénytelen (rossz charset/hossz, pl. egy CRM rövid numerikus id-t ad), a
+  // route ELDOBJA a mezőt (warn) és az event MEGY tovább. Itt elutasítani azt
+  // jelentené, hogy egy join-kulcs formátumhibája a pénzt jelentő konverziót
+  // magát nyeli el 204-gyel (lásd Run 6 audit). Charset-őr: isValidLeadId
+  // (lib/ledger.ts) a route-ban.
   return true;
 }

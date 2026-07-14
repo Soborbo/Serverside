@@ -23,6 +23,10 @@ export interface DeadLetterRecord {
   platform: Platform;
   site_id: string;
   hostname: string;
+  // CRM join-kulcs (ha az eredeti eventen volt): enélkül a DLQ-ból visszanyert
+  // kézbesítés deliveries-sora lead_id=NULL lenne, és a lead-trail sosem
+  // mutatná, hogy a platform végül megkapta az eventet.
+  lead_id?: string;
   event_payload: Record<string, unknown>;
   hashed_user_data?: Record<string, unknown>;
   failure_reason: string;

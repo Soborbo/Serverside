@@ -230,7 +230,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.MAX_RETRIES_EXCEEDED]: 'DLQ record reached max retry count',
   [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed',
   [TrackingErrorCode.RETRY_PERSIST_FAILED]:
-    'Platform call failed AND the retry record could not be stored anywhere (Queue + R2) — event left undispatched so a client retry can recover it',
+    'Platform call failed AND the retry record could not be stored anywhere (Queue + R2) — event left undispatched; recovery needs a MANUAL resend (the caller already got its response, no automatic retry is coming)',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
     'Vendor delivery failure rate exceeded threshold (reconciliation)',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:

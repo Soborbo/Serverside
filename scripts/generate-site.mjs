@@ -29,9 +29,14 @@ const EVENTS = JSON.parse(
   readFileSync(fileURLToPath(new URL('../src/events.json', import.meta.url)), 'utf8')
 );
 // A kliens által küldhető (ingress) event-nevek: server-csatornás, NEM offline.
-const INGRESS_EVENT_NAMES = EVENTS.filter(
-  (e) => e.channels.includes('server') && e.kind !== 'offline'
-).map((e) => e.name);
+const INGRESS_EVENTS = EVENTS.filter((e) => e.channels.includes('server') && e.kind !== 'offline');
+// Run 6 gate: a high-value (server_ingress_only) eventeket a böngésző-út 403-mal
+// dobja — CSAK a site backendje küldheti, per-site tokennel, a
+// /api/event/conversion-server útvonalon. A checklist külön sorolja őket, hogy
+// egy új site bekötése ne a böngésző-útra huzalozza a form-konverziókat
+// (TRK-400-017 + néma konverzióvesztés lenne).
+const BROWSER_EVENT_NAMES = INGRESS_EVENTS.filter((e) => e.server_ingress_only !== true).map((e) => e.name);
+const SERVER_ONLY_EVENT_NAMES = INGRESS_EVENTS.filter((e) => e.server_ingress_only === true).map((e) => e.name);
 // gads.conversion_actions kulcsai CSAK kanonikus event-nevek lehetnek (Modell
 // 2-ben jellemzően az offline CRM-eventek: lead_qualified, booking_confirmed, …).
 // A legacy GA4 aliasokat SZÁNDÉKOSAN nem fogadjuk el: az ingress a lookup előtt
@@ -260,8 +265,12 @@ ${cfg.meta.test_event_code ? '- [ ] ⚠️ test_event_code KIVÉVE a KV-ből él
 - [ ] PUBLIC_TURNSTILE_SITE_KEY beállítva (.env) + Turnstile invisible widget az oldalon
       (\`<div id="cf-turnstile-invisible">\`)
 - [ ] CookieYes (GTM-ből) aktív → a consent automatikusan a cookieyes-consent cookie-ból jön
-- [ ] Konverziós pontokon: \`trackConversion('<event_name>', { value, currency, user_data })\`
-      Engedett event-nevek: ${INGRESS_EVENT_NAMES.join(', ')}
+- [ ] BÖNGÉSZŐ konverziós pontokon (klikk-eventek): \`trackConversion('<event_name>', { value, currency, user_data })\`
+      Böngésző-úton engedett event-nevek: ${BROWSER_EVENT_NAMES.join(', ')}
+- [ ] SZERVER-ONLY konverziók (form/lead/purchase) a SITE BACKENDJÉBŐL mennek:
+      POST /api/event/conversion-server + X-Admin-Token (per-site token, lásd crm-secret.env),
+      a böngésző event_id-jét újrahasznosítva (Pixel↔CAPI dedup). Böngésző-úton ezek 403-at
+      kapnak (TRK-400-017): ${SERVER_ONLY_EVENT_NAMES.join(', ')}
 
 ## Ellenőrzés (deploy után)
 - [ ] curl https://${host}/api/event/health → {"status":"ok"}

@@ -51,8 +51,11 @@ describe('normalizeDelivery', () => {
     expect(r.vendor_message).toContain('boom');
   });
 
-  it('skipped opt overrides everything → skipped (consent-blocked no-op)', () => {
-    const r = normalizeDelivery('meta', { status: 'fulfilled', value: ok }, { skipped: true });
+  it('consent-blocked no-op → skipped (the vendor result carries the flag)', () => {
+    const r = normalizeDelivery('meta', {
+      status: 'fulfilled',
+      value: { success: true, skipped: true }
+    });
     expect(r).toEqual({ platform: 'meta', status: 'skipped' });
   });
 

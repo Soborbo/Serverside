@@ -35,6 +35,7 @@ import {
   recordConsentReceipt,
   recordDeliveries,
   normalizeDelivery,
+  isValidLeadId,
   type DeliveryRecord
 } from '../lib/ledger';
 
@@ -180,6 +181,12 @@ export async function handleConversion(
     return new Response(null, { status: 413, headers: cors });
   }
 
+  // Böngésző-beaconnek a drop 204 (nem szivárgunk hibát, a sendBeacon úgysem
+  // olvassa). SZERVER-hívónak (token jelen VAGY server-only út) viszont 400 jár:
+  // egy 204 hibás payloadra azt jelentené, hogy a site backendje sikernek könyveli
+  // a drop-ot, és a high-value lead némán vész el (CLAUDE.md 12; Run 6 audit).
+  const dropStatus = presentsServerToken || options.serverOnly ? 400 : 204;
+
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -191,7 +198,10 @@ export async function handleConversion(
       hostname,
       duration_ms: Date.now() - startedAt
     });
-    return new Response(null, { status: 204, headers: cors });
+    return new Response(dropStatus === 204 ? null : 'Invalid JSON', {
+      status: dropStatus,
+      headers: cors
+    });
   }
 
   if (!isValidConversionPayload(payload)) {
@@ -219,7 +229,10 @@ export async function handleConversion(
       error_code: errorCode,
       total_duration_ms: Date.now() - startedAt
     });
-    return new Response(null, { status: 204, headers: cors });
+    return new Response(dropStatus === 204 ? null : 'Invalid payload', {
+      status: dropStatus,
+      headers: cors
+    });
   }
 
   // Ingress-normalizálás (§1 migráció): legacy GA4 alias → kanonikus név, hogy MINDEN
@@ -239,6 +252,20 @@ export async function handleConversion(
       duration_ms: Date.now() - startedAt
     });
     payload.lead_provenance = undefined;
+  }
+
+  // lead_id — ugyanaz a drop-nem-reject szabály, mint a lead_provenance-nél: a
+  // join-kulcs formátumhibája (pl. a CRM rövid/numerikus id-t adott) NEM nyelheti
+  // el magát a konverziót. Érvénytelen → mező eldobva (warn), az event megy.
+  if (payload.lead_id !== undefined && !isValidLeadId(payload.lead_id)) {
+    logStructured({
+      level: 'warn',
+      message: 'lead_id dropped — invalid format (8-64 chars of [A-Za-z0-9_-]); event proceeds without CRM join key',
+      hostname,
+      event_name: payload.event_name,
+      duration_ms: Date.now() - startedAt
+    });
+    payload.lead_id = undefined;
   }
 
   const siteConfig = await getSiteConfig(hostname, env);
@@ -418,16 +445,14 @@ export async function handleConversion(
   // azonnal fan-outol; a böngésző-Pixel ugyanazzal az event_id-vel tüzel → dedup ép.
   const leadId = typeof payload.lead_id === 'string' ? payload.lead_id : undefined;
 
-  const effectivePayload: ConversionRequestPayload = payload;
-
   // Gateway-ingress idempotencia (NEM vendor-dedup): ugyanaz a submit 5× (dupla
   // klikk, retry, hálózati gond) → a fan-out csak egyszer fut. Fail-open: D1-hiba
   // vagy hiányzó binding esetén dispatch-elünk. A kliens felé mindkét esetben 204.
   const idem = await checkIdempotency(
     env,
     siteConfig.site_id,
-    effectivePayload.event_name,
-    effectivePayload.event_id
+    payload.event_name,
+    payload.event_id
   );
   if (!idem.shouldDispatch) {
     const dupDuration = Date.now() - startedAt;
@@ -443,7 +468,7 @@ export async function handleConversion(
       message: 'Duplicate conversion suppressed by idempotency',
       hostname,
       site_id: siteConfig.site_id,
-      event_name: effectivePayload.event_name,
+      event_name: payload.event_name,
       seen_count: idem.seenCount,
       duration_ms: dupDuration
     });
@@ -451,7 +476,7 @@ export async function handleConversion(
   }
 
   fanOut(
-    effectivePayload,
+    payload,
     siteConfig,
     hashedUserData,
     hostname,
@@ -590,26 +615,27 @@ function fanOut(
   // adAllowed=false → minden ad-platform no-op success (nincs hívás, nincs DLQ).
   // Modell 2: NINCS GA4 és NINCS Google Ads on-site láb (a böngésző birtokolja).
   // A szerver a Google Adset kizárólag offline-ként küldi (routes/lead-status.ts).
-  const metaStart = Date.now();
   // Szándékos kimaradás (consent-tiltás VAGY nincs meta config) → `skipped: true`.
   // A flag NEM elhagyható: e nélkül a ledger 'accepted'-et írna vendor HTTP-státusz
   // nélkül — a lomtalan Meta-lába pont így nézett ki egészségesnek, miközben a
   // Meta semmit nem kapott (2026-07-14, D1 ledger). Lásd normalizeDelivery.
+  const skippedResult = () => Promise.resolve({ success: true as const, skipped: true as const });
+  const metaStart = Date.now();
   const metaPromise: Promise<MetaCAPIResult> = adAllowed && siteConfig.meta
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
-    : Promise.resolve({ success: true, skipped: true });
+    : skippedResult();
   const tiktokStart = Date.now();
   const tiktokPromise: Promise<TikTokResult> = adAllowed
     ? sendToTikTok(siteConfig, tiktokPayload, hashedUserData)
-    : Promise.resolve({ success: true, skipped: true });
+    : skippedResult();
   const linkedinStart = Date.now();
   const linkedinPromise: Promise<LinkedInResult> = adAllowed
     ? sendToLinkedIn(siteConfig, linkedinPayload, hashedUserData)
-    : Promise.resolve({ success: true, skipped: true });
+    : skippedResult();
   const msadsStart = Date.now();
   const msadsPromise: Promise<MsAdsResult> = adAllowed
     ? sendToMsAds(siteConfig, msadsPayload, hashedUserData)
-    : Promise.resolve({ success: true, skipped: true });
+    : skippedResult();
 
   const fanout = Promise.allSettled([
     metaPromise,
@@ -667,6 +693,7 @@ function fanOut(
             platform,
             site_id: siteConfig.site_id,
             hostname,
+            lead_id: leadId,
             event_payload: platformPayload,
             hashed_user_data: includeUserData
               ? (hashedUserData as unknown as Record<string, unknown>)
@@ -703,27 +730,30 @@ function fanOut(
         normalizeDelivery('msads', msadsResult)
       ];
 
-      const [dlqOutcomes] = await Promise.all([
-        Promise.allSettled(dlqWrites),
-        Promise.allSettled([
-          ...alerts,
-          recordDeliveries(env, {
-            event_id: payload.event_id,
-            lead_id: leadId,
-            site_id: siteConfig.site_id,
-            event_name: payload.event_name,
-            origin: 'fanout',
-            records: deliveryRecords
-          })
-        ])
+      // Külön settled a dlqWrites-ra: CSAK ezek eredménye táplálja a
+      // retryPersistFailed döntést — egy alert- vagy ledger-írás hibája nem
+      // blokkolhatja a markDispatched-et.
+      const dlqOutcomes = await Promise.allSettled(dlqWrites);
+      await Promise.allSettled([
+        ...alerts,
+        recordDeliveries(env, {
+          event_id: payload.event_id,
+          lead_id: leadId,
+          site_id: siteConfig.site_id,
+          event_name: payload.event_name,
+          origin: 'fanout',
+          records: deliveryRecords
+        })
       ]);
 
       // Hármas kiesés őre: platform-hiba + a retry-rekord SEHOL nem landolt
       // (Queue send ÉS R2 write is elbukott). Ilyenkor NEM jelölünk dispatched-et
-      // — a flag 0 marad, így egy kliens-/sendBeacon-retry újrakézbesíthet (a
-      // vendorok event_id-vel dedup-olnak). Ha dispatched=1-et írnánk, az
-      // idempotencia a retry-t is elnyelné, és az event MINDENHOL elveszne,
-      // miközben a ledger kézbesítettnek mutatná.
+      // — a flag 0 marad, és TRK-900-007 CRITICAL riasztás megy. FONTOS őszintén:
+      // a hívó ekkorra már 204-et kapott (a fan-out a válasz UTÁN, waitUntil-ben
+      // fut), tehát automatikus kliens-retry NEM jön — a visszanyerés útja a
+      // riasztás nyomán kézi újraküldés (a dispatched=0 pont ezt hagyja nyitva;
+      // a vendorok event_id-vel dedup-olnak). Ha dispatched=1-et írnánk, még a
+      // kézi replay-t is elnyelné az idempotencia.
       const retryPersistFailed = dlqOutcomes.some(
         (o) => o.status === 'rejected' || o.value !== true
       );

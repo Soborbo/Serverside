@@ -389,3 +389,82 @@ describe('server-to-server ingress — tenant isolation (no global bypass)', () 
     expect(res.status).toBe(401);
   });
 });
+
+// A drop-út státusza hívó-osztály szerint: böngésző-beacon → 204 (nem szivárgunk
+// hibát); tokent hozó szerver-hívó → 400 (a backend NEM könyvelheti sikernek a
+// droppolt payloadot — az a high-value lead néma elvesztése lenne).
+describe('invalid payload drop status — 400 for server callers, 204 for beacons', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function rawPost(body: string, token?: string): Request {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Origin: `https://${HOST}`
+    };
+    if (token) headers['X-Admin-Token'] = token;
+    return new Request(`https://${HOST}/api/event/conversion`, { method: 'POST', headers, body });
+  }
+
+  it('invalid JSON with X-Admin-Token → 400 (the backend must see the drop)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+    const res = await handleConversion(rawPost('{not json', SITE_TOKEN), env, ctx);
+    expect(res.status).toBe(400);
+  });
+
+  it('invalid payload structure with X-Admin-Token → 400', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+    const res = await handleConversion(
+      rawPost(JSON.stringify({ event_name: 'not_a_real_event', event_id: 'e-1', event_time: 1 }), SITE_TOKEN),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('same invalid JSON WITHOUT token (browser beacon) → 204 (no error leakage)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+    const res = await handleConversion(rawPost('{not json'), env, ctx);
+    expect(res.status).toBe(204);
+  });
+
+  it('an INVALID lead_id is dropped but the conversion itself goes through (204 + Meta called)', async () => {
+    const { calls, metaBodies } = installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+    const body = {
+      event_name: 'callback_request_submitted',
+      event_id: 'evt-leadid-drop-1',
+      event_time: Math.floor(Date.now() / 1000),
+      lead_id: '42', // túl rövid → formátumhiba, de a join-kulcs hibája nem nyelheti el a konverziót
+      event_source_url: `https://${HOST}/x`,
+      user_data: { email: 'jane@example.com' }
+    };
+    const res = await handleConversion(
+      new Request(`https://${HOST}/api/event/conversion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': SITE_TOKEN },
+        body: JSON.stringify(body)
+      }),
+      env,
+      ctx
+    );
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+    expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
+    expect(metaBodies).toHaveLength(1);
+  });
+});

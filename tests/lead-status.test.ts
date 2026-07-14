@@ -1,4 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+// cloudflare:email runtime-import elkerülése (a lead-status.ts a sendAlert-en
+// keresztül húzná be a notify.ts-t — lásd fanout-isolation.test.ts).
+vi.mock('../src/lib/notify', () => ({
+  sendAlert: async () => {},
+  sendAdminEmail: async () => {},
+  sendCriticalSMS: async () => {},
+  escapeHtml: (s) => s
+}));
+
 import { validateLeadStatusBody } from '../src/routes/lead-status';
 
 const base = {

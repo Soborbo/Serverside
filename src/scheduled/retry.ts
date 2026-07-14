@@ -51,21 +51,12 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
   for (const { key, record } of toRetry) {
     try {
       const result = await retrySingle(env, record);
-      if (result.success) {
-        // A sikeres retry-t 'retry' origin-nal könyveljük a deliveries táblába,
-        // különben a reconciliation (csak 'fanout'-ot számolt accepted-ként) hamis
-        // coverage_drift CRITICAL-t adna minden DLQ-ból visszanyert kézbesítésre.
-        // normalizeDelivery: accepted CSAK vendor HTTP-státusszal; skip → 'skipped'.
-        await recordDeliveries(env, {
-          event_id: String(record.event_payload.event_id ?? ''),
-          site_id: record.site_id,
-          event_name: String(record.event_payload.event_name ?? ''),
-          origin: 'retry',
-          records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
-        });
+      if (isRealRetrySuccess(result)) {
+        await recordRetryDelivery(env, record, result);
         await deleteDeadLetter(env, key);
         succeeded++;
       } else {
+        if (result.skipped) logSkippedRetry(record);
         const incremented = {
           ...record,
           retry_count: record.retry_count + 1,
@@ -132,6 +123,51 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
 }
 
 /**
+ * Valódi kézbesítés-e a retry-eredmény. `skipped` siker NEM az: azt jelenti, a
+ * platform-config épp hiányzik (pl. ideiglenesen kivett meta blokk / conversion
+ * action) és hívás NEM történt — ilyenkor a DLQ-rekordot NEM töröljük, hogy a
+ * config visszaállítása után az event még kézbesíthető legyen. A rekord a normál
+ * retry/expiry úton megy tovább (végül dead-archívum, admin-replay-elhető).
+ */
+export function isRealRetrySuccess(result: VendorResult): boolean {
+  return result.success && result.skipped !== true;
+}
+
+/**
+ * Sikeres retry könyvelése a ledgerbe 'retry' origin-nal — az EGYETLEN közös
+ * pontja mind a négy replay-útnak (cron, Queues consumer, admin single/bulk).
+ * Enélkül a reconciliation (csak 'fanout'+'retry' origint számol accepted-ként)
+ * hamis coverage_drift CRITICAL-t adna minden visszanyert kézbesítésre.
+ * normalizeDelivery: accepted CSAK vendor HTTP-státusszal; a lead_id a DLQ-
+ * rekordból utazik tovább, hogy a lead-trail a visszanyert kézbesítést is lássa.
+ */
+export async function recordRetryDelivery(
+  env: Env,
+  record: DeadLetterRecord,
+  result: VendorResult
+): Promise<void> {
+  await recordDeliveries(env, {
+    event_id: String(record.event_payload.event_id ?? ''),
+    lead_id: record.lead_id,
+    site_id: record.site_id,
+    event_name: String(record.event_payload.event_name ?? ''),
+    origin: 'retry',
+    records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
+  });
+}
+
+export function logSkippedRetry(record: DeadLetterRecord): void {
+  logStructured({
+    level: 'warn',
+    message:
+      'DLQ retry skipped — platform not configured right now; record kept for a later retry (restore the config or admin-replay)',
+    site_id: record.site_id,
+    platform: record.platform,
+    retry_count: record.retry_count
+  });
+}
+
+/**
  * Egyetlen DLQ-rekord újraküldése. A TELJES vendor-eredményt adja vissza (nem
  * csupasz boolean-t), hogy a hívók a ledger-könyvelést a normalizeDelivery-n
  * keresztül végezhessék: accepted CSAK valós vendor HTTP-státusszal íródhat,
@@ -139,7 +175,13 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
  */
 export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<VendorResult> {
   const siteConfig = await getSiteConfig(record.hostname, env);
-  if (!siteConfig) return { success: false, error: 'no site config for hostname' };
+  if (!siteConfig) {
+    return {
+      success: false,
+      error_code: TrackingErrorCode.NO_SITE_CONFIG,
+      error: ERROR_DESCRIPTIONS[TrackingErrorCode.NO_SITE_CONFIG]
+    };
+  }
 
   const hashedUserData = (record.hashed_user_data || {}) as HashedUserData;
   const eventPayload = record.event_payload;

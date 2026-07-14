@@ -58,16 +58,16 @@ export interface VendorResult {
 }
 
 /**
- * Vendor-válasz normalizálás (#9). A 3 platform különbözőképp válaszol; ez egy
- * közös DeliveryRecord-ba fordít. `skipped` = a hívás szándékosan kimaradt
- * (pl. consent-tiltás → no-op success külön jelölve a hívónál).
+ * Vendor-válasz normalizálás (#9). A platformok különbözőképp válaszolnak; ez egy
+ * közös DeliveryRecord-ba fordít. A skip EGYETLEN igazságforrása a vendor-eredmény
+ * `skipped` flagje (consent-tiltás és nem-konfigurált platform egyaránt ezt hozza)
+ * — nincs második, hívó-oldali skip-mechanizmus, ami elcsúszhatna tőle.
  */
 export function normalizeDelivery(
   platform: Platform,
-  settled: PromiseSettledResult<VendorResult>,
-  opts?: { skipped?: boolean }
+  settled: PromiseSettledResult<VendorResult>
 ): DeliveryRecord {
-  if (opts?.skipped || (settled.status === 'fulfilled' && settled.value.skipped === true)) {
+  if (settled.status === 'fulfilled' && settled.value.skipped === true) {
     return { platform, status: 'skipped' };
   }
   if (settled.status === 'rejected') {

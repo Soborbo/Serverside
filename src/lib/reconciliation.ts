@@ -125,7 +125,17 @@ export function computeSiteDrift(
 
     // 2. Coverage drift — a jogosult eventek mekkora hányada ért el a platformra.
     // null → ezen a platformon nincs értelmes coverage-alap (forwarder/offline).
-    const expected = coverageExpectedFor(p.platform, input);
+    //
+    // A SZÁNDÉKOS kihagyások (deliveries.status='skipped': nincs meta config a
+    // site-on, vagy consent-tiltás) NEM elvárt kézbesítések — kivonjuk őket az
+    // alapból. Enélkül egy szándékosan meta-nélküli site (lomtalan, amíg nincs
+    // CAPI token) minden nap hamis coverage_drift CRITICAL-t adna 0% lefedettségre
+    // — pont a Run 6 Fix 1 után, ami a korábbi hamis-'accepted' sorokat őszinte
+    // 'skipped'-re váltotta. A kivonás konzervatív: konfigurált site-on a skip
+    // ritka (consent-tiltás), így az érzékenység alig csökken; teljesen skip-elt
+    // lábon az alap 0 alá esne → clamp + a minSample-őr elnémítja.
+    const expectedRaw = coverageExpectedFor(p.platform, input);
+    const expected = expectedRaw === null ? null : Math.max(0, expectedRaw - p.skipped);
     if (expected !== null && expected >= t.minSample) {
       const coverage = p.accepted / expected;
       const shortfall = 1 - coverage;
