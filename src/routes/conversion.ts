@@ -4,6 +4,7 @@ import {
   isValidConversionPayload,
   canonicalizeEventName,
   ALLOWED_EVENT_NAMES,
+  SERVER_INGRESS_ONLY_EVENTS,
   type ConversionRequestPayload
 } from '../types';
 import { corsHeaders } from '../worker';
@@ -24,12 +25,6 @@ import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/conse
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
-import {
-  setQuoteState,
-  getQuoteState,
-  markQuoteUpgraded,
-  markViewContentFired
-} from '../lib/quote-state';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from '../lib/error-codes';
 import { recordFanoutMetric, recordConversionMetric } from '../lib/metrics';
 import { sendAlert } from '../lib/notify';
@@ -40,17 +35,9 @@ import {
   recordConsentReceipt,
   recordDeliveries,
   normalizeDelivery,
+  isValidLeadId,
   type DeliveryRecord
 } from '../lib/ledger';
-
-// Kanonikus nevek (ingress-normalizálás után). Ezek az events a 60 perces quote-
-// alarmot „felülírják": ha aktív quote van, az event a quote event_id-jét/értékét örökli.
-const QUOTE_UPGRADE_EVENTS = new Set([
-  'callback_request_submitted',
-  'phone_number_clicked',
-  'email_address_clicked',
-  'whatsapp_button_clicked'
-]);
 
 const MAX_BODY_BYTES = 16 * 1024;
 
@@ -194,6 +181,12 @@ export async function handleConversion(
     return new Response(null, { status: 413, headers: cors });
   }
 
+  // Böngésző-beaconnek a drop 204 (nem szivárgunk hibát, a sendBeacon úgysem
+  // olvassa). SZERVER-hívónak (token jelen VAGY server-only út) viszont 400 jár:
+  // egy 204 hibás payloadra azt jelentené, hogy a site backendje sikernek könyveli
+  // a drop-ot, és a high-value lead némán vész el (CLAUDE.md 12; Run 6 audit).
+  const dropStatus = presentsServerToken || options.serverOnly ? 400 : 204;
+
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -205,7 +198,10 @@ export async function handleConversion(
       hostname,
       duration_ms: Date.now() - startedAt
     });
-    return new Response(null, { status: 204, headers: cors });
+    return new Response(dropStatus === 204 ? null : 'Invalid JSON', {
+      status: dropStatus,
+      headers: cors
+    });
   }
 
   if (!isValidConversionPayload(payload)) {
@@ -233,7 +229,10 @@ export async function handleConversion(
       error_code: errorCode,
       total_duration_ms: Date.now() - startedAt
     });
-    return new Response(null, { status: 204, headers: cors });
+    return new Response(dropStatus === 204 ? null : 'Invalid payload', {
+      status: dropStatus,
+      headers: cors
+    });
   }
 
   // Ingress-normalizálás (§1 migráció): legacy GA4 alias → kanonikus név, hogy MINDEN
@@ -253,6 +252,20 @@ export async function handleConversion(
       duration_ms: Date.now() - startedAt
     });
     payload.lead_provenance = undefined;
+  }
+
+  // lead_id — ugyanaz a drop-nem-reject szabály, mint a lead_provenance-nél: a
+  // join-kulcs formátumhibája (pl. a CRM rövid/numerikus id-t adott) NEM nyelheti
+  // el magát a konverziót. Érvénytelen → mező eldobva (warn), az event megy.
+  if (payload.lead_id !== undefined && !isValidLeadId(payload.lead_id)) {
+    logStructured({
+      level: 'warn',
+      message: 'lead_id dropped — invalid format (8-64 chars of [A-Za-z0-9_-]); event proceeds without CRM join key',
+      hostname,
+      event_name: payload.event_name,
+      duration_ms: Date.now() - startedAt
+    });
+    payload.lead_id = undefined;
   }
 
   const siteConfig = await getSiteConfig(hostname, env);
@@ -364,6 +377,36 @@ export async function handleConversion(
       });
       return new Response('Forbidden origin', { status: 403, headers: cors });
     }
+
+    // ── High-value gate: form/lead/purchase konverzió CSAK hitelesített szerver-
+    // ingressen jöhet. Az Origin curl-ből hamisítható, és a Workers rate-limit
+    // binding bizonyítottan nem throttle-olt (150+ kérés, nulla 429) — e nélkül
+    // egy script tetszőleges hash-elt email/telefonnal hamisíthatna lead-eket.
+    // Mindhárom élő site (painless, beautyflow, lomtalan) a backendjéből,
+    // per-site tokennel dispatchel; a böngésző-Pixel ugyanazzal az event_id-vel
+    // tüzel tovább → a Pixel/CAPI dedup érintetlen. A böngésző-út a low-risk
+    // klikk-eventeké marad (tel/mailto/whatsapp/video).
+    if (SERVER_INGRESS_ONLY_EVENTS.has(payload.event_name)) {
+      const errorCode = TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED;
+      logStructured({
+        level: 'warn',
+        error_code: errorCode,
+        message: ERROR_DESCRIPTIONS[errorCode],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        duration_ms: Date.now() - startedAt
+      });
+      recordConversionMetric(env, {
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        accepted: false,
+        error_code: errorCode,
+        total_duration_ms: Date.now() - startedAt
+      });
+      return new Response('Server ingress required', { status: 403, headers: cors });
+    }
   }
 
   const hashedUserData = await hashUserData(
@@ -396,81 +439,11 @@ export async function handleConversion(
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
   const attribution = parseAttribution(payload.attribution);
 
-  // Quote-state DO kulcs: client_id (_ga cookie) az elsődleges; ha a GA cookie
-  // blokkolt/kései, az fbp a fallback — így a 60 perces halasztott-Lead flow nem
-  // esik némán vissza azonnali fan-outra egy third-party cookie-race miatt.
-  // A kliens mindkét oldalon (submit + upgrade klikk) ugyanígy küldi őket, így a
-  // kulcs konzisztens.
-  const quoteKey =
-    typeof payload.client_id === 'string'
-      ? payload.client_id
-      : typeof payload.fbp === 'string'
-        ? payload.fbp
-        : undefined;
-
-  if (
-    payload.event_name === 'quote_calculator_submitted' &&
-    typeof payload.value === 'number' &&
-    typeof payload.currency === 'string' &&
-    typeof payload.service === 'string'
-  ) {
-    if (quoteKey) {
-      return await handleQuoteCompletion(
-        {
-          ...payload,
-          value: payload.value,
-          currency: payload.currency,
-          service: payload.service
-        },
-        quoteKey,
-        siteConfig,
-        hashedUserData,
-        hostname,
-        clientIp,
-        userAgent,
-        consentDecision,
-        attribution,
-        env,
-        ctx,
-        cors,
-        startedAt
-      );
-    }
-    // Se client_id, se fbp → nincs stabil DO-kulcs; az event a normál fan-outra
-    // esik (azonnali Lead, event_id-dedup a böngésző-pixellel). Logoljuk, hogy a
-    // szemantika-váltás látható legyen, ne néma degradáció.
-    logStructured({
-      level: 'warn',
-      message: 'quote_calculator_submitted without client_id/fbp — immediate fan-out (no 60min deferral)',
-      hostname,
-      site_id: siteConfig.site_id
-    });
-  }
-
+  // A quote-state Durable Object (60 perces halasztott Lead + upgrade-öröklés)
+  // KIKAPCSOLVA (Run 6): az alarm némán ejthetett state-et, és üzleti indoka nem
+  // volt — egy event jelentését írta át utólag. A quote_calculator_submitted most
+  // azonnal fan-outol; a böngésző-Pixel ugyanazzal az event_id-vel tüzel → dedup ép.
   const leadId = typeof payload.lead_id === 'string' ? payload.lead_id : undefined;
-
-  let effectivePayload: ConversionRequestPayload = payload;
-  if (QUOTE_UPGRADE_EVENTS.has(payload.event_name) && quoteKey) {
-    const activeQuote = await getQuoteState(env, quoteKey);
-    if (activeQuote) {
-      await markQuoteUpgraded(env, quoteKey);
-      effectivePayload = {
-        ...payload,
-        event_id: activeQuote.event_id,
-        value: activeQuote.value,
-        currency: activeQuote.currency,
-        service: activeQuote.service
-      };
-      logStructured({
-        level: 'info',
-        message: 'Quote upgraded by downstream event',
-        hostname,
-        site_id: siteConfig.site_id,
-        event_name: payload.event_name,
-        upgraded_event_id: activeQuote.event_id
-      });
-    }
-  }
 
   // Gateway-ingress idempotencia (NEM vendor-dedup): ugyanaz a submit 5× (dupla
   // klikk, retry, hálózati gond) → a fan-out csak egyszer fut. Fail-open: D1-hiba
@@ -478,8 +451,8 @@ export async function handleConversion(
   const idem = await checkIdempotency(
     env,
     siteConfig.site_id,
-    effectivePayload.event_name,
-    effectivePayload.event_id
+    payload.event_name,
+    payload.event_id
   );
   if (!idem.shouldDispatch) {
     const dupDuration = Date.now() - startedAt;
@@ -495,7 +468,7 @@ export async function handleConversion(
       message: 'Duplicate conversion suppressed by idempotency',
       hostname,
       site_id: siteConfig.site_id,
-      event_name: effectivePayload.event_name,
+      event_name: payload.event_name,
       seen_count: idem.seenCount,
       duration_ms: dupDuration
     });
@@ -503,7 +476,7 @@ export async function handleConversion(
   }
 
   fanOut(
-    effectivePayload,
+    payload,
     siteConfig,
     hashedUserData,
     hostname,
@@ -538,104 +511,6 @@ export async function handleConversion(
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
     duration_ms: totalDuration
-  });
-
-  return new Response(null, { status: 204, headers: cors });
-}
-
-async function handleQuoteCompletion(
-  payload: ConversionRequestPayload & {
-    value: number;
-    currency: string;
-    service: string;
-  },
-  quoteKey: string,
-  siteConfig: SiteConfig,
-  hashedUserData: HashedUserData,
-  hostname: string,
-  clientIp: string | undefined,
-  userAgent: string | undefined,
-  consentDecision: ConsentDecision,
-  attribution: AttributionParams | undefined,
-  env: Env,
-  ctx: ExecutionContext,
-  cors: HeadersInit,
-  startedAt: number
-): Promise<Response> {
-  const previousState = await getQuoteState(env, quoteKey);
-
-  // Az fbc-t már ingest-időben feloldjuk (cookie > fbclid-ből épített) és a
-  // state-ben tároljuk az fbp-vel együtt — a +60 perces DO-alarm tüzelésekor a
-  // request-kontextus (cookie-k) már nem elérhető, e nélkül a halasztott Lead
-  // match-minősége (EMQ) csendben gyengülne.
-  const resolvedFbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
-
-  await setQuoteState(env, quoteKey, {
-    client_id: quoteKey,
-    value: payload.value,
-    currency: payload.currency,
-    service: payload.service,
-    completed_at: Date.now(),
-    event_time: payload.event_time,
-    event_id: payload.event_id,
-    user_data: hashedUserData,
-    hostname,
-    consent: consentDecision.consent,
-    ad_allowed: consentDecision.adAllowed,
-    attribution,
-    fbp: payload.fbp,
-    fbc: resolvedFbc,
-    lead_provenance: payload.lead_provenance
-  });
-
-  // ViewContent csak akkor, ha az ad-platform engedett (Meta-only event).
-  if (consentDecision.adAllowed && !previousState?.view_content_fired) {
-    const viewContentPromise = sendToMetaCAPI(
-      siteConfig,
-      {
-        event_name: 'quote_calculator_opened',
-        // UGYANAZ az event_id, mint a quote-é: a böngésző-pixel ViewContent-je is
-        // a quote eventId-jével tüzel (spec), és a Meta (event_name, event_id)
-        // PÁRON dedup-ol — a korábbi `_vc` suffix miatt a kettő nem dedup-olt,
-        // dupla ViewContent-et számolva.
-        event_id: payload.event_id,
-        event_time: payload.event_time,
-        value: payload.value,
-        currency: payload.currency,
-        source: payload.source,
-        event_source_url: payload.event_source_url,
-        fbp: payload.fbp,
-        fbc: resolvedFbc,
-        client_ip: clientIp,
-        client_user_agent: userAgent,
-        lead_provenance: payload.lead_provenance
-      },
-      hashedUserData
-    ).then(async (result) => {
-      if (result.success) {
-        await markViewContentFired(env, quoteKey);
-      } else {
-        logStructured({
-          level: 'warn',
-          message: 'ViewContent Meta call failed; not marking view_content_fired (will retry on next quote)',
-          site_id: siteConfig.site_id,
-          error_code: result.error_code
-        });
-      }
-    });
-
-    ctx.waitUntil(viewContentPromise);
-  }
-
-  logStructured({
-    level: 'info',
-    message: 'Quote state stored, 60min DO alarm set',
-    hostname,
-    site_id: siteConfig.site_id,
-    event_name: payload.event_name,
-    quote_key_source: typeof payload.client_id === 'string' ? 'client_id' : 'fbp',
-    fired_view_content: !previousState?.view_content_fired,
-    duration_ms: Date.now() - startedAt
   });
 
   return new Response(null, { status: 204, headers: cors });
@@ -740,24 +615,27 @@ function fanOut(
   // adAllowed=false → minden ad-platform no-op success (nincs hívás, nincs DLQ).
   // Modell 2: NINCS GA4 és NINCS Google Ads on-site láb (a böngésző birtokolja).
   // A szerver a Google Adset kizárólag offline-ként küldi (routes/lead-status.ts).
+  // Szándékos kimaradás (consent-tiltás VAGY nincs meta config) → `skipped: true`.
+  // A flag NEM elhagyható: e nélkül a ledger 'accepted'-et írna vendor HTTP-státusz
+  // nélkül — a lomtalan Meta-lába pont így nézett ki egészségesnek, miközben a
+  // Meta semmit nem kapott (2026-07-14, D1 ledger). Lásd normalizeDelivery.
+  const skippedResult = () => Promise.resolve({ success: true as const, skipped: true as const });
   const metaStart = Date.now();
-  // Nincs `meta` blokk (még nincs CAPI access token) → a Meta-láb kimarad, no-op
-  // success: se hívás, se DLQ. A ledger így is méri, hogy a cső él (lásd config.ts).
   const metaPromise: Promise<MetaCAPIResult> = adAllowed && siteConfig.meta
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
-    : Promise.resolve({ success: true });
+    : skippedResult();
   const tiktokStart = Date.now();
   const tiktokPromise: Promise<TikTokResult> = adAllowed
     ? sendToTikTok(siteConfig, tiktokPayload, hashedUserData)
-    : Promise.resolve({ success: true });
+    : skippedResult();
   const linkedinStart = Date.now();
   const linkedinPromise: Promise<LinkedInResult> = adAllowed
     ? sendToLinkedIn(siteConfig, linkedinPayload, hashedUserData)
-    : Promise.resolve({ success: true });
+    : skippedResult();
   const msadsStart = Date.now();
   const msadsPromise: Promise<MsAdsResult> = adAllowed
     ? sendToMsAds(siteConfig, msadsPayload, hashedUserData)
-    : Promise.resolve({ success: true });
+    : skippedResult();
 
   const fanout = Promise.allSettled([
     metaPromise,
@@ -769,7 +647,8 @@ function fanOut(
       const [metaResult, tiktokResult, linkedinResult, msadsResult] = results;
       const completedAt = Date.now();
       const nowIso = new Date(completedAt).toISOString();
-      const dlqWrites: Promise<void>[] = [];
+      // Minden elem `true` = a retry-rekord biztosan tárolva (Queue vagy R2).
+      const dlqWrites: Promise<boolean>[] = [];
       const alerts: Promise<void>[] = [];
 
       const handleResult = (
@@ -814,6 +693,7 @@ function fanOut(
             platform,
             site_id: siteConfig.site_id,
             hostname,
+            lead_id: leadId,
             event_payload: platformPayload,
             hashed_user_data: includeUserData
               ? (hashedUserData as unknown as Record<string, unknown>)
@@ -840,17 +720,21 @@ function fanOut(
       handleResult('linkedin', linkedinResult, linkedinPayload as unknown as Record<string, unknown>, true, linkedinStart);
       handleResult('msads', msadsResult, msadsPayload as unknown as Record<string, unknown>, false, msadsStart);
 
-      // Normalizált vendor-kézbesítés a ledgerbe (#9). adAllowed=false → minden
-      // ad-platform 'skipped' (consent-tiltás, nem hiba); a GA4 mindig megy.
+      // Normalizált vendor-kézbesítés a ledgerbe (#9). A 'skipped' státusz a vendor-
+      // eredmény `skipped` flagjéből jön (consent-tiltás VAGY nem konfigurált
+      // platform) — a három állapot (accepted/skipped/rejected) így megkülönböztetett.
       const deliveryRecords: DeliveryRecord[] = [
-        normalizeDelivery('meta', metaResult, { skipped: !adAllowed }),
-        normalizeDelivery('tiktok', tiktokResult, { skipped: !adAllowed }),
-        normalizeDelivery('linkedin', linkedinResult, { skipped: !adAllowed }),
-        normalizeDelivery('msads', msadsResult, { skipped: !adAllowed })
+        normalizeDelivery('meta', metaResult),
+        normalizeDelivery('tiktok', tiktokResult),
+        normalizeDelivery('linkedin', linkedinResult),
+        normalizeDelivery('msads', msadsResult)
       ];
 
+      // Külön settled a dlqWrites-ra: CSAK ezek eredménye táplálja a
+      // retryPersistFailed döntést — egy alert- vagy ledger-írás hibája nem
+      // blokkolhatja a markDispatched-et.
+      const dlqOutcomes = await Promise.allSettled(dlqWrites);
       await Promise.allSettled([
-        ...dlqWrites,
         ...alerts,
         recordDeliveries(env, {
           event_id: payload.event_id,
@@ -862,9 +746,38 @@ function fanOut(
         })
       ]);
 
-      // A fan-out lefutott → jelöljük kézbesítettnek (idempotencia). Csak ezután,
-      // hogy egy crash-elt, soha-le-nem-kézbesített event újraküldhető maradjon.
-      await markDispatched(env, siteConfig.site_id, payload.event_name, payload.event_id);
+      // Hármas kiesés őre: platform-hiba + a retry-rekord SEHOL nem landolt
+      // (Queue send ÉS R2 write is elbukott). Ilyenkor NEM jelölünk dispatched-et
+      // — a flag 0 marad, és TRK-900-007 CRITICAL riasztás megy. FONTOS őszintén:
+      // a hívó ekkorra már 204-et kapott (a fan-out a válasz UTÁN, waitUntil-ben
+      // fut), tehát automatikus kliens-retry NEM jön — a visszanyerés útja a
+      // riasztás nyomán kézi újraküldés (a dispatched=0 pont ezt hagyja nyitva;
+      // a vendorok event_id-vel dedup-olnak). Ha dispatched=1-et írnánk, még a
+      // kézi replay-t is elnyelné az idempotencia.
+      const retryPersistFailed = dlqOutcomes.some(
+        (o) => o.status === 'rejected' || o.value !== true
+      );
+      if (retryPersistFailed) {
+        logStructured({
+          level: 'error',
+          error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
+          message: ERROR_DESCRIPTIONS[TrackingErrorCode.RETRY_PERSIST_FAILED],
+          site_id: siteConfig.site_id,
+          hostname,
+          event_name: payload.event_name
+        });
+        await sendAlert(env, TrackingErrorCode.RETRY_PERSIST_FAILED, {
+          site_id: siteConfig.site_id,
+          hostname,
+          platform: 'dlq',
+          event_name: payload.event_name
+        }).catch(() => {});
+      } else {
+        // A fan-out lefutott ÉS minden bukott platformnak van tárolt retry-példánya
+        // → jelölhetjük kézbesítettnek (idempotencia). Csak ezután, hogy egy
+        // crash-elt, soha-le-nem-kézbesített event újraküldhető maradjon.
+        await markDispatched(env, siteConfig.site_id, payload.event_name, payload.event_id);
+      }
 
       logStructured({
         level: 'info',

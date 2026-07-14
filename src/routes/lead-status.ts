@@ -5,8 +5,8 @@ import { authenticateLeadStatus } from '../lib/admin-auth';
 import { hashUserDataForGoogle, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
 import { type GAdsPayload } from '../lib/gads';
 import { sendToDataManager } from '../lib/datamanager';
-import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
 import { enqueueFailure } from '../lib/deadletter';
+import { sendAlert } from '../lib/notify';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   isValidLeadId,
@@ -159,7 +159,7 @@ export async function handleLeadStatus(
   }
 
   // Ütközésbiztos, determinisztikus orderId: a (lead_id, status) SHA-256-ja —
-  // MEGOSZTVA a Google Ads offline upload és az offline GA4 MP között (event_id).
+  // ez megy a Google Ads offline uploadnak event_id-ként (transactionId).
   // A naiv `${lead_id}_${status}`.slice(0,64) hosszú lead_id-knál csonkolt és
   // ütközhetett (két különböző lead → egy orderId → a platform összevonja őket).
   const orderId = (await sha256Hex(`${body.lead_id}_${body.status}`)).slice(0, 32);
@@ -206,7 +206,10 @@ export async function handleLeadStatus(
         : undefined
     };
     const result = await sendToDataManager(siteConfig, env, gadsPayload, hashed);
-    uploadedToGads = result.success;
+    // `skipped` (nincs conversion action / nincs identifier) NEM upload — ha
+    // success-ként könyvelnénk, a válasz `uploaded_to_gads: true`-t hazudna egy
+    // soha el nem indult hívásról, és a CRM/ledger sosem jelezné a hiányt.
+    uploadedToGads = result.success && result.skipped !== true;
     gadsErrorCode = result.error_code;
 
     ctx.waitUntil(
@@ -226,66 +229,49 @@ export async function handleLeadStatus(
     // Conversion-t (P0: „melyik leadből lett valódi pénz"). event_id-vel dedup-ol.
     if (!result.success) {
       const nowIso = new Date().toISOString();
+      const leadIdForDlq = body.lead_id;
+      const statusForLog = body.status;
       ctx.waitUntil(
         enqueueFailure(env, {
           platform: 'gads',
           site_id: siteConfig.site_id,
           hostname,
+          lead_id: leadIdForDlq,
           event_payload: gadsPayload as unknown as Record<string, unknown>,
           hashed_user_data: hashed as unknown as Record<string, unknown>,
           failure_reason: result.error || gadsErrorCode || 'unknown',
           retry_count: 0,
           first_failed_at: nowIso,
           last_attempted_at: nowIso
+        }).then((stored): Promise<void> | void => {
+          // Hármas kiesés (Data Manager fail + Queue fail + R2 fail): a retry-
+          // példány SEHOL sincs, és a CRM már 200-at kapott (uploaded_to_gads:
+          // false), tehát nem fog retry-olni → a visszanyerés útja a CRITICAL
+          // riasztás nyomán kézi újraküldés a CRM-ből. Ugyanaz a védelem, mint a
+          // fan-out RETRY_PERSIST_FAILED őre (conversion.ts).
+          if (!stored) {
+            logStructured({
+              level: 'error',
+              error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
+              message: ERROR_DESCRIPTIONS[TrackingErrorCode.RETRY_PERSIST_FAILED],
+              site_id: siteConfig.site_id,
+              hostname,
+              event_name: eventName,
+              lead_status: statusForLog
+            });
+            return sendAlert(env, TrackingErrorCode.RETRY_PERSIST_FAILED, {
+              site_id: siteConfig.site_id,
+              hostname,
+              platform: 'gads',
+              event_name: eventName,
+              lead_status: statusForLog
+            }).catch(() => {});
+          }
         })
       );
     }
   }
 
-  // Offline GA4 MP (§4.4) — a szerver legitim „augment" GA4 szerepe a CRM-fázis
-  // eventekre, UGYANAZZAL a determinisztikus orderId-vel (event_id). NEM ad-platform
-  // (analytics, nincs PII) → nem a consentBlocked ad-kapu gat-eli; a site `ga4` blokkja
-  // nélkül no-op skip. A böngésző itt nincs jelen (CRM-webhook) → nincs on-site dupla.
-  let uploadedToGa4 = false;
-  if (siteConfig.ga4) {
-    const ga4Payload: GA4Payload = {
-      event_name: eventName,
-      event_id: orderId,
-      client_id: undefined,
-      value: body.value,
-      currency: body.currency ?? siteConfig.currency
-    };
-    const ga4Result = await sendToGA4MP(siteConfig, ga4Payload);
-    uploadedToGa4 = ga4Result.success;
-    ctx.waitUntil(
-      recordDeliveries(env, {
-        event_id: orderId,
-        lead_id: body.lead_id,
-        site_id: siteConfig.site_id,
-        event_name: eventName,
-        origin: 'offline',
-        records: [normalizeDelivery('ga4', { status: 'fulfilled', value: ga4Result })]
-      })
-    );
-
-    // Offline GA4 augment hiba → DLQ (retrySingle 'ga4' → sendToGA4MP). Nincs PII a
-    // payloadban, így hashed_user_data nélkül; az event_id (orderId) dedup-ol.
-    if (!ga4Result.success && !ga4Result.skipped) {
-      const nowIso = new Date().toISOString();
-      ctx.waitUntil(
-        enqueueFailure(env, {
-          platform: 'ga4',
-          site_id: siteConfig.site_id,
-          hostname,
-          event_payload: ga4Payload as unknown as Record<string, unknown>,
-          failure_reason: ga4Result.error || ga4Result.error_code || 'unknown',
-          retry_count: 0,
-          first_failed_at: nowIso,
-          last_attempted_at: nowIso
-        })
-      );
-    }
-  }
 
   ctx.waitUntil(
     recordLeadStatus(env, {
@@ -306,7 +292,10 @@ export async function handleLeadStatus(
     site_id: siteConfig.site_id,
     event_name: eventName,
     uploaded_to_gads: uploadedToGads,
-    uploaded_to_ga4: uploadedToGa4,
+    // Az offline GA4 láb kikapcsolt (Run 6): client_id nélkül minden státusz új
+    // szintetikus GA4-clientbe esett volna. A mező a válasz-séma stabilitásáért
+    // marad, értéke definíció szerint false.
+    uploaded_to_ga4: false,
     consent_blocked: consentBlocked,
     duration_ms: Date.now() - startedAt
   });
@@ -315,7 +304,7 @@ export async function handleLeadStatus(
     {
       ok: true,
       uploaded_to_gads: uploadedToGads,
-      uploaded_to_ga4: uploadedToGa4,
+      uploaded_to_ga4: false,
       consent_blocked: consentBlocked
     },
     200

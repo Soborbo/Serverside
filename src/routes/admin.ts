@@ -3,14 +3,14 @@ import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
 import { getSiteConfig } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
-import { getLeadTrail, isValidLeadId, markDoNotReplay, recordDeliveries } from '../lib/ledger';
+import { getLeadTrail, isValidLeadId, markDoNotReplay } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
 import {
   listPendingRetries,
   deleteDeadLetter,
   type DeadLetterRecord
 } from '../lib/deadletter';
-import { retrySingle } from '../scheduled/retry';
+import { retrySingle, isRealRetrySuccess, recordRetryDelivery } from '../scheduled/retry';
 import { sendAdminEmail } from '../lib/notify';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
@@ -227,17 +227,13 @@ async function handleDlqReplay(
     } catch {
       return json({ error: 'corrupt_record', key }, 422);
     }
-    const ok = await retrySingle(env, record);
+    const result = await retrySingle(env, record);
+    // Skip-siker (épp hiányzó platform-config) NEM kézbesítés: a rekordot NEM
+    // töröljük — különben a replay „sikere" az event egyetlen példányát
+    // semmisítené meg, miközben vendor-hívás nem történt.
+    const ok = isRealRetrySuccess(result);
     if (ok) {
-      // 'retry' origin-nal könyvelünk, mint a cron — különben a reconciliation
-      // hamis coverage_drift-et adna a visszanyert kézbesítésre.
-      await recordDeliveries(env, {
-        event_id: String(record.event_payload.event_id ?? ''),
-        site_id: record.site_id,
-        event_name: String(record.event_payload.event_name ?? ''),
-        origin: 'retry',
-        records: [{ platform: record.platform, status: 'accepted' }]
-      });
+      await recordRetryDelivery(env, record, result);
       await deleteDeadLetter(env, key);
     }
     logStructured({
@@ -246,9 +242,13 @@ async function handleDlqReplay(
       r2_key: key,
       platform: record.platform,
       site_id: record.site_id,
-      success: ok
+      success: ok,
+      skipped: result.skipped === true
     });
-    return json({ action: 'replay', key, replayed: ok ? 1 : 0, succeeded: ok }, 200);
+    return json(
+      { action: 'replay', key, replayed: ok ? 1 : 0, succeeded: ok, skipped: result.skipped === true },
+      200
+    );
   }
 
   // Bulk replay (opcionálisan site_id prefixre szűrve).
@@ -273,15 +273,9 @@ async function handleDlqReplay(
   let failed = 0;
   for (const { key, record } of pending) {
     try {
-      const ok = await retrySingle(env, record);
-      if (ok) {
-        await recordDeliveries(env, {
-          event_id: String(record.event_payload.event_id ?? ''),
-          site_id: record.site_id,
-          event_name: String(record.event_payload.event_name ?? ''),
-          origin: 'retry',
-          records: [{ platform: record.platform, status: 'accepted' }]
-        });
+      const result = await retrySingle(env, record);
+      if (isRealRetrySuccess(result)) {
+        await recordRetryDelivery(env, record, result);
         await deleteDeadLetter(env, key);
         succeeded++;
       } else {

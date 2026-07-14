@@ -58,16 +58,16 @@ export interface VendorResult {
 }
 
 /**
- * Vendor-válasz normalizálás (#9). A 3 platform különbözőképp válaszol; ez egy
- * közös DeliveryRecord-ba fordít. `skipped` = a hívás szándékosan kimaradt
- * (pl. consent-tiltás → no-op success külön jelölve a hívónál).
+ * Vendor-válasz normalizálás (#9). A platformok különbözőképp válaszolnak; ez egy
+ * közös DeliveryRecord-ba fordít. A skip EGYETLEN igazságforrása a vendor-eredmény
+ * `skipped` flagje (consent-tiltás és nem-konfigurált platform egyaránt ezt hozza)
+ * — nincs második, hívó-oldali skip-mechanizmus, ami elcsúszhatna tőle.
  */
 export function normalizeDelivery(
   platform: Platform,
-  settled: PromiseSettledResult<VendorResult>,
-  opts?: { skipped?: boolean }
+  settled: PromiseSettledResult<VendorResult>
 ): DeliveryRecord {
-  if (opts?.skipped || (settled.status === 'fulfilled' && settled.value.skipped === true)) {
+  if (settled.status === 'fulfilled' && settled.value.skipped === true) {
     return { platform, status: 'skipped' };
   }
   if (settled.status === 'rejected') {
@@ -79,6 +79,24 @@ export function normalizeDelivery(
   }
   const v = settled.value;
   if (v.success) {
+    // INVARIÁNS: 'accepted' CSAK valós vendor HTTP-státusszal íródhat. Egy
+    // success-eredmény státusz nélkül azt jelenti, hogy hívás nem történt (skip-ág,
+    // ami elfelejtette a skipped flaget) — ha ezt accepted-ként könyvelnénk, a
+    // ledger örökre egészségesnek mutatna egy nem-élő platform-lábat (lomtalan
+    // 2026-07-14). Ilyenkor 'skipped'-et írunk és CRITICAL kódot hagyunk a soron.
+    if (typeof v.status !== 'number') {
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS],
+        platform
+      });
+      return {
+        platform,
+        status: 'skipped',
+        error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS
+      };
+    }
     return { platform, status: 'accepted', http_status: v.status };
   }
   return {

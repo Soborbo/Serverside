@@ -2,12 +2,67 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   isDeadKey,
   writeDeadLetter,
+  enqueueFailure,
   listPendingRetries,
   archiveExpiredRecord,
   MAX_RETRIES,
   type DeadLetterRecord
 } from '../src/lib/deadletter';
 import type { Env } from '../src/env';
+
+// Fix 3: az enqueueFailure IGAZ/HAMIS-t ad vissza aszerint, hogy a retry-rekord
+// BIZTOSAN tárolva van-e (Queue send VAGY R2 write). A hívó (fanOut) erre
+// alapozva dönt a markDispatched-ről — false esetén az event dispatched=0 marad.
+describe('enqueueFailure — a visszatérési érték a tárolás bizonyítéka (Fix 3)', () => {
+  const record: DeadLetterRecord = {
+    platform: 'meta',
+    site_id: 's',
+    hostname: 'h.example.com',
+    event_payload: { event_id: 'evt-1', event_name: 'contact_form_submitted' },
+    failure_reason: 'HTTP 500',
+    retry_count: 0,
+    first_failed_at: new Date().toISOString(),
+    last_attempted_at: new Date().toISOString()
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('Queue send OK → true (R2-t nem is érinti)', async () => {
+    const put = vi.fn();
+    const env = {
+      DLQ: { send: async () => {} },
+      DEAD_LETTER: { put }
+    } as unknown as Env;
+    await expect(enqueueFailure(env, record)).resolves.toBe(true);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('Queue fail + R2 OK → true (fallback tárolt)', async () => {
+    const env = {
+      DLQ: { send: async () => { throw new Error('Queue down'); } },
+      DEAD_LETTER: { put: async () => {} }
+    } as unknown as Env;
+    await expect(enqueueFailure(env, record)).resolves.toBe(true);
+  });
+
+  it('Queue fail + R2 fail → FALSE (az event retry-példánya SEHOL sincs)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = {
+      DLQ: { send: async () => { throw new Error('Queue down'); } },
+      DEAD_LETTER: { put: async () => { throw new Error('R2 down'); } }
+    } as unknown as Env;
+    await expect(enqueueFailure(env, record)).resolves.toBe(false);
+  });
+
+  it('nincs Queue binding + R2 fail → FALSE', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = {
+      DEAD_LETTER: { put: async () => { throw new Error('R2 down'); } }
+    } as unknown as Env;
+    await expect(enqueueFailure(env, record)).resolves.toBe(false);
+  });
+});
 
 describe('isDeadKey — segment match', () => {
   it('detects /dead/ as segment 2', () => {

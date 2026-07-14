@@ -124,6 +124,29 @@ describe('computeSiteDrift — coverage drift (Meta only under Model 2)', () => 
     expect(f?.value).toBe(0);
   });
 
+  // Run 6: a szándékosan meta-nélküli site (lomtalan, amíg nincs CAPI token)
+  // MINDEN eventje őszinte 'skipped' — ez NEM coverage drift, hanem ismert,
+  // szándékos állapot. Enélkül minden nap hamis CRITICAL menne.
+  it('NO drift when every eligible event was deliberately skipped (unconfigured meta leg)', () => {
+    const input = site({
+      events_total: 50,
+      ad_eligible: 50,
+      platforms: [{ platform: 'meta', accepted: 0, rejected: 0, skipped: 50 }]
+    });
+    expect(computeSiteDrift(input).filter((x) => x.kind === 'coverage_drift')).toEqual([]);
+  });
+
+  it('still detects drift on a CONFIGURED leg with a few skips (skips shrink the base, not the signal)', () => {
+    const input = site({
+      events_total: 100,
+      ad_eligible: 100,
+      // 5 consent-skip mellett 50/95 kézbesített → 52.6% < 70% → critical marad.
+      platforms: [{ platform: 'meta', accepted: 50, rejected: 0, skipped: 5 }]
+    });
+    const f = computeSiteDrift(input).find((x) => x.kind === 'coverage_drift');
+    expect(f?.severity).toBe('critical');
+  });
+
   it('MIN_SAMPLE guard on the eligible base', () => {
     const input = site({
       events_total: 5,

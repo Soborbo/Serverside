@@ -184,9 +184,11 @@ describe('server-to-server ingress — acceptance', () => {
     const { env } = makeEnv(await makeSiteConfig());
     const { ctx, tasks } = collectingCtx();
 
-    // Nincs X-Admin-Token → böngésző-ág. Érvényes Turnstile-token, de spoofolt IP.
+    // Nincs X-Admin-Token → böngésző-ág. Low-risk event (a form-eventeket a
+    // böngésző-út a high-value gate miatt 403-mal dobná). Spoofolt IP a bodyban.
     await handleConversion(
       serverRequest({
+        eventName: 'phone_number_clicked',
         turnstileToken: 'valid-browser-token',
         clientIp: '203.0.113.9',
         clientUserAgent: 'Spoofed/1.0'
@@ -216,15 +218,63 @@ describe('server-to-server ingress — the browser path no longer needs a token'
   });
 
   // SZERZŐDÉS-VÁLTÁS: a Turnstile kikerült a gateway-ből (a secret a Cloudflare
-  // teszt-kulcsa volt → mindent átengedett). A böngésző-ág kapuja most az Origin.
-  it('accepts a token-less form conversion from an ALLOWED origin (no X-Admin-Token)', async () => {
+  // teszt-kulcsa volt → mindent átengedett). A böngésző-ág kapuja most az Origin —
+  // de az Origin curl-ből hamisítható, ezért a high-value (form/lead/purchase)
+  // konverziók CSAK a hitelesített szerver-ingressen jöhetnek (Fix 2).
+  it('accepts a token-less LOW-RISK click event from an ALLOWED origin (no X-Admin-Token)', async () => {
     installFetchSpy();
     const { env } = makeEnv(await makeSiteConfig());
     const { ctx, tasks } = collectingCtx();
 
-    const res = await handleConversion(serverRequest({}), env, ctx);
+    const res = await handleConversion(
+      serverRequest({ eventName: 'phone_number_clicked' }),
+      env,
+      ctx
+    );
     await Promise.all(tasks);
     expect(res.status).toBe(204);
+  });
+
+  it('403s a token-less HIGH-VALUE form conversion EVEN from an allowed origin (forged-Origin vector closed)', async () => {
+    const { calls } = installFetchSpy();
+    const { env, datapoints } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+
+    // callback_request_submitted a serverRequest default eventje — pont az az
+    // event-osztály, amit korábban curl + hamis Origin párossal lehetett lőni.
+    const res = await handleConversion(serverRequest({}), env, ctx);
+    expect(res.status).toBe(403);
+    // Meta-hívás NEM indult — a hamis konverzió nem jutott a fan-outig.
+    expect(calls.some((u) => u.includes('facebook.com'))).toBe(false);
+    const dps = datapoints.filter((d) => d.indexes?.[0] === 'conversion_total');
+    expect(dps).toHaveLength(1);
+    expect(dps[0].doubles?.[0]).toBe(0);
+    expect(dps[0].blobs).toContain(TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED);
+  });
+
+  it('accepts the SAME high-value event via the authenticated server ingress (nothing legitimate lost)', async () => {
+    const { calls } = installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+
+    const res = await handleConversion(serverRequest({ token: SITE_TOKEN }), env, ctx);
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+    expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
+  });
+
+  it('403s a legacy-alias high-value event too (canonicalization runs before the gate)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+
+    // legacy GA4 alias → canonicalizeEventName → callback_request_submitted.
+    const res = await handleConversion(
+      serverRequest({ eventName: 'callback_conversion' }),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(403);
   });
 
   it('403s the same event from a FORBIDDEN origin', async () => {
@@ -337,5 +387,84 @@ describe('server-to-server ingress — tenant isolation (no global bypass)', () 
 
     const res = await handleConversion(serverRequest({ token: SITE_TOKEN }), env, ctx);
     expect(res.status).toBe(401);
+  });
+});
+
+// A drop-út státusza hívó-osztály szerint: böngésző-beacon → 204 (nem szivárgunk
+// hibát); tokent hozó szerver-hívó → 400 (a backend NEM könyvelheti sikernek a
+// droppolt payloadot — az a high-value lead néma elvesztése lenne).
+describe('invalid payload drop status — 400 for server callers, 204 for beacons', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function rawPost(body: string, token?: string): Request {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Origin: `https://${HOST}`
+    };
+    if (token) headers['X-Admin-Token'] = token;
+    return new Request(`https://${HOST}/api/event/conversion`, { method: 'POST', headers, body });
+  }
+
+  it('invalid JSON with X-Admin-Token → 400 (the backend must see the drop)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+    const res = await handleConversion(rawPost('{not json', SITE_TOKEN), env, ctx);
+    expect(res.status).toBe(400);
+  });
+
+  it('invalid payload structure with X-Admin-Token → 400', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+    const res = await handleConversion(
+      rawPost(JSON.stringify({ event_name: 'not_a_real_event', event_id: 'e-1', event_time: 1 }), SITE_TOKEN),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('same invalid JSON WITHOUT token (browser beacon) → 204 (no error leakage)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+    const res = await handleConversion(rawPost('{not json'), env, ctx);
+    expect(res.status).toBe(204);
+  });
+
+  it('an INVALID lead_id is dropped but the conversion itself goes through (204 + Meta called)', async () => {
+    const { calls, metaBodies } = installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+    const body = {
+      event_name: 'callback_request_submitted',
+      event_id: 'evt-leadid-drop-1',
+      event_time: Math.floor(Date.now() / 1000),
+      lead_id: '42', // túl rövid → formátumhiba, de a join-kulcs hibája nem nyelheti el a konverziót
+      event_source_url: `https://${HOST}/x`,
+      user_data: { email: 'jane@example.com' }
+    };
+    const res = await handleConversion(
+      new Request(`https://${HOST}/api/event/conversion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': SITE_TOKEN },
+        body: JSON.stringify(body)
+      }),
+      env,
+      ctx
+    );
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+    expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
+    expect(metaBodies).toHaveLength(1);
   });
 });

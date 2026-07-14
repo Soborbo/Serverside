@@ -117,6 +117,8 @@ Ez ellentétes Meta-val, ahol a city és postcode is hashelt. Mindegy ugyanaz a 
 
 ## 8. GA4 Measurement Protocol
 
+> **Státusz (Run 6): a szerver NEM küld GA4-et.** Az on-site GA4 a böngészőé (GTM); az offline GA4-leg kikapcsolva (client_id nélkül minden esemény új szintetikus GA4-clientbe esne). A lenti szabályok a `lib/ga4.ts`-hez tartoznak, amit már csak a `/debug-ga4` diagnosztika és a korábban DLQ-ba került ga4-rekordok retry-ja használ.
+
 - Endpoint: `https://www.google-analytics.com/mp/collect`
 - Query params: `?measurement_id=G-XXX&api_secret=YYY`
 - Debug: `https://www.google-analytics.com/debug/mp/collect`
@@ -128,25 +130,25 @@ Ez ellentétes Meta-val, ahol a city és postcode is hashelt. Mindegy ugyanaz a 
 
 Email, telefon, név **soha nem mehet** GA4 Measurement Protocol-ra. Ez a Meta CAPI-tól eltérő rule. GA4 csak event metadata-t kap (event_name, value, currency, source, service).
 
-## 10. Turnstile validation
+## 10. Ingress-kapuk (a Turnstile TÖRÖLVE)
 
-- Validate **MINDEN** API call **ELŐTT**.
-- Invalid token: return 403, no fan-out.
-- Validation API maga error-ol (non-OK válasz vagy network throw): **fail-CLOSED** az alapértelmezett — log + `valid:false`, az event nem megy ki. Ez szándékos biztonsági döntés (egy spoofolható siteverify-kimaradás ne nyisson kaput a botoknak). A `conversion` route alacsony kockázatú tel/mailto eventeknél degraded-accept-tel kompenzál (lásd `degraded.ts`).
-  - **Escape hatch:** `TURNSTILE_FAILOPEN=1` env-flag-gel kapcsolható fail-OPEN (allow-through API-hibánál), ha egy Turnstile-incidens alatt a legitim forgalom átengedése fontosabb. Production default: **kikapcsolva** (fail-closed).
-  - **Megjegyzés:** ez a bekezdés korábban fail-open-t írt; a kód (`turnstile.ts` + `tests/turnstile.test.ts`) szándékosan fail-closed-ra váltott egy security-fix során — a doc most ehhez igazodik.
+**A Turnstile-validáció NINCS TÖBBÉ a gateway-ben** — a secret a Cloudflare teszt-kulcsa volt (minden tokenre `success:true`), miközben valódi konverziókat nyelt el. NE építsd vissza. A jelenlegi kapuk:
 
-## 11. Failed API calls → R2 dead-letter
+- **Böngésző-út** (`/api/event/conversion`, tokenless): Origin allow-list (`lib/origin.ts`) + IP+hostname rate limit. CSAK low-risk klikk-eventek mehetnek rajta (`phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `video_play`, engagement).
+- **High-value gate**: a form/lead/purchase konverziók (`events.json` `server_ingress_only: true`) a böngésző-úton **403**-at kapnak (TRK-400-017) — az Origin curl-ből hamisítható. Ezek KIZÁRÓLAG a szerver-ingressen jöhetnek.
+- **Szerver-ingress** (`/api/event/conversion-server`, WAF-mentesített út): per-site token (`X-Admin-Token` ↔ KV `crm_token_sha256`, `lib/admin-auth.ts`). Token nélkül/rossz tokennel 401, böngésző-fallback NINCS. A site backendje SERVICE BINDINGON hívja (same-zone route fetch a Cloudflare loop-védelme miatt rövidre zárul).
+
+## 11. Failed API calls → Queue / R2 dead-letter
 
 - Use `Promise.allSettled`, **NEVER** `Promise.all`.
-- Each rejected promise → write event payload R2-be timestamp prefix-szel.
-- Cron Trigger óránként retry DLQ events-eket.
+- Each rejected promise → `enqueueFailure` (Cloudflare Queue, R2-fallback). Cron Trigger óránként retry-olja az R2 DLQ-t; a Queue consumer a worker `queue()` handlere.
+- **`enqueueFailure` boolean-t ad vissza: `true` = a retry-rekord BIZTOSAN tárolva.** Ha egy platform-hívás elbukott ÉS a rekordot sehova nem sikerült letenni (Queue+R2 is hibázott), az eventet **TILOS dispatched-nek jelölni** — a `dispatched` flag 0 marad + TRK-900-007 critical alert. Különben az idempotencia a kliens-retry-t is elnyomná, és az event mindenhol elveszne.
+- **Skip ≠ siker-kézbesítés.** Szándékos kihagyás (nincs platform-config, consent-tiltás, nincs identifier) → `{ success: true, skipped: true }`. A ledger `deliveries` státusza háromállapotú: `accepted` / `skipped` / `rejected`, és **`accepted` SOHA nem íródhat vendor HTTP-státusz nélkül** (a `normalizeDelivery` kényszeríti — TRK-950-004). A lomtalan 2026-07-14-i esete: a config-nélküli Meta-skip `accepted|http_status=NULL` sort írt, és a monitor zöldet mutatott nulla adat fölött.
 
-## 12. Response: always 204 No Content
+## 12. Response: 204 CSAK a böngésző-beaconnek
 
-- sendBeacon ignores response body anyway.
-- Don't expose internal errors to client.
-- Internal errors → Cloudflare Workers logs.
+- `/api/event/conversion` (böngésző): 204 — a sendBeacon úgysem olvas választ, és a kliens felé nem szivárogtatunk hibát. Internal errors → Cloudflare Workers logs.
+- **Szerver-szerver útvonalak (`/conversion-server`, `/lead-status`, admin, OAuth): hibánál 500/valós státusz** — a CRM/backend hívónak tudnia KELL retry-olni. Egy 204 hibára = a hívó sikernek könyveli, és az event némán elveszik.
 
 ## 13. Logging
 
@@ -166,17 +168,15 @@ A `user_data` (email, telefon, név, cím) kizárólag a `sendToWorker()` POST b
 
 Ha bárhol látsz `dataLayer.push({user_data: {...}})` mintát, az **biztonsági hiba** — az F12-es bámészkodó látja, és GDPR Article 32 violation kockázatot jelent.
 
-## 16. Az `event_id` shared mind a 3 platformon
+## 16. Az `event_id` shared minden platformon
 
-Egy konverziós event-nek **egy** `event_id`-je van. Meta CAPI dedup-ol vele a kliens Pixel-lel. GA4 a `event_id` paramétert metadata-ként kapja (NEM dedup-ol). Google Ads a `orderId` mezőbe kapja meg.
+Egy konverziós event-nek **egy** `event_id`-je van. Meta CAPI dedup-ol vele a kliens Pixel-lel. A Google Ads offline upload (`lead-status` → Data Manager) a determinisztikus orderId-t kapja `transactionId`-ként. (A GA4 a böngésző birtokában van — Modell 2 —, a szerver nem küld neki on-site eventet.)
 
-**Ha 3 különböző event_id-t generálsz**: Meta dedup elromlik, és a duplikált Lead-ek ROAS torzulást okoznak.
+**Ha több különböző event_id-t generálsz**: Meta dedup elromlik, és a duplikált Lead-ek ROAS torzulást okoznak. A ledger `lead_id`-je köti az eventet a CRM offline-loophoz — a site-dispatchnek át KELL adnia.
 
-## 17. Sprint-független szabály: `Test event code` kötelező KIVÉTEL Sprint 4-9 között
+## 17. `Test event code`: KIZÁRÓLAG per-request, SOHA nem KV
 
-A Sprint 4 (Meta CAPI) kezdetben `test_event_code: "TEST_<SITE>"`-tel indul, hogy a Test Events-ben látható legyen.
-
-**Sprint 9 előtt KÖTELEZŐ kivenni** a `test_event_code`-ot a KV configból. Ha bent marad, **minden valós konverzió Test stream-be megy**, NEM a fő stream-be — nem fognak megjelenni a Meta Ads Manager riportokban. Csendes hiba.
+Szintetikus proof-event a body `test_event_code` mezőjével megy (csak hitelesített szerver-hívótól fogadjuk el; böngésző-ágon eldobjuk). **SOHA ne írj test-kódot a KV site-configba**: a config edge-cache-elt (`cacheTtl=300s`), és a cache-ablakban valódi konverziók mennek a Meta Test streambe (két production Meta-leak történt így), illetve a teszt-event a PRODUCTION streambe. Ha egy KV-configban `meta.test_event_code`-ot látsz éles site-nál, az hiba — távolítsd el.
 
 ## 18. Ne ugorj sprint-eket
 

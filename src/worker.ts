@@ -10,8 +10,13 @@ import { handleOAuthDebug } from './routes/oauth-debug';
 import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
-import { QuoteStateObject } from './durable-objects/quote-state';
-import { handleScheduledRetry, retrySingle } from './scheduled/retry';
+import {
+  handleScheduledRetry,
+  retrySingle,
+  isRealRetrySuccess,
+  recordRetryDelivery,
+  logSkippedRetry
+} from './scheduled/retry';
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
 import { handleReconciliation } from './scheduled/reconciliation';
@@ -22,9 +27,6 @@ import {
   MAX_RETRIES,
   type DeadLetterRecord
 } from './lib/deadletter';
-import { recordDeliveries } from './lib/ledger';
-
-export { QuoteStateObject };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -33,29 +35,29 @@ export default {
 
     try {
       if (request.method === 'GET' && url.pathname === '/api/event/health') {
-        return handleHealth(request, env);
+        return await handleHealth(request, env);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/event/debug-ga4') {
-        return handleDebugGA4(request, env);
+        return await handleDebugGA4(request, env);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/event/oauth-init') {
-        return handleOAuthInit(request, env);
+        return await handleOAuthInit(request, env);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/event/oauth-callback') {
-        return handleOAuthCallback(request, env);
+        return await handleOAuthCallback(request, env);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/event/oauth-debug') {
-        return handleOAuthDebug(request, env);
+        return await handleOAuthDebug(request, env);
       }
 
       // Böngésző-ág. Ezt az utat KELL a zóna WAF rate-limiting szabályának
       // matchelnie (`http.request.uri.path eq "/api/event/conversion"`).
       if (request.method === 'POST' && url.pathname === '/api/event/conversion') {
-        return handleConversion(request, env, ctx);
+        return await handleConversion(request, env, ctx);
       }
 
       // Szerver-szerver ingress — KÜLÖN ÚTVONALON, hogy a WAF-szabály alól
@@ -70,13 +72,13 @@ export default {
       // triviálisan megkerülné. Ezért `serverOnly: true` → érvényes per-site token
       // nélkül 401, böngésző-fallback NINCS.
       if (request.method === 'POST' && url.pathname === '/api/event/conversion-server') {
-        return handleConversion(request, env, ctx, { serverOnly: true });
+        return await handleConversion(request, env, ctx, { serverOnly: true });
       }
 
       // CRM offline-loop — lead lifecycle státuszok → Enhanced Conversions for
       // Leads (admin-auth, server-to-server). Lásd routes/lead-status.ts.
       if (request.method === 'POST' && url.pathname === '/api/event/lead-status') {
-        return handleLeadStatus(request, env, ctx);
+        return await handleLeadStatus(request, env, ctx);
       }
 
       // Admin UI — önálló dashboard-váz (nincs benne secret), a 4 admin-endpointot
@@ -89,7 +91,7 @@ export default {
       // Admin read/ops API (reconciliation, lead-trail, DLQ replay, health-check).
       // Mind X-Admin-Token mögött. Lásd routes/admin.ts.
       if (url.pathname.startsWith('/api/event/admin/')) {
-        return handleAdmin(request, env, ctx);
+        return await handleAdmin(request, env, ctx);
       }
 
       if (request.method === 'OPTIONS') {
@@ -109,7 +111,22 @@ export default {
         error: err instanceof Error ? err.message : String(err),
         duration_ms: Date.now() - startedAt
       });
-      return new Response(null, { status: 204 });
+      // A 204 CSAK a böngésző-beaconnek jár (a sendBeacon úgysem olvas választ,
+      // és a kliens felé nem szivárogtatunk hibát). Minden szerver-szerver
+      // hívónak (conversion-server, lead-status, admin, OAuth) 500 jár: egy
+      // CRM/backend hívó a 204-et sikernek venné és SOSEM retry-olna — pontosan
+      // az a néma veszteség, amit ez a rendszer hivatott megfogni.
+      //
+      // A path önmagában NEM elég: a legacy /api/event/conversion útvonalon is
+      // jöhet hitelesített szerver-hívó (X-Admin-Token) — annak is 500 jár,
+      // különben a backendje sikernek könyvelné a bukott konverziót.
+      const browserBeacon =
+        url.pathname === '/api/event/conversion' &&
+        request.headers.get('X-Admin-Token') === null;
+      if (browserBeacon) {
+        return new Response(null, { status: 204 });
+      }
+      return new Response('Internal error', { status: 500 });
     }
   },
 
@@ -154,22 +171,16 @@ export default {
     for (const msg of batch.messages) {
       const record = msg.body;
       try {
-        const ok = await retrySingle(env, record);
-        if (ok) {
-          // 'retry' origin-nal könyvelünk (mint a cron-retry) — enélkül a
-          // reconciliation hamis coverage_drift CRITICAL-t adna minden Queues-ból
-          // sikeresen visszanyert kézbesítésre (csak a 'fanout'+'retry' origint
-          // számolja accepted-ként).
-          await recordDeliveries(env, {
-            event_id: String(record.event_payload.event_id ?? ''),
-            site_id: record.site_id,
-            event_name: String(record.event_payload.event_name ?? ''),
-            origin: 'retry',
-            records: [{ platform: record.platform, status: 'accepted' }]
-          });
+        const result = await retrySingle(env, record);
+        // Skip-siker (közben eltávolított config) NEM kézbesítés: nem ack-olunk,
+        // a rekord a backoff/expiry úton marad, hogy a config visszaállítása
+        // után még kézbesíthető legyen (lásd isRealRetrySuccess).
+        if (isRealRetrySuccess(result)) {
+          await recordRetryDelivery(env, record, result);
           msg.ack();
           continue;
         }
+        if (result.skipped) logSkippedRetry(record);
         // attempts a Queues által számolt kézbesítési kísérlet (1-től).
         if (msg.attempts > MAX_RETRIES) {
           // Kimerült retry → R2 'dead' archívum (SLO-check / daily-digest látja).

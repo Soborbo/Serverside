@@ -40,6 +40,9 @@ export interface GAdsResult {
   error?: string;
   error_code?: TrackingErrorCode;
   status?: number;
+  // true → a hívás szándékosan kimaradt (nincs customer_id / conversion action /
+  // identifier). A hívó NEM könyvelheti valós uploadnak (lead-status, ledger).
+  skipped?: boolean;
 }
 
 function classifyGAdsError(
@@ -75,7 +78,7 @@ export async function sendToGoogleAdsCAPI(
   const startedAt = Date.now();
 
   if (!siteConfig.gads.customer_id) {
-    return { success: true };
+    return { success: true, skipped: true };
   }
 
   const conversionActionId = siteConfig.gads.conversion_actions?.[payload.event_name];
@@ -87,7 +90,7 @@ export async function sendToGoogleAdsCAPI(
       site_id: siteConfig.site_id,
       event_name: payload.event_name
     });
-    return { success: true };
+    return { success: true, skipped: true };
   }
 
   const accessToken = await getAccessToken(siteConfig.gads.customer_id, env);

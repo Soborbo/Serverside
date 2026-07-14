@@ -40,6 +40,10 @@ export interface MetaCAPIResult {
   error?: string;
   error_code?: TrackingErrorCode;
   status?: number;
+  // true → a hívás szándékosan kimaradt (nincs meta config). A ledger 'skipped'-
+  // ként könyveli, NEM 'accepted'-ként — accepted CSAK valós vendor HTTP-válasz
+  // mellett íródhat (lásd lib/ledger.ts normalizeDelivery).
+  skipped?: boolean;
 }
 
 function classifyMetaError(
@@ -65,10 +69,12 @@ export async function sendToMetaCAPI(
 
   // Nincs `meta` blokk (a site be van kötve, de a CAPI access token még nincs
   // kiállítva) → tiszta skip. NEM hiba: se hívás, se DLQ, se riasztás. A hívók is
-  // őrzik, ez a második védvonal (lásd config.ts `meta?`).
+  // őrzik, ez a második védvonal (lásd config.ts `meta?`). A `skipped: true`
+  // KÖTELEZŐ: enélkül a ledger 'accepted'-et írna http_status nélkül — a lomtalan
+  // 2026-07-14-i esetben pont így nézett ki egészségesnek egy soha-nem-élt Meta-láb.
   const meta = siteConfig.meta;
   if (!meta) {
-    return { success: true };
+    return { success: true, skipped: true };
   }
 
   const url = `https://graph.facebook.com/${META_API_VERSION}/${meta.pixel_id}/events`;
