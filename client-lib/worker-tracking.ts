@@ -2,7 +2,15 @@
  * Astro client-lib: server-side tracking dispatch a Soborbo Worker-hez.
  *
  * Használat: copy-paste az Astro site src/lib/-jába (Painless, BeautyFlow, stb.).
- * Astro env: PUBLIC_TURNSTILE_SITE_KEY publikus változó kell.
+ *
+ * TURNSTILE: a gateway-ből KIKERÜLT, és ez a lib sem kér tokent. A `sendToWorker`
+ * korábban token nélkül CSENDBEN feladta — nem 403, nem hibalog, egyszerűen nem
+ * indult kérés —, ami hetekig láthatatlanul megölte a szerveroldali konverziókat.
+ * A böngésző-ágat most a gateway Origin allow-listája + rate limitje védi; a
+ * pénzt jelentő lead-eket a szerver-szerver ingress (per-site token).
+ * A Turnstile a SITE-ok saját form-endpointjain marad — ott valódi spam-védelem.
+ * A widgetet emiatt NEM kell renderelni ehhez a libhez (`#cf-turnstile-invisible`
+ * és a PUBLIC_TURNSTILE_SITE_KEY már nem kell).
  *
  * Sprint 9 spec a 09-sprint-astro-painless.md-ben.
  */
@@ -11,24 +19,9 @@ import { generateUUID } from './uuid';
 
 declare global {
   interface Window {
-    turnstile?: {
-      render: (container: string | HTMLElement, options: TurnstileOptions) => string;
-      reset: (widgetId?: string) => void;
-      execute: (container?: string | HTMLElement) => void;
-      getResponse: (widgetId?: string) => string | undefined;
-    };
     dataLayer: unknown[];
     fbq?: (...args: unknown[]) => void;
   }
-}
-
-interface TurnstileOptions {
-  sitekey: string;
-  callback?: (token: string) => void;
-  'expired-callback'?: () => void;
-  'error-callback'?: () => void;
-  size?: 'normal' | 'compact' | 'invisible';
-  appearance?: 'always' | 'execute' | 'interaction-only';
 }
 
 export interface UserData {
@@ -72,92 +65,6 @@ export interface ConversionPayload {
   // konverziót a CRM offline-loop státuszokkal (lead_qualified → revenue_confirmed).
   // Nélküle az offline upload működik, de a ledger/consent-audit join nem.
   lead_id?: string;
-}
-
-let cachedTurnstileToken: string | undefined;
-let cachedTokenExpiresAt = 0;
-let turnstileWidgetId: string | undefined;
-// A single widget is rendered once. Subsequent calls reset it and route the
-// resolution through this pending pointer, so the original callbacks (which
-// closed over the first call) can still resolve later promises.
-let pendingResolver:
-  | { resolve: (v: string | undefined) => void; timeout: ReturnType<typeof setTimeout> }
-  | undefined;
-// Párhuzamos hívások UGYANAZT a folyamatban lévő challenge-t várják meg (a
-// Worker a token-újrahasználatot verdikt-cache-sel támogatja). A korábbi
-// viselkedés — az első függő kérés undefined-dal eldobása — gyors egymás utáni
-// két konverziónál (pl. tel-klikk form-submit közben) az ELSŐ event szerver-
-// lábát némán elvesztette.
-let pendingTokenPromise: Promise<string | undefined> | undefined;
-
-export async function getTurnstileToken(): Promise<string | undefined> {
-  if (cachedTurnstileToken && Date.now() < cachedTokenExpiresAt) {
-    return cachedTurnstileToken;
-  }
-
-  if (pendingTokenPromise) {
-    return pendingTokenPromise;
-  }
-
-  if (!window.turnstile) {
-    console.warn('[tracking] Turnstile not loaded');
-    return undefined;
-  }
-
-  pendingTokenPromise = new Promise<string | undefined>((resolve) => {
-    const container = document.getElementById('cf-turnstile-invisible');
-    if (!container) {
-      console.warn('[tracking] Turnstile container not found');
-      resolve(undefined);
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      if (pendingResolver) {
-        const r = pendingResolver;
-        pendingResolver = undefined;
-        console.warn('[tracking] Turnstile timeout');
-        r.resolve(undefined);
-      }
-    }, 10000);
-    pendingResolver = { resolve, timeout };
-
-    const onCallback = (token: string) => {
-      if (!pendingResolver) return;
-      const r = pendingResolver;
-      pendingResolver = undefined;
-      clearTimeout(r.timeout);
-      cachedTurnstileToken = token;
-      cachedTokenExpiresAt = Date.now() + 4 * 60 * 1000;
-      r.resolve(token);
-    };
-    const onError = () => {
-      if (!pendingResolver) return;
-      const r = pendingResolver;
-      pendingResolver = undefined;
-      clearTimeout(r.timeout);
-      r.resolve(undefined);
-    };
-
-    if (turnstileWidgetId !== undefined) {
-      // Subsequent calls — reset and re-execute the existing widget.
-      // The original callbacks delegate to the current pendingResolver above.
-      window.turnstile!.reset(turnstileWidgetId);
-      window.turnstile!.execute(container);
-    } else {
-      turnstileWidgetId = window.turnstile!.render(container, {
-        sitekey: import.meta.env.PUBLIC_TURNSTILE_SITE_KEY,
-        size: 'invisible',
-        callback: onCallback,
-        'error-callback': onError
-      });
-      window.turnstile!.execute(container);
-    }
-  }).finally(() => {
-    pendingTokenPromise = undefined;
-  });
-
-  return pendingTokenPromise;
 }
 
 function getCookie(name: string): string | undefined {
@@ -353,13 +260,24 @@ export function initAttribution(): void {
   }
 }
 
+/**
+ * A konverzió elküldése a gateway-nek.
+ *
+ * A TURNSTILE-KAPU KIKERÜLT. Korábban ez a függvény token nélkül CSENDBEN
+ * feladta (`return false`), és pontosan ez ölte meg a Painless összes
+ * szerveroldali konverzióját 2026-06-28 → 07-13 között: egy be nem sütött
+ * sitekey miatt sosem lett token, tehát POST sem — nem 403, nem hibalog, csak
+ * NINCS kérés. A kiesés így hetekig láthatatlan maradt.
+ *
+ * A gateway oldalán a Turnstile-ellenőrzés megszűnt (a secret a Cloudflare
+ * teszt-kulcsa volt → mindent átengedett, vagyis nulla védelmet adott). A
+ * böngésző-ágat most az Origin allow-list + rate limit védi, a pénzt jelentő
+ * lead-eket pedig a szerver-szerver ingress (per-site token).
+ *
+ * A Turnstile a SITE-okon marad, a saját form-endpointjaikon — ott valódi
+ * spam-védelmet ad, mert a site maga validálja.
+ */
 export async function sendToWorker(payload: ConversionPayload): Promise<boolean> {
-  const turnstileToken = await getTurnstileToken();
-  if (!turnstileToken) {
-    console.warn('[tracking] No Turnstile token, skipping server-side dispatch', payload.event_name);
-    return false;
-  }
-
   const fbp = getCookie('_fbp');
   const fbc = getCookie('_fbc');
   const clientId = extractGAClientId(getCookie('_ga'));
@@ -367,7 +285,6 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
 
   const body = JSON.stringify({
     ...payload,
-    turnstile_token: turnstileToken,
     fbp,
     fbc,
     client_id: clientId,

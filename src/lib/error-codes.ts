@@ -28,16 +28,29 @@ export enum TrackingErrorCode {
 
   INVALID_JSON = 'TRK-400-001',
   INVALID_PAYLOAD_STRUCTURE = 'TRK-400-002',
+  // ── DEPRECATED (Turnstile a gateway-ről eltávolítva) ──────────────────────
+  // A kód TÖBBÉ NEM BOCSÁTJA KI ezeket. Az enum-tagok szándékosan maradnak: a
+  // meglévő AE-lekérdezések, Workers-log-keresések és a docs/error-codes.md
+  // ezekre hivatkozik, és a historikus adat (pl. a 2026-07-13/14-i TRK-400-004
+  // hullám) csak így marad visszakereshető. Új kódot NE vegyél fel ebbe a sávba.
   MISSING_TURNSTILE_TOKEN = 'TRK-400-003',
   INVALID_TURNSTILE_TOKEN = 'TRK-400-004',
   TURNSTILE_API_UNAVAILABLE = 'TRK-400-005',
+  // ──────────────────────────────────────────────────────────────────────────
   INVALID_LEAD_STATUS_PAYLOAD = 'TRK-400-006',
   LEAD_STATUS_UNAUTHORIZED = 'TRK-400-007',
+  // DEPRECATED (a degradált mód a Turnstile-lal együtt megszűnt — token nélkül
+  // MINDEN böngésző-event jön, nincs mit „degradálni").
   DEGRADED_TOKENLESS_ACCEPTED = 'TRK-400-008',
   DEGRADED_RATE_LIMITED = 'TRK-400-009',
   TURNSTILE_SECRET_INVALID = 'TRK-400-010',
   SERVER_INGRESS_UNAUTHORIZED = 'TRK-400-011',
   SERVER_INGRESS_ACCEPTED = 'TRK-400-012',
+  // A böngésző-ág ELSŐDLEGES kontrollja a Turnstile eltávolítása után.
+  ORIGIN_MISSING = 'TRK-400-013',
+  ORIGIN_NOT_ALLOWED = 'TRK-400-014',
+  BODY_TOO_LARGE = 'TRK-400-015',
+  CONVERSION_SPIKE = 'TRK-400-016',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -139,7 +152,15 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED]:
     'X-Admin-Token present on /conversion but did not match the site crm_token_sha256 — rejected (no Turnstile fallback)',
   [TrackingErrorCode.SERVER_INGRESS_ACCEPTED]:
-    'Conversion accepted via server-to-server ingress (per-site token) — Turnstile bypassed by design',
+    'Conversion accepted via server-to-server ingress (per-site token)',
+  [TrackingErrorCode.ORIGIN_MISSING]:
+    'Browser conversion rejected: no Origin header (fail-closed — every non-GET browser request carries one)',
+  [TrackingErrorCode.ORIGIN_NOT_ALLOWED]:
+    'Browser conversion rejected: Origin is not the site own origin nor in allowed_origins',
+  [TrackingErrorCode.BODY_TOO_LARGE]:
+    'Request body exceeded the 16 KiB ingress cap (measured while streaming, not just Content-Length)',
+  [TrackingErrorCode.CONVERSION_SPIKE]:
+    'Accepted conversions for a site spiked far above its 7-day baseline — possible conversion spam on the tokenless browser path',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -288,6 +309,12 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED]: 'info',
   [TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED]: 'warning',
   [TrackingErrorCode.SERVER_INGRESS_ACCEPTED]: 'info',
+  [TrackingErrorCode.ORIGIN_MISSING]: 'info',
+  [TrackingErrorCode.ORIGIN_NOT_ALLOWED]: 'warning',
+  [TrackingErrorCode.BODY_TOO_LARGE]: 'info',
+  // Kritikus: a tokenless böngésző-ág egyetlen visszamaradt kockázata a
+  // konverzió-spam. Ha megtörténik, azonnal tudni akarunk róla (SMS is megy).
+  [TrackingErrorCode.CONVERSION_SPIKE]: 'critical',
   [TrackingErrorCode.DEGRADED_RATE_LIMITED]: 'info',
   [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'info',
   [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'info',

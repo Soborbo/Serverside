@@ -1,6 +1,7 @@
 import type { Env } from '../env';
-import { sendAdminEmail, sendCriticalSMS } from '../lib/notify';
+import { sendAdminEmail, sendCriticalSMS, sendAlert } from '../lib/notify';
 import { countSiteConfigs } from '../lib/config';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import { logStructured } from '../types';
 
 const PAGE_LIMIT = 1000;
@@ -32,9 +33,108 @@ async function countDlqRecords(env: Env): Promise<{ pending: number; dead: numbe
   return { pending, dead, truncated };
 }
 
+// ── Konverzió-spike detektálás (a tokenless böngésző-ág ára) ─────────────────
+// A Turnstile eltávolításával a böngésző-ág egyetlen visszamaradt kockázata a
+// konverzió-spam (hamisított Origin + rotáló IP-k). Az Origin allow-list és a
+// rate limit csökkenti a blast-radiust, de nem nullázza — ezért LÁTNI akarjuk,
+// ha megtörténik. A „0 konverzió" (kiesés) felét már a daily-digest riasztja
+// (collectAcceptedCounts → zeroSites); ez itt a MÁSIK fél, 30 percenként.
+//
+// Baseline: az elmúlt 7 nap átlaga UGYANEKKORA (30 perces) ablakra vetítve.
+// Küszöb: a friss szám érje el az abszolút padlót ÉS lépje túl a baseline
+// SPIKE_FACTOR-szorosát. A padló nélkül egy 0.2-es baseline mellett már 2 valódi
+// konverzió is riasztana — az ilyen fals pozitív pár nap alatt megtanítja az
+// embert figyelmen kívül hagyni a riasztást, ami rosszabb, mint ha nem lenne.
+const SPIKE_WINDOW_MINUTES = 30;
+const SPIKE_BASELINE_DAYS = 7;
+const SPIKE_FACTOR = 5;
+const SPIKE_MIN_EVENTS = 20;
+
+export interface SpikeHit {
+  site_id: string;
+  recent: number;
+  baselinePerWindow: number;
+}
+
+/** Pure — tesztelhető a küszöb-logika D1 nélkül. */
+export function detectSpikes(
+  recent: Map<string, number>,
+  baselineTotals: Map<string, number>,
+  windowsInBaseline: number
+): SpikeHit[] {
+  const hits: SpikeHit[] = [];
+  for (const [siteId, count] of recent) {
+    if (count < SPIKE_MIN_EVENTS) continue;
+    const baselinePerWindow = (baselineTotals.get(siteId) ?? 0) / windowsInBaseline;
+    if (count > baselinePerWindow * SPIKE_FACTOR) {
+      hits.push({ site_id: siteId, recent: count, baselinePerWindow });
+    }
+  }
+  return hits.sort((a, b) => b.recent - a.recent);
+}
+
+async function checkConversionSpike(env: Env): Promise<void> {
+  if (!env.LEDGER) return;
+
+  const now = Date.now();
+  const windowStart = new Date(now - SPIKE_WINDOW_MINUTES * 60 * 1000).toISOString();
+  const baselineStart = new Date(now - SPIKE_BASELINE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  let recent: Map<string, number>;
+  let baseline: Map<string, number>;
+  try {
+    const recentRows = await env.LEDGER.prepare(
+      'SELECT site_id, COUNT(*) AS cnt FROM events_raw WHERE received_at >= ? GROUP BY site_id'
+    )
+      .bind(windowStart)
+      .all<{ site_id: string; cnt: number }>();
+    // A baseline a friss ablakot KIZÁRJA — különben a spike a saját baseline-ját
+    // emelné, és épp a nagy támadás tűnne „normálisnak".
+    const baseRows = await env.LEDGER.prepare(
+      'SELECT site_id, COUNT(*) AS cnt FROM events_raw WHERE received_at >= ? AND received_at < ? GROUP BY site_id'
+    )
+      .bind(baselineStart, windowStart)
+      .all<{ site_id: string; cnt: number }>();
+
+    recent = new Map((recentRows.results ?? []).map((r) => [r.site_id, r.cnt]));
+    baseline = new Map((baseRows.results ?? []).map((r) => [r.site_id, r.cnt]));
+  } catch (err) {
+    logStructured({
+      level: 'warn',
+      message: 'SLO check: conversion-spike query failed',
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return; // Lekérdezési hiba → inkább ne riasszunk, mint hogy fals pozitívot adjunk.
+  }
+
+  const windowsInBaseline = (SPIKE_BASELINE_DAYS * 24 * 60) / SPIKE_WINDOW_MINUTES;
+  const hits = detectSpikes(recent, baseline, windowsInBaseline);
+
+  for (const hit of hits) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.CONVERSION_SPIKE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONVERSION_SPIKE],
+      site_id: hit.site_id,
+      recent_count: hit.recent,
+      baseline_per_window: Number(hit.baselinePerWindow.toFixed(2)),
+      window_minutes: SPIKE_WINDOW_MINUTES
+    });
+    await sendAlert(env, TrackingErrorCode.CONVERSION_SPIKE, {
+      site_id: hit.site_id,
+      accepted_last_30min: hit.recent,
+      baseline_per_30min: Number(hit.baselinePerWindow.toFixed(2)),
+      factor: `${SPIKE_FACTOR}x`,
+      hint: 'Tokenless browser path — check the AE datapoints for a forged-Origin flood, and the ledger rows for junk user_data.'
+    });
+  }
+}
+
 export async function handleSloCheck(env: Env): Promise<void> {
   const siteCount = await countSiteConfigs(env);
   const { pending: pendingCount, dead: deadCount, truncated } = await countDlqRecords(env);
+
+  await checkConversionSpike(env);
 
   const truncNote = truncated ? ` (≥${MAX_PAGES * PAGE_LIMIT} — list truncated)` : '';
 

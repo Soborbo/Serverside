@@ -57,10 +57,20 @@ function makeEnv(opts: { siteConfig?: unknown } = { siteConfig: SITE_CONFIG }): 
 
 // FIGYELEM: a config.ts negatív cache-e modul-globális (60s TTL) — a 404-es
 // tesztnek SAJÁT hostname kell, különben beszennyezi a többi tesztet.
-function conversionRequest(eventName: string, token: string | undefined, host: string = HOST): Request {
+// A `token` paraméter a Turnstile-korszak maradéka: a gateway MÁR NEM validálja,
+// de a régi kliensek még küldhetik → accept-and-ignore. A böngésző-ág kapuja most
+// az `origin` (undefined = a site sajátja; null = egyáltalán nincs Origin fejléc).
+function conversionRequest(
+  eventName: string,
+  token: string | undefined,
+  host: string = HOST,
+  origin?: string | null
+): Request {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (origin !== null) headers['Origin'] = origin ?? `https://${host}`;
   return new Request(`https://${host}/api/event/conversion`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       event_name: eventName,
       event_id: `evt-${eventName}`,
@@ -114,33 +124,53 @@ describe('conversion route — reject paths write AE datapoints (accepted=0)', (
     vi.unstubAllGlobals();
   });
 
-  it('403 invalid token → datapoint with INVALID_TURNSTILE_TOKEN, accepted=0', async () => {
-    installSiteverify({ success: false, 'error-codes': ['invalid-input-response'] });
+  it('403 forbidden Origin → datapoint with ORIGIN_NOT_ALLOWED, accepted=0', async () => {
+    installSiteverify({ success: true });
     const { env, datapoints } = makeEnv();
     const { ctx } = collectingCtx();
 
-    const res = await handleConversion(conversionRequest('contact_form_submitted', 'bad-token'), env, ctx);
+    const res = await handleConversion(
+      conversionRequest('contact_form_submitted', undefined, HOST, 'https://evil.example.net'),
+      env,
+      ctx
+    );
     expect(res.status).toBe(403);
 
     const dps = conversionDatapoints(datapoints);
     expect(dps).toHaveLength(1);
     expect(dps[0].doubles?.[0]).toBe(0); // accepted=0
-    expect(dps[0].blobs).toContain(TrackingErrorCode.INVALID_TURNSTILE_TOKEN);
+    expect(dps[0].blobs).toContain(TrackingErrorCode.ORIGIN_NOT_ALLOWED);
     expect(dps[0].blobs).toContain('route-test');
   });
 
-  it('403 missing token (form event) → datapoint with MISSING_TURNSTILE_TOKEN', async () => {
-    installSiteverify({ success: true }); // nem jut el idáig — a missing_token korábban rövidre zár
+  it('403 missing Origin → datapoint with ORIGIN_MISSING (fail-closed)', async () => {
+    installSiteverify({ success: true });
     const { env, datapoints } = makeEnv();
     const { ctx } = collectingCtx();
 
-    const res = await handleConversion(conversionRequest('contact_form_submitted', undefined), env, ctx);
+    const res = await handleConversion(
+      conversionRequest('contact_form_submitted', undefined, HOST, null),
+      env,
+      ctx
+    );
     expect(res.status).toBe(403);
 
     const dps = conversionDatapoints(datapoints);
     expect(dps).toHaveLength(1);
     expect(dps[0].doubles?.[0]).toBe(0);
-    expect(dps[0].blobs).toContain(TrackingErrorCode.MISSING_TURNSTILE_TOKEN);
+    expect(dps[0].blobs).toContain(TrackingErrorCode.ORIGIN_MISSING);
+  });
+
+  it('NEVER calls Turnstile siteverify — the gate is gone', async () => {
+    installSiteverify({ success: true });
+    const { env } = makeEnv();
+    const { ctx, tasks } = collectingCtx();
+
+    await handleConversion(conversionRequest('contact_form_submitted', 'any-token'), env, ctx);
+    await Promise.allSettled(tasks);
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.some((c) => String(c[0]).includes('challenges.cloudflare.com'))).toBe(false);
   });
 
   it('404 no site config → datapoint with NO_SITE_CONFIG, site_id=unknown', async () => {
@@ -173,52 +203,5 @@ describe('conversion route — reject paths write AE datapoints (accepted=0)', (
     const dps = conversionDatapoints(datapoints);
     expect(dps).toHaveLength(1);
     expect(dps[0].blobs).toContain(TrackingErrorCode.UNKNOWN_EVENT_NAME);
-  });
-});
-
-describe('conversion route — invalid-input-secret is a SERVER misconfig, not a bot signal', () => {
-  beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
-  it('low-risk event (phone click) survives via degraded accept → 204', async () => {
-    installSiteverify({ success: false, 'error-codes': ['invalid-input-secret'] });
-    const { env } = makeEnv();
-    const { ctx, tasks } = collectingCtx();
-
-    const res = await handleConversion(conversionRequest('phone_number_clicked', 'real-token'), env, ctx);
-    expect(res.status).toBe(204);
-    await Promise.allSettled(tasks);
-  });
-
-  it('form event still gets a hard 403 (fail-closed)', async () => {
-    installSiteverify({ success: false, 'error-codes': ['invalid-input-secret'] });
-    const { env, datapoints } = makeEnv();
-    const { ctx } = collectingCtx();
-
-    const res = await handleConversion(conversionRequest('contact_form_submitted', 'real-token'), env, ctx);
-    expect(res.status).toBe(403);
-    expect(conversionDatapoints(datapoints)).toHaveLength(1);
-  });
-
-  it('logs TURNSTILE_SECRET_INVALID at error level', async () => {
-    installSiteverify({ success: false, 'error-codes': ['invalid-input-secret'] });
-    const logs: string[] = [];
-    // logStructured a level:'error'-t console.error-ra írja (types.ts).
-    vi.mocked(console.error).mockImplementation((...args: unknown[]) => {
-      logs.push(args.map(String).join(' '));
-    });
-    const { env } = makeEnv();
-    const { ctx } = collectingCtx();
-
-    await handleConversion(conversionRequest('contact_form_submitted', 'real-token'), env, ctx);
-    expect(logs.some((l) => l.includes(TrackingErrorCode.TURNSTILE_SECRET_INVALID))).toBe(true);
   });
 });

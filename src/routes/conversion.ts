@@ -8,7 +8,7 @@ import {
 } from '../types';
 import { corsHeaders } from '../worker';
 import { getSiteConfig, type SiteConfig } from '../lib/config';
-import { validateTurnstile } from '../lib/turnstile';
+import { checkOrigin } from '../lib/origin';
 import { authenticateServerIngress } from '../lib/admin-auth';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
 import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
@@ -24,7 +24,6 @@ import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/conse
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
-import { isTokenlessLowRiskAcceptable, degradedRateLimit } from '../lib/degraded';
 import {
   setQuoteState,
   getQuoteState,
@@ -53,6 +52,81 @@ const QUOTE_UPGRADE_EVENTS = new Set([
   'whatsapp_button_clicked'
 ]);
 
+const MAX_BODY_BYTES = 16 * 1024;
+
+/**
+ * Body-olvasás KEMÉNY felső korláttal. A stream-et olvasás közben mérjük, és a cap
+ * átlépésekor megszakítjuk — szemben a puszta Content-Length-ellenőrzéssel, amit egy
+ * chunked kérés (nincs Content-Length) megkerül. `null` = túl nagy.
+ */
+async function readBoundedBody(request: Request, max: number): Promise<string | null> {
+  const declared = request.headers.get('Content-Length');
+  if (declared) {
+    const len = parseInt(declared, 10);
+    if (Number.isFinite(len) && len > max) return null;
+  }
+  if (!request.body) return '';
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+async function ingestRateLimit(env: Env, hostname: string, request: Request): Promise<boolean> {
+  const limiter = env.INGEST_LIMITER;
+  if (!limiter) return true;
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  try {
+    const { success } = await limiter.limit({ key: `${hostname}:${ip}` });
+    return success;
+  } catch {
+    // Limiter-hiba → engedjük tovább (a konverzió-vesztés drágább, mint egy
+    // átcsúszó kérés; a spike-riasztás úgyis látja, ha ebből baj lesz).
+    return true;
+  }
+}
+
+function rateLimited(env: Env, hostname: string, cors: HeadersInit, startedAt: number): Response {
+  logStructured({
+    level: 'info',
+    message: 'Rate limited',
+    hostname,
+    duration_ms: Date.now() - startedAt
+  });
+  recordConversionMetric(env, {
+    hostname,
+    site_id: 'unknown',
+    event_name: 'unknown',
+    accepted: false,
+    error_code: 'rate_limited',
+    total_duration_ms: Date.now() - startedAt
+  });
+  return new Response(null, { status: 429, headers: cors });
+}
+
 export async function handleConversion(
   request: Request,
   env: Env,
@@ -63,45 +137,54 @@ export async function handleConversion(
   const hostname = url.hostname;
   const cors = corsHeaders(request, env);
 
-  // Natív rate limiting (H2) — Turnstile a botokat fogja, de egy scriptelt
-  // forrást nem. IP+hostname kulcs: egy site/IP nem meríti ki a többit.
-  // Guarded: ha nincs binding, kimarad.
-  if (env.INGEST_LIMITER) {
-    const rlIp = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const { success } = await env.INGEST_LIMITER.limit({ key: `${hostname}:${rlIp}` });
-    if (!success) {
-      logStructured({
-        level: 'info',
-        message: 'Rate limited',
-        hostname,
-        duration_ms: Date.now() - startedAt
-      });
-      recordConversionMetric(env, {
-        hostname,
-        site_id: 'unknown',
-        event_name: 'unknown',
-        accepted: false,
-        error_code: 'rate_limited',
-        total_duration_ms: Date.now() - startedAt
-      });
-      return new Response(null, { status: 429, headers: cors });
+  // A per-site szerver-token JELENLÉTE (nem az érvényessége!) — csak arra kell,
+  // hogy a hitelesített money-path ne akadjon fenn az IP-kulcsos rate limiten.
+  // Az ÉRVÉNYESSÉG ellenőrzése lejjebb, a site-config feloldása után történik;
+  // egy hamis tokennel érkező kérés ott bukik (401) ÉS ott is rate-limitelődik,
+  // tehát ez nem ad ingyen bypasst — csak elhalasztja a limitet.
+  const presentsServerToken = request.headers.get('X-Admin-Token') !== null;
+
+  // Natív rate limiting — a Turnstile eltávolítása után ez az EGYIK tartóoszlop
+  // a böngésző-ágon (a másik az Origin allow-list). IP+hostname kulcs: egy
+  // site/IP nem meríti ki a többit. Guarded: binding nélkül kimarad.
+  //
+  // A hitelesített szerver-szerver ingress SZÁNDÉKOSAN kimarad: az a site saját
+  // backendjéből jön, gyakran EGYETLEN egress-IP-ről, tehát egy forgalmas nap
+  // simán kimerítené az IP-budget-et — és pont a pénzt jelentő konverziókat
+  // dobnánk el. Ott a per-site token a kontroll, nem az IP.
+  if (!presentsServerToken && env.INGEST_LIMITER) {
+    if (!(await ingestRateLimit(env, hostname, request))) {
+      return rateLimited(env, hostname, cors, startedAt);
     }
   }
 
-  // Reject oversized bodies before parsing — guards against DLQ/AE flooding
-  // via large user_data payloads.
-  const MAX_BODY_BYTES = 16 * 1024;
-  const contentLength = request.headers.get('Content-Length');
-  if (contentLength) {
-    const len = parseInt(contentLength, 10);
-    if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
-      return new Response(null, { status: 204, headers: cors });
-    }
+  // Body-cap. Korábban CSAK a Content-Length fejlécet néztük — egy chunked
+  // (Content-Length nélküli) kérés simán megkerülte, és a request.json() korlátlanul
+  // olvasott. Most a streamet MÉRJÜK olvasás közben, és a cap átlépésekor
+  // megszakítjuk. Ez a DLQ/AE-elárasztás elleni valódi korlát.
+  const raw = await readBoundedBody(request, MAX_BODY_BYTES);
+  if (raw === null) {
+    logStructured({
+      level: 'info',
+      error_code: TrackingErrorCode.BODY_TOO_LARGE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.BODY_TOO_LARGE],
+      hostname,
+      duration_ms: Date.now() - startedAt
+    });
+    recordConversionMetric(env, {
+      hostname,
+      site_id: 'unknown',
+      event_name: 'unknown',
+      accepted: false,
+      error_code: TrackingErrorCode.BODY_TOO_LARGE,
+      total_duration_ms: Date.now() - startedAt
+    });
+    return new Response(null, { status: 413, headers: cors });
   }
 
   let payload: unknown;
   try {
-    payload = await request.json();
+    payload = JSON.parse(raw);
   } catch {
     logStructured({
       level: 'info',
@@ -194,8 +277,15 @@ export async function handleConversion(
   // nem hoz érvényes per-site tokent, az pontosan a régi Turnstile-kapun megy át.
   const serverAuth = await authenticateServerIngress(request, siteConfig);
   if (serverAuth === 'invalid') {
-    // Jelen lévő, de rossz token → 401. NEM esünk vissza a Turnstile-ágra: az
-    // elnyelné a misconfigot (rossz secret → csendes 403 „bot"-ként).
+    // Jelen lévő, de rossz token → 401. NEM esünk vissza a böngésző-ágra: az
+    // elnyelné a misconfigot (rossz secret → csendes „forbidden origin"-ként).
+    //
+    // Itt limitelünk: a token JELENLÉTE fentebb kihagyta a rate limitet (hogy a
+    // hitelesített money-path ne akadjon fenn rajta), tehát a token-találgatás
+    // különben ingyen lenne. Így a bypass ára egy 401 + limit.
+    if (!(await ingestRateLimit(env, hostname, request))) {
+      return rateLimited(env, hostname, cors, startedAt);
+    }
     logStructured({
       level: 'warn',
       error_code: TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED,
@@ -217,61 +307,33 @@ export async function handleConversion(
   }
   const serverIngress = serverAuth === 'valid';
 
-  const turnstileResult = serverIngress
-    ? { valid: true, errorCodes: ['server_ingress'] }
-    : await validateTurnstile(payload.turnstile_token, remoteIp, env);
-  let degraded = false;
-  if (!turnstileResult.valid) {
-    // TASK 2 — degradált elfogadás: token-NÉLKÜLI (vagy Turnstile-elérhetetlen)
-    // ALACSONY-kockázatú event (tel:/mailto:/whatsapp) → rate-limitelt elfogadás,
-    // hogy a money-signal (köztük a phone) ne vesszen el. A token-nélküli
-    // form-submit + az ÉRVÉNYTELEN token továbbra is kemény 403.
-    if (isTokenlessLowRiskAcceptable(turnstileResult.errorCodes, payload.event_name)) {
-      const rlKey = `degraded:${hostname}:${remoteIp || 'unknown'}`;
-      if (!(await degradedRateLimit(env, rlKey))) {
-        logStructured({
-          level: 'info',
-          error_code: TrackingErrorCode.DEGRADED_RATE_LIMITED,
-          message: ERROR_DESCRIPTIONS[TrackingErrorCode.DEGRADED_RATE_LIMITED],
-          hostname,
-          site_id: siteConfig.site_id,
-          event_name: payload.event_name,
-          duration_ms: Date.now() - startedAt
-        });
-        recordConversionMetric(env, {
-          hostname,
-          site_id: siteConfig.site_id,
-          event_name: payload.event_name,
-          accepted: false,
-          error_code: TrackingErrorCode.DEGRADED_RATE_LIMITED,
-          total_duration_ms: Date.now() - startedAt
-        });
-        return new Response(null, { status: 429, headers: cors });
-      }
-      degraded = true;
+  // ── Böngésző-ág: Origin allow-list (a Turnstile HELYÉN) ────────────────────
+  // A Turnstile-kapu kikerült a gateway-ből: a secret a Cloudflare *teszt*-kulcsa
+  // volt, ami MINDEN tokenre `success:true`-t ad — vagyis nulla védelmet adott,
+  // miközben a valódi konverziókat rendszeresen elnyelte (lásd a PR leírását).
+  // A helyére az Origin allow-list lép, ez a böngésző-ág elsődleges kontrollja.
+  //
+  // Amit ad: egy idegen oldal nem tud a látogatói böngészőjéből konverziót lőni
+  // ránk (a böngésző kötelezően a valódi Origin-t teszi rá, JS-ből nem hamisítható;
+  // sendBeacon/no-cors CORS nélkül is ELINDULNA, tehát szerver-oldali ellenőrzés
+  // nélkül ez nyitva állna). Amit NEM ad: védelmet curl/script ellen — azt a rate
+  // limit + idempotencia + a spike-riasztás fedi. Lásd lib/origin.ts.
+  //
+  // A hitelesített szerver-ingress kimarad: ott nincs böngésző, tehát Origin sincs.
+  if (!serverIngress) {
+    const verdict = checkOrigin(request.headers.get('Origin'), hostname, siteConfig);
+    if (verdict !== 'allowed') {
+      const errorCode =
+        verdict === 'missing'
+          ? TrackingErrorCode.ORIGIN_MISSING
+          : TrackingErrorCode.ORIGIN_NOT_ALLOWED;
       logStructured({
-        level: 'info',
-        error_code: TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED,
-        message: ERROR_DESCRIPTIONS[TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED],
-        hostname,
-        site_id: siteConfig.site_id,
-        event_name: payload.event_name,
-        turnstile_codes: turnstileResult.errorCodes?.join(',') || 'unknown'
-      });
-      // tovább a normál feldolgozásra (consent + fan-out + Queues/DLQ)
-    } else {
-      const isMissing = turnstileResult.errorCodes?.includes('missing_token') === true;
-      const errorCode = isMissing
-        ? TrackingErrorCode.MISSING_TURNSTILE_TOKEN
-        : TrackingErrorCode.INVALID_TURNSTILE_TOKEN;
-      logStructured({
-        level: 'info',
+        level: verdict === 'missing' ? 'info' : 'warn',
         error_code: errorCode,
         message: ERROR_DESCRIPTIONS[errorCode],
         hostname,
         site_id: siteConfig.site_id,
         event_name: payload.event_name,
-        error: turnstileResult.errorCodes?.join(',') || 'unknown',
         duration_ms: Date.now() - startedAt
       });
       recordConversionMetric(env, {
@@ -282,7 +344,7 @@ export async function handleConversion(
         error_code: errorCode,
         total_duration_ms: Date.now() - startedAt
       });
-      return new Response('Invalid token', { status: 403, headers: cors });
+      return new Response('Forbidden origin', { status: 403, headers: cors });
     }
   }
 
@@ -449,7 +511,6 @@ export async function handleConversion(
     hostname,
     site_id: siteConfig.site_id,
     event_name: payload.event_name,
-    degraded,
     duration_ms: totalDuration
   });
 

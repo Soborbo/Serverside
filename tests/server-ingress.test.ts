@@ -73,10 +73,14 @@ function serverRequest(
     clientIp?: string;
     clientUserAgent?: string;
     turnstileToken?: string;
+    origin?: string | null;
   } = {}
 ): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (opts.token !== undefined) headers['X-Admin-Token'] = opts.token;
+  // A böngésző-ág kapuja az Origin (a Turnstile helyén). A szerver-ingress nem
+  // küld Origin-t — ott a per-site token hitelesít.
+  if (opts.origin !== null) headers['Origin'] = opts.origin ?? `https://${opts.host ?? HOST}`;
   // A hívó Worker transport-UA/IP-je — ezt NEM szabad a Metának küldeni.
   headers['User-Agent'] = 'Cloudflare-Worker/1.0';
   headers['CF-Connecting-IP'] = '10.0.0.1';
@@ -200,7 +204,7 @@ describe('server-to-server ingress — acceptance', () => {
   });
 });
 
-describe('server-to-server ingress — the browser posture is unchanged', () => {
+describe('server-to-server ingress — the browser path no longer needs a token', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -211,13 +215,28 @@ describe('server-to-server ingress — the browser posture is unchanged', () => 
     vi.unstubAllGlobals();
   });
 
-  it('still 403s a token-less form conversion when no per-site token is presented', async () => {
+  // SZERZŐDÉS-VÁLTÁS: a Turnstile kikerült a gateway-ből (a secret a Cloudflare
+  // teszt-kulcsa volt → mindent átengedett). A böngésző-ág kapuja most az Origin.
+  it('accepts a token-less form conversion from an ALLOWED origin (no X-Admin-Token)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+
+    const res = await handleConversion(serverRequest({}), env, ctx);
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+  });
+
+  it('403s the same event from a FORBIDDEN origin', async () => {
     installFetchSpy();
     const { env } = makeEnv(await makeSiteConfig());
     const { ctx } = collectingCtx();
 
-    // Se X-Admin-Token, se turnstile_token → a régi kapu zár.
-    const res = await handleConversion(serverRequest({}), env, ctx);
+    const res = await handleConversion(
+      serverRequest({ origin: 'https://evil.example.net' }),
+      env,
+      ctx
+    );
     expect(res.status).toBe(403);
   });
 });

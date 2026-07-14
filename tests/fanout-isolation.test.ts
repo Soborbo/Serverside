@@ -55,7 +55,9 @@ function makeEnv(deadLetterPut: (key: string, body: string) => void): any {
 function conversionRequest(): Request {
   return new Request(`https://${HOST}/api/event/conversion`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    // Az Origin a Turnstile eltávolítása óta a böngésző-ág KAPUJA — nélküle a
+    // route 403-at ad, és sosem jutnánk el a fan-outig (lib/origin.ts).
+    headers: { 'Content-Type': 'application/json', Origin: `https://${HOST}` },
     body: JSON.stringify({
       event_name: 'contact_form_submitted', // NEM quote/upgrade event → kihagyja a DO-t
       event_id: 'evt-iso-1',

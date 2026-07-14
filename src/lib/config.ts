@@ -37,6 +37,12 @@ export interface SiteConfig {
   // backward-compat, ad-platform engedett. EEA-site-okon ajánlott true-ra állítani.
   require_consent?: boolean;
 
+  // Extra engedélyezett böngésző-originek (`https://foo.example.com` vagy puszta
+  // hostnév). A site SAJÁT hostja + az apex/www testvére MINDIG engedett — ez a
+  // mező csak hozzáad. Csak akkor kell, ha a site egy MÁSIK hostról is küld
+  // konverziót (pl. külön landing-domain). Lásd lib/origin.ts.
+  allowed_origins?: string[];
+
   // Per-site CRM offline-loop token — a SAJÁT CRM-deployjának kiadott plaintext
   // token SHA-256 hex-e. Ha jelen van, a /lead-status az `X-Admin-Token`-t KIZÁRÓLAG
   // EHHEZ a hash-hez hasonlítja (constant-time) — a globális ADMIN_API_TOKEN NEM ad
