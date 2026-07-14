@@ -51,6 +51,11 @@ export enum TrackingErrorCode {
   ORIGIN_NOT_ALLOWED = 'TRK-400-014',
   BODY_TOO_LARGE = 'TRK-400-015',
   CONVERSION_SPIKE = 'TRK-400-016',
+  // High-value (hamisítható PII-s) konverzió a böngésző-ágon — csak a hitelesített
+  // /api/event/conversion-server fogadhatja. Az Origin curl-ből hamisítható, a
+  // Workers rate-limit binding bizonyítottan nem throttle-ol → e nélkül bárki
+  // hamis lead-konverziót lőhetne tetszőleges hash-elt email/telefonnal.
+  HIGH_VALUE_EVENT_BROWSER_REJECTED = 'TRK-400-017',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -107,10 +112,18 @@ export enum TrackingErrorCode {
   CRON_RETRY_FAILED = 'TRK-900-004',
   MAX_RETRIES_EXCEEDED = 'TRK-900-005',
   DLQ_CORRUPT_RECORD = 'TRK-900-006',
+  // Platform-hívás elbukott ÉS a retry-rekordot sem sikerült sehova (Queue + R2)
+  // letenni → az event minden tárból kiesett. Ilyenkor a dispatched flag 0 marad,
+  // hogy egy kliens-retry újrakézbesíthesse (vendor event_id-dedup véd).
+  RETRY_PERSIST_FAILED = 'TRK-900-007',
 
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
   RECON_QUERY_FAILED = 'TRK-950-003',
+  // Invariáns-sértés: 'accepted' delivery-rekord vendor HTTP-státusz nélkül.
+  // Accepted CSAK valós vendor-válasz mellett íródhat — e nélkül a "green monitor
+  // over zero data" osztályú bug (lomtalan 2026-07-14) észrevétlen maradna.
+  ACCEPTED_WITHOUT_VENDOR_STATUS = 'TRK-950-004',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -161,6 +174,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Request body exceeded the 16 KiB ingress cap (measured while streaming, not just Content-Length)',
   [TrackingErrorCode.CONVERSION_SPIKE]:
     'Accepted conversions for a site spiked far above its 7-day baseline — possible conversion spam on the tokenless browser path',
+  [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]:
+    'High-value conversion rejected on the browser path — it must arrive via the authenticated /api/event/conversion-server ingress (per-site token)',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -214,11 +229,15 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.CRON_RETRY_FAILED]: 'Cron retry handler encountered unhandled error',
   [TrackingErrorCode.MAX_RETRIES_EXCEEDED]: 'DLQ record reached max retry count',
   [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed',
+  [TrackingErrorCode.RETRY_PERSIST_FAILED]:
+    'Platform call failed AND the retry record could not be stored anywhere (Queue + R2) — event left undispatched so a client retry can recover it',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
     'Vendor delivery failure rate exceeded threshold (reconciliation)',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
     'Eligible events did not reach the platform — coverage drift (reconciliation)',
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed',
+  [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]:
+    "Invariant violation: a delivery would have been recorded 'accepted' without a vendor HTTP status — recorded as 'skipped' instead",
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
   [TrackingErrorCode.RETENTION_R2_FAILED]: 'Dead-letter R2 retention purge failed',
   [TrackingErrorCode.UNKNOWN_EVENT_NAME]: 'event_name not in the canonical ALLOWED set (events.json)',
@@ -245,6 +264,8 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_OAUTH_REFRESH_FAILED]: 'critical',
   [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'critical',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'critical',
+  [TrackingErrorCode.RETRY_PERSIST_FAILED]: 'critical',
+  [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]: 'critical',
   [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'critical',
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'critical',
   [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]: 'critical',
@@ -312,6 +333,9 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.ORIGIN_MISSING]: 'info',
   [TrackingErrorCode.ORIGIN_NOT_ALLOWED]: 'warning',
   [TrackingErrorCode.BODY_TOO_LARGE]: 'info',
+  // Warning (nem info): legitim forgalomból nem jöhet — vagy támadó próbálkozik,
+  // vagy egy site kliens-kódja regressziósan a böngésző-útra tette a form-eventet.
+  [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]: 'warning',
   // Kritikus: a tokenless böngésző-ág egyetlen visszamaradt kockázata a
   // konverzió-spam. Ha megtörténik, azonnal tudni akarunk róla (SMS is megy).
   [TrackingErrorCode.CONVERSION_SPIKE]: 'critical',

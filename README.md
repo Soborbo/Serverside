@@ -1,153 +1,82 @@
-# Soborbo Tracking Worker — Teljes spec (v2)
+# Soborbo Tracking Worker — event-gateway
 
-**Project**: Multi-tenant Cloudflare Worker server-side conversion tracking 15 Astro lead-gen oldalra.
+**Project**: Multi-tenant Cloudflare Worker server-side conversion tracking a Soborbo lead-gen site-okra (élő: **painless, beautyflow, lomtalan**).
 
-**Cél**: Egyetlen, jól tesztelt, vendor-független server-side tracking infrastruktúra, ami Meta CAPI, GA4 Measurement Protocol, és Google Ads Conversion API-t kezel egységesen. $0/hó hosting (Cloudflare Workers Paid plan-en belül), Stape $20/hó/site helyett.
+**Ez a dokumentum a JELENLEGI, deployolt modellt írja le.** A repót AI-runok fejlesztik: ha ennél a fájlnál régebbi architektúra-leírást találsz (Turnstile-kapu, on-site szerver GA4, on-site szerver Google Ads, quote-state Durable Object), az TÖRÖLT funkció — ne építsd újra. A sprint-fájlok (`0*-sprint-*.md`) történeti tervdokumentumok, nem az aktuális állapot.
 
-## Mi újdonság a v2-ben
+## A jelenlegi modell (2026-07, Run 6 után)
 
-A v1-hez képest **3 új sprint** beépítve a kezdeti specbe:
-- **Sprint 2.5**: Error code taxonómia (production-grade strukturált hibakezelés)
-- **Sprint 6.5**: Durable Objects a quote state-hez (strong consistency)
-- **Sprint 8.5**: Monitoring, SLO mérés, automatikus admin email/SMS alerting
+```
+Site backend (painless / beautyflow / lomtalan Astro worker)
+  └─ lead-endpoint → sendGatewayConversion()
+       ↓ SERVICE BINDING (env.GATEWAY / env.EVENT_GATEWAY)
+       ↓ POST /api/event/conversion-server  +  X-Admin-Token (per-site token)
+Böngésző (kliens)
+  ├─ Meta Pixel + GA4 + Google Ads tag: KÖZVETLENÜL a vendorhoz (GTM), nem rajtunk át
+  └─ sendToWorker() CSAK low-risk klikk-eventekre
+       ↓ POST /api/event/conversion  (tokenless, Origin-gate + IP rate limit)
+event-gateway Worker (multi-tenant)
+  ├─ Hostname → site config (KV: SITE_CONFIG)
+  ├─ Hash + normalize user_data (SHA-256, CLAUDE.md #1)
+  ├─ Idempotencia + D1 ledger (events_raw / deliveries / consent_receipts)
+  └─ Fan-out (Promise.allSettled):
+       ├─ Meta CAPI (Graph API, event_id dedup a Pixel-lel)
+       └─ click-ID forwarderek (TikTok / LinkedIn / MsAds — csak ha van click ID + config)
+  ├─ Hiba → Cloudflare Queue → R2 DLQ fallback → cron retry
+  └─ Metrics → Analytics Engine; alerting → email/SMS; napi reconciliation a ledger fölött
 
-**1 új sprint** opcionális 2. körre:
-- **Sprint 11**: Cookie Keeper (Safari ITP server-set cookies)
+CRM offline-loop
+  └─ POST /api/event/lead-status (per-site token)
+       └─ Google Ads Enhanced Conversions for Leads → Data Manager API (events:ingest)
+```
 
-## Sprint-bontás
+### A két ingress-út és ami rajtuk mehet
 
-| Sprint | Cél | Idő (Claude Code-dal) |
+| Útvonal | Auth | Mi mehet rajta |
 |---|---|---|
-| Sprint 1 | Worker scaffolding | 2-3 óra |
-| Sprint 2 | Site config + Turnstile | 3-4 óra |
-| **Sprint 2.5** | **Error code taxonómia** ⭐ új | **2 óra** |
-| Sprint 3 | Hash + normalize lib | 3-4 óra |
-| Sprint 4 | Meta CAPI integration | 4-6 óra |
-| Sprint 5 | GA4 Measurement Protocol | 2-3 óra |
-| Sprint 6 | Google Ads OAuth2 | 4-6 óra |
-| **Sprint 6.5** | **Durable Objects (quote state)** ⭐ új | **6-10 óra** |
-| Sprint 7 | Google Ads Conversion Upload | 3-4 óra |
-| Sprint 8 | Dead Letter Queue + Cron | 3-4 óra |
-| **Sprint 8.5** | **Monitoring, SLO, alerting** ⭐ új | **10-15 óra** |
-| Sprint 9 | Astro production integráció Painless-en | 4-6 óra |
-| Sprint 10 | Multi-tenant rollout 14 másik site-ra | 1-3 óra/site |
-| **Sprint 11** | **Cookie Keeper (Safari ITP)** ⭐ opcionális | **5-15 óra** |
+| `/api/event/conversion` (böngésző) | nincs token; Origin allow-list + IP rate limit | CSAK low-risk klikk-eventek: `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `video_play`, engagement events |
+| `/api/event/conversion-server` (szerver) | per-site token (`X-Admin-Token` ↔ KV `crm_token_sha256`) | a high-value konverziók: `quote_calculator_submitted`, `callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`, `purchase` |
+| `/api/event/lead-status` (CRM) | per-site token | offline lead-státuszok (`lead_qualified`, `booking_confirmed`, `revenue_confirmed`, …) |
 
-**Alapváltozat (Sprint 1-10 + 2.5/6.5/8.5)**: 50-65 óra Claude Code-dal.
-**Sprint 11 opcionális**: csak 4 hét Painless production data alapján.
-**Kalendáris**: 5-7 hónap part-time, hetente 5-8 óra.
+A high-value eventek a böngésző-úton **403**-at kapnak (`TRK-400-017`): az Origin curl-ből hamisítható, és a Workers rate-limit binding bizonyítottan nem throttle-olt — e nélkül bárki hamis lead-konverziót lőhetne tetszőleges hash-elt email/telefonnal. A böngésző-Pixel ugyanazzal az `event_id`-vel tüzel tovább → a Pixel/CAPI dedup ép. A lista az `events.json` `server_ingress_only` flagjéből származik.
 
-## Architektúra
+### Kritikus, tapasztalatból fizetett szabályok
 
-```
-Astro site (Painless, NemesVent, stb.)
-  ├─ Kliensoldali GTM (változatlan): GA4 page_view, Meta Pixel base, scroll
-  └─ sendToWorker() helper konverziós eventekhez
-       ↓ POST /api/event/conversion
-Cloudflare Worker (multi-tenant)
-  ├─ Hostname → site_id (KV: SITE_CONFIG)
-  ├─ Turnstile validate
-  ├─ Hash + normalize user_data (SHA-256)
-  ├─ Quote state Durable Object (60-min upgrade window) ⭐
-  ├─ Cookie Keeper shadow cookies ⭐ Sprint 11
-  └─ Fan-out:
-       ├─ Meta CAPI (Graph API v25)
-       ├─ GA4 Measurement Protocol
-       └─ Google Ads Conversion Upload (OAuth2)
-  ├─ Failed → R2 dead-letter → óránkénti Cron retry
-  └─ Metrics → Analytics Engine → Grafana ⭐
-       └─ Email/SMS alerts ⭐
-```
+1. **Service binding, NEM same-zone route fetch.** A site worker a gateway-t service bindingon hívja (`env.GATEWAY.fetch(...)`). Same-zone HTTPS fetch a saját zóna route-jára a Cloudflare loop-védelme miatt rövidre zárul — csendben.
+2. **Test event code KIZÁRÓLAG per-request.** A szintetikus proof-event a body `test_event_code` mezőjével megy (csak hitelesített szerver-hívótól fogadjuk el). SOHA nem a KV site-configba írva: a config edge-cache-elt (300s), és a cache-ablakban valódi leadek mennének a Meta Test streambe (két production Meta-leak történt így).
+3. **A ledger nem hazudhat.** A `deliveries` státusz három-állapotú: `accepted` (vendor HTTP-státusszal — enélkül SOHA), `skipped` (szándékos kihagyás: nincs config / consent-tiltás), `rejected`. Skip-út mindig `{ success: true, skipped: true }`-t ad vissza. Az invariánst a `normalizeDelivery` kényszeríti (`TRK-950-004`).
+4. **Hármas kiesés ≠ dispatched.** Ha a platform-hívás ÉS a Queue ÉS az R2 is elbukik, az event `dispatched=0` marad (`TRK-900-007` critical alert) — így egy kliens-retry még újrakézbesíthet.
+5. **204 csak a böngésző-beaconnek.** A szerver-szerver útvonalak (conversion-server, lead-status, admin, OAuth) hibánál 500-at adnak, hogy a hívó retry-olhasson.
+6. **Nincs on-site szerver GA4 és nincs on-site szerver Google Ads.** A GA4-et és a Google Ads on-site konverziót a böngésző birtokolja (GTM). A szerver Google Ads-lába KIZÁRÓLAG offline (lead-status → Data Manager API). Az offline GA4-leg kikapcsolva (client_id nélkül minden esemény új szintetikus GA4-clientbe esett volna).
+7. **Nincs Turnstile a gateway-ben.** Kikerült (a secret a Cloudflare teszt-kulcsa volt → nulla védelem, miközben valódi konverziókat nyelt el). A böngésző-ág kapuja az Origin allow-list + rate limit + a high-value gate; a szerver-ágé a per-site token.
+8. **Nincs quote-state Durable Object.** Törölve (wrangler migráció v2): az alarm némán ejthetett state-et, és egy event jelentését írta át utólag. A `quote_calculator_submitted` azonnal fan-outol.
 
-## Mappa-struktúra
+### Szintetikus tesztelés
+
+Kizárólag a hitelesített szerver-ingressen, per-request `test_event_code`-dal — SOHA nem böngésző-úton, SOHA nem KV-be írt test-koddal. A proof: D1 ledger-sor + Meta Test Events találat + üres DLQ.
+
+## Mappa-struktúra (aktuális)
 
 ```
-soborbo-tracking-spec/
-├── README.md                             # Ez a fájl
-├── CLAUDE.md                             # Critical implementation rules
-├── 00-pre-sprint-setup.md                # Manuális Cloudflare-setup
-├── 01-sprint-scaffolding.md              # Worker scaffolding
-├── 02-sprint-config-turnstile.md         # Site config + Turnstile
-├── 02-5-sprint-error-codes.md            # ⭐ Error code taxonómia
-├── 03-sprint-hash-normalize.md           # Hash + normalize lib
-├── 04-sprint-meta-capi.md                # Meta CAPI integration
-├── 05-sprint-ga4-mp.md                   # GA4 Measurement Protocol
-├── 06-sprint-gads-oauth.md               # Google Ads OAuth2
-├── 06-5-sprint-durable-objects.md        # ⭐ Durable Objects
-├── 07-sprint-gads-conversion.md          # Google Ads Conversion Upload
-├── 08-sprint-dlq-cron.md                 # DLQ + Cron retry
-├── 08-5-sprint-monitoring-alerting.md    # ⭐ Monitoring + alerting
-├── 09-sprint-astro-painless.md           # Painless production integráció
-├── 10-sprint-multi-tenant-rollout.md     # 14 site rollout
-├── 11-sprint-cookie-keeper.md            # ⭐ Cookie Keeper (opcionális)
-└── ASTRO-FRONTEND-SPEC.md                # 17-event Astro tracking spec
+├── README.md                  # Ez a fájl — a JELENLEGI modell
+├── CLAUDE.md                  # Kritikus implementációs szabályok (hash, formátumok, tilalmak)
+├── src/
+│   ├── worker.ts              # Routing + queue consumer + cron
+│   ├── events.json            # Kanonikus event-kontraktus (single source of truth)
+│   ├── routes/                # conversion, lead-status, admin, health, oauth
+│   ├── lib/                   # meta, datamanager, hash, ledger, deadletter, origin, …
+│   └── scheduled/             # retry, daily-digest, slo-check, reconciliation, retention
+├── client-lib/                # Böngésző-oldali sendToWorker/trackConversion helper
+├── tests/                     # vitest (npm test)
+├── migrations/                # D1 ledger séma
+├── scripts/                   # site onboarding (generate-site.mjs), bootstrap
+├── docs/                      # error-codes.md, admin-api.md, ledger-offline-loop.md, …
+└── 0*-sprint-*.md             # TÖRTÉNETI sprint-tervek — nem az aktuális állapot
 ```
 
-## Fejlettségi szint
+## Üzemeltetés
 
-| Dimenzió | v1 (Sprint 1-10) | v2 (+ 2.5/6.5/8.5) |
-|---|---|---|
-| Funkcionális teljesség | 8/10 | 8/10 |
-| Reliability | 6/10 | **8/10** |
-| Security | 6/10 | 6/10 |
-| Performance | 8/10 | **9/10** |
-| Maintenance burden | 5/10 | **7/10** |
-| GDPR/compliance | 7/10 | 7/10 |
-| Observability | 4/10 | **9/10** |
-| **Összpontszám** | **6.5/10** | **7.7/10** |
-
-Stape ehhez képest ~8.5/10 (kifinomultabb, de havi $300 plus). Hand-coded enterprise stack ~9.5/10 (overkill Painless-méretben).
-
-## Költség
-
-| Tétel | Költség |
-|---|---|
-| Cloudflare Workers Paid plan | $5/hó (már van) |
-| Workers KV | $0 (10M-ig benne) |
-| R2 bucket | $0 (10 GB-ig benne) |
-| Durable Objects | <$1/hó Painless-volumenre |
-| Workers Analytics Engine | $0 (10M data points/hó) |
-| Cloudflare Email Routing | $0 (ingyenes) |
-| Twilio SMS (kritikus alert-ek) | ~$2-5/hó (opcionális) |
-| Grafana Cloud | $0 (free tier) |
-| **Total** | **~$8-11/hó (15 site-ra együtt)** |
-
-Stape: $20 × 15 site = $300/hó. **~$290/hó megtakarítás** (idő-érték nélkül).
-
-## Hogyan használd
-
-1. Olvasd el a `CLAUDE.md`-t — kritikus rules document
-2. Csináld meg a `00-pre-sprint-setup.md`-t — manuális Cloudflare lépések
-3. Sprint 1-2 (scaffolding + Turnstile, kockázatmentes)
-4. Sprint 2.5 (error code taxonómia, cross-cutting)
-5. Sprint 3-8 + 6.5 (Worker stack)
-6. **Sprint 8.5 (monitoring) MIELŐTT Sprint 9 production deploy**
-7. Sprint 9 (Painless production, első kockázatos sprint)
-8. Sprint 10 (14 site rollout)
-9. Sprint 11 (Cookie Keeper, **csak ha 4 hét Painless data <8 EMQ**)
-
-## Rollback plan
-
-- Sprint 1-8 + 2.5/6.5: a Worker még nem érint production user-eket
-- Sprint 8.5: monitoring nem érinti fan-out-ot, eltávolítható
-- Sprint 9: Painless GTM backup JSON-ből 5 perc alatt visszaállítható
-- Sprint 10: ugyanaz, per site
-- Sprint 11: KV-flag-gel ki/be kapcsolható
-
-## Kritikus döntés Painless-re
-
-A Sprint 9 előtt:
-
-**Opció A — Worker-rel megy Painless azonnal**: 5-7 hónap beruházás, $0/hó, Painless tanulási kockázat.
-
-**Opció B — Painless Stape Pro ($16/hó), Worker POC BeautyFlow-n**: Painless stable, Worker tanulás low-stake. 3-6 hónap után átköltöztetés.
-
-**Opció B az ajánlott**, kivéve ha vállalod a Painless production tanulási kockázatát.
-
-## Mi nem tartozik ehhez
-
-- Stape sGTM hosting (alternatíva)
-- Cloudflare Zaraz (kifejezetten visszadobva)
-- Custom Loader / ad blocker bypass (3. kör)
-- Server-side Consent Mode v2 Advanced (3. kör)
-- TikTok / LinkedIn CAPI (demand-driven)
+- Deploy: `npm run deploy` (wrangler). A worker neve `event-gateway`.
+- Tesztek: `npm test` (vitest), `npm run typecheck`, `npm run check:events` (event-kontraktus guard).
+- Monitoring: Analytics Engine metrikák, napi digest + reconciliation email, SLO-check 30 percenként, `docs/error-codes.md` a runbook.
+- Site onboarding: `scripts/generate-site.mjs` + KV `SITE_CONFIG` bejegyzés — lásd `.claude/skills` `onboard-site`.

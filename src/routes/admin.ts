@@ -3,7 +3,7 @@ import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
 import { getSiteConfig } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
-import { getLeadTrail, isValidLeadId, markDoNotReplay, recordDeliveries } from '../lib/ledger';
+import { getLeadTrail, isValidLeadId, markDoNotReplay, recordDeliveries, normalizeDelivery } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
 import {
   listPendingRetries,
@@ -227,7 +227,8 @@ async function handleDlqReplay(
     } catch {
       return json({ error: 'corrupt_record', key }, 422);
     }
-    const ok = await retrySingle(env, record);
+    const result = await retrySingle(env, record);
+    const ok = result.success;
     if (ok) {
       // 'retry' origin-nal könyvelünk, mint a cron — különben a reconciliation
       // hamis coverage_drift-et adna a visszanyert kézbesítésre.
@@ -236,7 +237,7 @@ async function handleDlqReplay(
         site_id: record.site_id,
         event_name: String(record.event_payload.event_name ?? ''),
         origin: 'retry',
-        records: [{ platform: record.platform, status: 'accepted' }]
+        records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
       });
       await deleteDeadLetter(env, key);
     }
@@ -273,14 +274,14 @@ async function handleDlqReplay(
   let failed = 0;
   for (const { key, record } of pending) {
     try {
-      const ok = await retrySingle(env, record);
-      if (ok) {
+      const result = await retrySingle(env, record);
+      if (result.success) {
         await recordDeliveries(env, {
           event_id: String(record.event_payload.event_id ?? ''),
           site_id: record.site_id,
           event_name: String(record.event_payload.event_name ?? ''),
           origin: 'retry',
-          records: [{ platform: record.platform, status: 'accepted' }]
+          records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
         });
         await deleteDeadLetter(env, key);
         succeeded++;

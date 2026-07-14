@@ -30,7 +30,10 @@ describe('Meta CAPI — opcionális `meta` blokk', () => {
     }, {});
 
     // A siker itt „tisztán kimaradt"-at jelent — a fan-out ettől nem ír DLQ-t.
+    // A `skipped: true` kötelező: a ledger e nélkül 'accepted'-et írna http_status
+    // nélkül (a lomtalan 2026-07-14-i hamis-siker esete).
     expect(res.success).toBe(true);
+    expect(res.skipped).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

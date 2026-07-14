@@ -79,6 +79,24 @@ export function normalizeDelivery(
   }
   const v = settled.value;
   if (v.success) {
+    // INVARIÁNS: 'accepted' CSAK valós vendor HTTP-státusszal íródhat. Egy
+    // success-eredmény státusz nélkül azt jelenti, hogy hívás nem történt (skip-ág,
+    // ami elfelejtette a skipped flaget) — ha ezt accepted-ként könyvelnénk, a
+    // ledger örökre egészségesnek mutatna egy nem-élő platform-lábat (lomtalan
+    // 2026-07-14). Ilyenkor 'skipped'-et írunk és CRITICAL kódot hagyunk a soron.
+    if (typeof v.status !== 'number') {
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS],
+        platform
+      });
+      return {
+        platform,
+        status: 'skipped',
+        error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS
+      };
+    }
     return { platform, status: 'accepted', http_status: v.status };
   }
   return {

@@ -108,6 +108,12 @@ export interface CanonicalEvent {
   ga4_key_event: boolean;
   meta: string | null;
   channels: Array<'browser' | 'server'>;
+  // true → az eventet a gateway CSAK a hitelesített /api/event/conversion-server
+  // ingressen fogadja (per-site token). A böngésző-út (Origin-gate) 403-at ad rá:
+  // az Origin curl-ből hamisítható, és e nélkül bárki hamis lead/purchase
+  // konverziót lőhetne tetszőleges hash-elt PII-vel. A böngésző-Pixel továbbra
+  // is tüzel ugyanazzal az event_id-vel → Pixel/CAPI dedup ép marad.
+  server_ingress_only?: boolean;
   provenance: boolean;
   flow: 'A' | 'B' | null;
   legacy_ga4: string | null;
@@ -129,6 +135,14 @@ export const ALLOWED_EVENT_NAMES: ReadonlySet<string> = new Set<string>([
   ..._ingressEvents.map((e) => e.name),
   ..._ingressEvents.map((e) => e.legacy_ga4).filter((n): n is string => n !== null)
 ]);
+
+// High-value (hamisítható) konverziók — CSAK a hitelesített szerver-ingress
+// fogadja őket; a böngésző-út 403-at ad. KANONIKUS neveket tartalmaz: a route
+// az ellenőrzés ELŐTT canonicalizeEventName-el normalizál, így a legacy aliasok
+// (pl. quote_calculator_conversion) sem kerülik meg a kaput.
+export const SERVER_INGRESS_ONLY_EVENTS: ReadonlySet<string> = new Set<string>(
+  CANONICAL_EVENTS.filter((e) => e.server_ingress_only === true).map((e) => e.name)
+);
 
 // legacy GA4 alias → kanonikus név. Ingress-belépéskor normalizálunk, hogy minden
 // downstream (Meta-map, ledger, forwarderek, special-case logika) EGYSÉGESEN a

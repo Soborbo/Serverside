@@ -70,8 +70,11 @@ export async function sendToDataManager(
 ): Promise<GAdsResult> {
   const startedAt = Date.now();
 
+  // Skip-ágak: `skipped: true` KÖTELEZŐ. Enélkül a hívó (lead-status) sikeres
+  // uploadnak könyvelné (`uploaded_to_gads: true`) azt, ami el sem indult, és a
+  // ledger 'accepted'-et írna vendor HTTP-státusz nélkül.
   if (!siteConfig.gads.customer_id) {
-    return { success: true };
+    return { success: true, skipped: true };
   }
 
   const conversionActionId = siteConfig.gads.conversion_actions?.[payload.event_name];
@@ -83,7 +86,7 @@ export async function sendToDataManager(
       site_id: siteConfig.site_id,
       event_name: payload.event_name
     });
-    return { success: true };
+    return { success: true, skipped: true };
   }
 
   const accessToken = await getAccessToken(siteConfig.gads.customer_id, env);
@@ -151,7 +154,7 @@ export async function sendToDataManager(
       site_id: siteConfig.site_id,
       event_name: payload.event_name
     });
-    return { success: true };
+    return { success: true, skipped: true };
   }
 
   if (payload.consent) {

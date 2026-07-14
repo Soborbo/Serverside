@@ -38,8 +38,6 @@ export interface Env {
   // visszaesik az INGEST_LIMITER-re; ha az sincs, a throttle kimarad.
   ADMIN_LIMITER?: RateLimitBinding;
 
-  QUOTE_STATE: DurableObjectNamespace;
-
   TRACKING_METRICS: AnalyticsEngineDataset;
   // Email binding — a wrangler.toml-ban kommentben (destination verify nélkül a
   // deploy elbukna). A notify.ts soft-skip-pel megy, ha hiányzik → opcionális.
@@ -60,10 +58,6 @@ export interface Env {
 
 
 
-
-  // Optional: short-circuit DO alarm duration for testing (seconds).
-  // Default = 3600 (60 min) per spec.
-  QUOTE_ALARM_SECONDS?: string;
 
   // Optional: Data Manager API dry-run. Set to "1" to send events:ingest with
   // validateOnly=true (request is validated by Google but NOT executed — no

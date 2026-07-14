@@ -59,7 +59,9 @@ function conversionRequest(): Request {
     // route 403-at ad, és sosem jutnánk el a fan-outig (lib/origin.ts).
     headers: { 'Content-Type': 'application/json', Origin: `https://${HOST}` },
     body: JSON.stringify({
-      event_name: 'contact_form_submitted', // NEM quote/upgrade event → kihagyja a DO-t
+      // Low-risk klikk-event: a form/lead konverziók a Fix 2 óta CSAK a
+      // hitelesített szerver-ingressen jöhetnek (böngésző-úton 403 lenne).
+      event_name: 'phone_number_clicked',
       event_id: 'evt-iso-1',
       event_time: Math.floor(Date.now() / 1000),
       turnstile_token: 'tok',

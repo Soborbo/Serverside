@@ -281,3 +281,21 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 
 **Severity**: Warning
 **Action**: A napi recon D1-lekérdezése elbukott. D1 status + migrations. A recon best-effort, a fő flow nem érintett.
+
+## TRK-400-017 — High-value event rejected on browser path
+
+**Severity**: Warning
+**Description**: Form/lead/purchase konverzió (`quote_calculator_submitted`, `callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`, `purchase`) érkezett a böngésző-útra (`/api/event/conversion`). Ezek KIZÁRÓLAG a hitelesített `/api/event/conversion-server` ingressen jöhetnek (per-site token) — az Origin curl-ből hamisítható.
+**Action**: 1) Ha ismeretlen forrás → hamisított-konverzió kísérlet, az elutasítás a helyes viselkedés. 2) Ha egy SAJÁT site kliens-kódja termeli → a site backendjének kell dispatchelnie (lásd painless/lomtalan minta: `sendGatewayConversion`), a böngésző-leg csak a Meta Pixelé.
+
+## TRK-900-007 — Retry record could not be stored anywhere
+
+**Severity**: Critical
+**Description**: Platform-hívás elbukott ÉS a retry-rekord sem a Queue-ba, sem az R2 DLQ-ba nem került be. Az event dispatched=0 marad, hogy egy kliens-retry újrakézbesíthesse (vendor event_id-dedup véd).
+**Action**: 1) Queues + R2 status a Cloudflare dashboardon. 2) A logból azonosítsd az event_id-t; ha nem jön kliens-retry, a konverzió kézi újraküldést igényel a site backendjéből.
+
+## TRK-950-004 — Accepted without vendor HTTP status (invariant violation)
+
+**Severity**: Critical
+**Description**: Egy delivery 'accepted'-ként íródott volna vendor HTTP-státusz nélkül — azaz hívás nem történt, csak egy skip-ág elfelejtette a `skipped` flaget. A normalizeDelivery ilyenkor 'skipped'-et ír e kóddal.
+**Action**: Ez KÓDHIBA-jelző (a lomtalan 2026-07-14-i hamis-siker osztálya). Keresd meg az új/skip-utat, ami `{success:true}`-t ad `skipped:true` és `status` nélkül, és javítsd.

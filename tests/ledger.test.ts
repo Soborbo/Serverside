@@ -70,6 +70,38 @@ describe('normalizeDelivery', () => {
     );
     expect(r.vendor_message?.length).toBe(500);
   });
+
+  // ── Fix 1 invariáns: accepted SOHA nem íródhat vendor HTTP-státusz nélkül ────
+  // A lomtalan 2026-07-14-i esetben a no-config Meta-skip {success:true}-t adott
+  // → 'accepted' http_status=NULL sor, ami örökre egészségesnek mutatott egy
+  // soha-nem-élt platform-lábat.
+
+  it('vendor result skipped:true → skipped (config-less skip path)', () => {
+    const r = normalizeDelivery('meta', {
+      status: 'fulfilled',
+      value: { success: true, skipped: true }
+    });
+    expect(r.status).toBe('skipped');
+  });
+
+  it("NEVER records 'accepted' without a vendor HTTP status — downgrades to skipped with a critical error code", () => {
+    // Egy jövőbeli skip-ág, ami elfelejti a skipped flaget → ne 'accepted' legyen.
+    const r = normalizeDelivery('meta', {
+      status: 'fulfilled',
+      value: { success: true } // nincs status, nincs skipped
+    });
+    expect(r.status).toBe('skipped');
+    expect(r.status).not.toBe('accepted');
+    expect(r.error_code).toBe('TRK-950-004'); // ACCEPTED_WITHOUT_VENDOR_STATUS
+  });
+
+  it("records 'accepted' when (and only when) the vendor HTTP status is present", () => {
+    const r = normalizeDelivery('meta', {
+      status: 'fulfilled',
+      value: { success: true, status: 200 }
+    });
+    expect(r).toEqual({ platform: 'meta', status: 'accepted', http_status: 200 });
+  });
 });
 
 describe('mapLeadStatusToEventName', () => {

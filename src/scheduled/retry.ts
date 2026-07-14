@@ -14,7 +14,7 @@ import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
 import { getSiteConfig } from '../lib/config';
-import { recordDeliveries } from '../lib/ledger';
+import { recordDeliveries, normalizeDelivery, type VendorResult } from '../lib/ledger';
 import type { HashedUserData } from '../lib/hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
@@ -50,17 +50,18 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
 
   for (const { key, record } of toRetry) {
     try {
-      const success = await retrySingle(env, record);
-      if (success) {
+      const result = await retrySingle(env, record);
+      if (result.success) {
         // A sikeres retry-t 'retry' origin-nal könyveljük a deliveries táblába,
         // különben a reconciliation (csak 'fanout'-ot számolt accepted-ként) hamis
         // coverage_drift CRITICAL-t adna minden DLQ-ból visszanyert kézbesítésre.
+        // normalizeDelivery: accepted CSAK vendor HTTP-státusszal; skip → 'skipped'.
         await recordDeliveries(env, {
           event_id: String(record.event_payload.event_id ?? ''),
           site_id: record.site_id,
           event_name: String(record.event_payload.event_name ?? ''),
           origin: 'retry',
-          records: [{ platform: record.platform, status: 'accepted' }]
+          records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
         });
         await deleteDeadLetter(env, key);
         succeeded++;
@@ -130,48 +131,50 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
   });
 }
 
-export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<boolean> {
+/**
+ * Egyetlen DLQ-rekord újraküldése. A TELJES vendor-eredményt adja vissza (nem
+ * csupasz boolean-t), hogy a hívók a ledger-könyvelést a normalizeDelivery-n
+ * keresztül végezhessék: accepted CSAK valós vendor HTTP-státusszal íródhat,
+ * a szándékos skip (időközben eltávolított config) pedig 'skipped'-ként.
+ */
+export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<VendorResult> {
   const siteConfig = await getSiteConfig(record.hostname, env);
-  if (!siteConfig) return false;
+  if (!siteConfig) return { success: false, error: 'no site config for hostname' };
 
   const hashedUserData = (record.hashed_user_data || {}) as HashedUserData;
   const eventPayload = record.event_payload;
 
   if (record.platform === 'meta') {
-    const result = await sendToMetaCAPI(
+    return sendToMetaCAPI(
       siteConfig,
       eventPayload as unknown as MetaCAPIPayload,
       hashedUserData
     );
-    return result.success;
   }
   if (record.platform === 'ga4') {
-    const result = await sendToGA4MP(siteConfig, eventPayload as unknown as GA4Payload);
-    return result.success;
+    // Az offline GA4 láb kikapcsolt (Run 6), de a korábban DLQ-ba került ga4-
+    // rekordok leürítéséhez a retry-út megmarad.
+    return sendToGA4MP(siteConfig, eventPayload as unknown as GA4Payload);
   }
   if (record.platform === 'gads') {
     // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager
     // API-n megy, NEM a sunset uploadClickConversions-ön (az új adopternek
     // CUSTOMER_NOT_ALLOWLISTED-et ad). A retry-nak UGYANAZT az utat kell használnia.
-    const result = await sendToDataManager(
+    return sendToDataManager(
       siteConfig,
       env,
       eventPayload as unknown as GAdsPayload,
       hashedUserData
     );
-    return result.success;
   }
   if (record.platform === 'tiktok') {
-    const result = await sendToTikTok(siteConfig, eventPayload as unknown as TikTokPayload, hashedUserData);
-    return result.success;
+    return sendToTikTok(siteConfig, eventPayload as unknown as TikTokPayload, hashedUserData);
   }
   if (record.platform === 'linkedin') {
-    const result = await sendToLinkedIn(siteConfig, eventPayload as unknown as LinkedInPayload, hashedUserData);
-    return result.success;
+    return sendToLinkedIn(siteConfig, eventPayload as unknown as LinkedInPayload, hashedUserData);
   }
   if (record.platform === 'msads') {
-    const result = await sendToMsAds(siteConfig, eventPayload as unknown as MsAdsPayload, hashedUserData);
-    return result.success;
+    return sendToMsAds(siteConfig, eventPayload as unknown as MsAdsPayload, hashedUserData);
   }
-  return false;
+  return { success: false, error: `unknown platform: ${record.platform}` };
 }

@@ -36,8 +36,14 @@ export interface DeadLetterRecord {
  * (`env.DLQ`) elérhető, oda küldjük a rekordot delivery-delay backoff-fal;
  * különben visszaesünk az R2-alapú DLQ-ra (writeDeadLetter). A Queues consumer
  * a worker.ts `queue()` handlerében fut.
+ *
+ * Visszatérés: `true` CSAK akkor, ha a retry-rekord BIZTOSAN tárolva van
+ * (Queue send OK vagy R2 write OK). `false` = az event retry-példánya sehol
+ * sincs — a hívónak ilyenkor NEM szabad dispatched-nek jelölnie az eventet,
+ * különben az idempotencia a kliens-retry-t is elnyomná és az event végleg
+ * elveszne (platform-hiba + Queue-hiba + R2-hiba hármas kiesés).
  */
-export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promise<void> {
+export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promise<boolean> {
   if (env.DLQ) {
     try {
       await env.DLQ.send(record, { delaySeconds: backoffSeconds(record.retry_count) });
@@ -48,7 +54,7 @@ export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promis
         platform: record.platform,
         retry_count: record.retry_count
       });
-      return;
+      return true;
     } catch (err) {
       logStructured({
         level: 'warn',
@@ -61,7 +67,7 @@ export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promis
       // fall through to R2
     }
   }
-  await writeDeadLetter(env, record);
+  return writeDeadLetter(env, record);
 }
 
 /**

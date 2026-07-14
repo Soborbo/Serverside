@@ -34,7 +34,7 @@ head_sampling_rate = 1.0
 #     CSAK a Google Ads útvonalhoz (Meta + GA4 nélkülük is megy).
 #   - ADMIN_API_TOKEN: az admin API/UI + lead-status auth-jához (nélküle 401).
 # Opcionális: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER,
-#   ALLOWED_ORIGINS, TURNSTILE_FAILOPEN (prod-ban NE legyen "1"), QUOTE_ALARM_SECONDS
+#   ALLOWED_ORIGINS
 # Megjegyzés: a GAds OAuth access/refresh tokenek dinamikusan frissülnek →
 # szándékosan KV-ben (OAUTH_TOKENS) maradnak, NEM Secrets Store-ban.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,14 +143,17 @@ id = "f464647802e24a5dac60cacd66a9876a"
 # csak a binding tűnt el, adatot nem vesztünk. Ha véglegesen nem kell:
 #   wrangler kv namespace delete --namespace-id 36d8182879964f3caa58859c7c493645
 
-# Durable Objects — quote state (60-min upgrade window, strong consistency)
-[[durable_objects.bindings]]
-name = "QUOTE_STATE"
-class_name = "QuoteStateObject"
-
+# A quote-state Durable Object TÖRÖLVE (Run 6): a 60 perces halasztott-Lead
+# alarm némán ejthetett state-et, és üzleti indoka nem volt — egy event
+# jelentését írta át utólag. A v2 migráció törli a DO-osztályt (és vele a
+# tárolt state-et); a quote_calculator_submitted azonnal fan-outol.
 [[migrations]]
 tag = "v1"
 new_classes = ["QuoteStateObject"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["QuoteStateObject"]
 
 # R2 bucket for dead-letter queue — EU jurisdiction (GDPR P0).
 # The DLQ stores the RAW event payload (email/phone/name/address for retry), so

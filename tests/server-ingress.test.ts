@@ -184,9 +184,11 @@ describe('server-to-server ingress — acceptance', () => {
     const { env } = makeEnv(await makeSiteConfig());
     const { ctx, tasks } = collectingCtx();
 
-    // Nincs X-Admin-Token → böngésző-ág. Érvényes Turnstile-token, de spoofolt IP.
+    // Nincs X-Admin-Token → böngésző-ág. Low-risk event (a form-eventeket a
+    // böngésző-út a high-value gate miatt 403-mal dobná). Spoofolt IP a bodyban.
     await handleConversion(
       serverRequest({
+        eventName: 'phone_number_clicked',
         turnstileToken: 'valid-browser-token',
         clientIp: '203.0.113.9',
         clientUserAgent: 'Spoofed/1.0'
@@ -216,15 +218,63 @@ describe('server-to-server ingress — the browser path no longer needs a token'
   });
 
   // SZERZŐDÉS-VÁLTÁS: a Turnstile kikerült a gateway-ből (a secret a Cloudflare
-  // teszt-kulcsa volt → mindent átengedett). A böngésző-ág kapuja most az Origin.
-  it('accepts a token-less form conversion from an ALLOWED origin (no X-Admin-Token)', async () => {
+  // teszt-kulcsa volt → mindent átengedett). A böngésző-ág kapuja most az Origin —
+  // de az Origin curl-ből hamisítható, ezért a high-value (form/lead/purchase)
+  // konverziók CSAK a hitelesített szerver-ingressen jöhetnek (Fix 2).
+  it('accepts a token-less LOW-RISK click event from an ALLOWED origin (no X-Admin-Token)', async () => {
     installFetchSpy();
     const { env } = makeEnv(await makeSiteConfig());
     const { ctx, tasks } = collectingCtx();
 
-    const res = await handleConversion(serverRequest({}), env, ctx);
+    const res = await handleConversion(
+      serverRequest({ eventName: 'phone_number_clicked' }),
+      env,
+      ctx
+    );
     await Promise.all(tasks);
     expect(res.status).toBe(204);
+  });
+
+  it('403s a token-less HIGH-VALUE form conversion EVEN from an allowed origin (forged-Origin vector closed)', async () => {
+    const { calls } = installFetchSpy();
+    const { env, datapoints } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+
+    // callback_request_submitted a serverRequest default eventje — pont az az
+    // event-osztály, amit korábban curl + hamis Origin párossal lehetett lőni.
+    const res = await handleConversion(serverRequest({}), env, ctx);
+    expect(res.status).toBe(403);
+    // Meta-hívás NEM indult — a hamis konverzió nem jutott a fan-outig.
+    expect(calls.some((u) => u.includes('facebook.com'))).toBe(false);
+    const dps = datapoints.filter((d) => d.indexes?.[0] === 'conversion_total');
+    expect(dps).toHaveLength(1);
+    expect(dps[0].doubles?.[0]).toBe(0);
+    expect(dps[0].blobs).toContain(TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED);
+  });
+
+  it('accepts the SAME high-value event via the authenticated server ingress (nothing legitimate lost)', async () => {
+    const { calls } = installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+
+    const res = await handleConversion(serverRequest({ token: SITE_TOKEN }), env, ctx);
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+    expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
+  });
+
+  it('403s a legacy-alias high-value event too (canonicalization runs before the gate)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+
+    // legacy GA4 alias → canonicalizeEventName → callback_request_submitted.
+    const res = await handleConversion(
+      serverRequest({ eventName: 'callback_conversion' }),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(403);
   });
 
   it('403s the same event from a FORBIDDEN origin', async () => {
