@@ -249,6 +249,18 @@ zone_name = "beautyflow.pro"
 # pattern = "bristolcleaningheroes.co.uk/api/event/*"
 # zone_name = "bristolcleaningheroes.co.uk"
 #
+# Agykontroll UK (2026-07-14): a SITE_CONFIG KV-ban az agykontroll.co.uk + www
+# bejegyzés feltöltve (Meta/GA4 értékek egyelőre PLACEHOLDER-ek — cseréld ki éles
+# pixel_id/access_token/measurement_id/api_secret értékekre a KV-ban!). A zóna
+# még NINCS Cloudflare-en (NS: westernyoga.uk) — a domain átköltöztetése után
+# uncomment + redeploy.
+# [[routes]]
+# pattern = "agykontroll.co.uk/api/event/*"
+# zone_name = "agykontroll.co.uk"
+# [[routes]]
+# pattern = "www.agykontroll.co.uk/api/event/*"
+# zone_name = "agykontroll.co.uk"
+#
 # Hét 10: Egyéb (femkeriteslechu, ballaconsulting, painlessb2b, stb.)
 # [[routes]]
 # pattern = "femkeriteslechu.hu/api/event/*"
