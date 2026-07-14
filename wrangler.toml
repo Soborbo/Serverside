@@ -118,13 +118,16 @@ crons = [
 [[analytics_engine_datasets]]
 binding = "TRACKING_METRICS"
 
-# Email binding — Cloudflare Email Routing setup szükséges (lásd 00-pre-sprint-setup.md).
-# Sprint 1 test-deploy alatt kikommentezve — destination verify (laszlo@soborbo.com)
-# nélkül a deploy fail-elne. A kódbeli notify.ts soft-skip-pel megy ha nincs binding.
-# Sprint 8.5-ben aktiváld vissza.
-# [[send_email]]
-# name = "ADMIN_EMAIL"
-# destination_address = "laszlo@soborbo.com"
+# Email binding — AKTÍV (2026-07-14). A daily digest, a zero-conversion és a
+# konverzió-spike riasztás ezen megy ki; enélkül csak a Workers-logban ülnének.
+#
+# A cím `@soborbo.co.uk`, NEM `.com` — a `.com` nincs is ezen a Cloudflare-fiókon,
+# és a `send_email` binding csak ROUTING-domainről tud küldeni (lásd lib/notify.ts).
+# A destination_address-nek VERIFIKÁLT Email Routing destination address-nek kell
+# lennie (Compute → Email Service → Email Routing → Destination Addresses).
+[[send_email]]
+name = "ADMIN_EMAIL"
+destination_address = "laszlo@soborbo.co.uk"
 
 # KV namespaces (created via Cloudflare MCP, 2026-04-29)
 [[kv_namespaces]]

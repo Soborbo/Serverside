@@ -1,4 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// A `cloudflare:email` runtime-import elkerülése (mint fanout-isolation.test.ts-ben):
+// az admin route a /admin/test-alert óta a notify.ts-t is behúzza.
+vi.mock('../src/lib/notify', () => ({
+  sendAlert: async () => {},
+  sendAdminEmail: async () => {},
+  sendCriticalSMS: async () => {},
+  escapeHtml: (s: string) => s
+}));
+
 import { handleAdmin } from '../src/routes/admin';
 
 const TOKEN = 'admin-secret-123';

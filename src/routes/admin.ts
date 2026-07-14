@@ -11,6 +11,7 @@ import {
   type DeadLetterRecord
 } from '../lib/deadletter';
 import { retrySingle } from '../scheduled/retry';
+import { sendAdminEmail } from '../lib/notify';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 /**
@@ -85,8 +86,43 @@ export async function handleAdmin(
   if (request.method === 'GET' && path === 'health-check') {
     return handleHealthCheck(env, hostname);
   }
+  if (request.method === 'POST' && path === 'test-alert') {
+    return handleTestAlert(env);
+  }
 
   return json({ error: 'not_found' }, 404);
+}
+
+// ── POST /admin/test-alert ───────────────────────────────────────────────────
+/**
+ * Kiküld egy próba-riasztást az ADMIN_EMAIL bindingen. Azért van, mert a
+ * riasztási lánc a legcsendesebben romló dolog az egész rendszerben: a
+ * `sendAdminEmail` MINDEN hibát elnyel (catch + log), tehát egy rossz FROM-cím
+ * vagy egy nem verifikált destination úgy néz ki, mintha minden rendben lenne —
+ * egészen addig, amíg egy VALÓDI incidensnél nem érkezik meg a levél.
+ * (Pontosan ez állt fenn: a FROM `@soborbo.com` volt, ami nincs is a fiókon.)
+ *
+ * Ez a végpont teszi a láncot bármikor ellenőrizhetővé, deploy nélkül.
+ */
+async function handleTestAlert(env: Env): Promise<Response> {
+  if (!env.ADMIN_EMAIL) {
+    return json({ error: 'no_email_binding', detail: 'ADMIN_EMAIL send_email binding not bound' }, 503);
+  }
+  const stamp = new Date().toISOString();
+  await sendAdminEmail(
+    env,
+    `Test alert — alerting chain is alive (${stamp})`,
+    `<h2>Test alert</h2>
+     <p>Ha ezt olvasod, a riasztási lánc <strong>működik</strong>: Worker →
+     Cloudflare Email Routing → a postafiókod.</p>
+     <p>Ugyanezen az úton érkezik a napi digest, a „zero conversions" riasztás és a
+     konverzió-spike riasztás.</p>
+     <p><em>Kiküldve: ${stamp}</em></p>`,
+    'info'
+  );
+  // A sendAdminEmail szándékosan nem dob — a válasz azt jelenti „megkíséreltük",
+  // nem azt, hogy „kézbesítve". A bizonyíték a beérkezett levél.
+  return json({ sent: true, at: stamp, note: 'Check the inbox — send errors are logged, not thrown.' }, 200);
 }
 
 // ── GET /admin/reconciliation ────────────────────────────────────────────────

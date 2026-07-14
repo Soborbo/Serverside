@@ -3,8 +3,19 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from './error-codes';
 
-const ALERT_FROM = 'tracking-alerts@soborbo.com';
-const ADMIN_EMAIL = 'laszlo@soborbo.com';
+// FIGYELEM — mindkét cím `@soborbo.co.uk`, NEM `.com`. Két külön kényszer:
+//
+//  FROM: a Cloudflare `send_email` binding KIZÁRÓLAG a fiók ROUTING-domainjeiről
+//    tud küldeni. A soborbo.co.uk ilyen (MX = route{1,2,3}.mx.cloudflare.net);
+//    a soborbo.com nincs is ezen a Cloudflare-fiókon. A korábbi
+//    `tracking-alerts@soborbo.com` FROM-mal minden riasztás CSENDBEN elbukott
+//    volna (a send() dob, a catch lelogolja, és senki nem kap levelet).
+//
+//  TO: a binding `destination_address`-e ehhez a címhez van pinelve
+//    (wrangler.toml), és a Cloudflare csak VERIFIKÁLT destination address-re
+//    küld. Ha ezt átírod, a wrangler.toml-t is írd át — különben a send() dob.
+const ALERT_FROM = 'tracking-alerts@soborbo.co.uk';
+const ADMIN_EMAIL = 'laszlo@soborbo.co.uk';
 
 export async function sendAdminEmail(
   env: Env,
