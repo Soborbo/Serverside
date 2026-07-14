@@ -109,7 +109,7 @@ async function handleTestAlert(env: Env): Promise<Response> {
     return json({ error: 'no_email_binding', detail: 'ADMIN_EMAIL send_email binding not bound' }, 503);
   }
   const stamp = new Date().toISOString();
-  await sendAdminEmail(
+  const accepted = await sendAdminEmail(
     env,
     `Test alert — alerting chain is alive (${stamp})`,
     `<h2>Test alert</h2>
@@ -120,9 +120,21 @@ async function handleTestAlert(env: Env): Promise<Response> {
      <p><em>Kiküldve: ${stamp}</em></p>`,
     'info'
   );
-  // A sendAdminEmail szándékosan nem dob — a válasz azt jelenti „megkíséreltük",
-  // nem azt, hogy „kézbesítve". A bizonyíték a beérkezett levél.
-  return json({ sent: true, at: stamp, note: 'Check the inbox — send errors are logged, not thrown.' }, 200);
+
+  // A binding elutasítása (nem verifikált destination, rossz MIME) NEM mehet
+  // `sent: true`-ként vissza — pont ez a csendes hiba, amit ez a végpont keres.
+  if (!accepted) {
+    return json(
+      {
+        sent: false,
+        at: stamp,
+        detail: 'send_email binding rejected the message — see Workers logs for the throw'
+      },
+      502
+    );
+  }
+  // „Átvéve", nem „kézbesítve" — a végső bizonyíték továbbra is a beérkezett levél.
+  return json({ sent: true, at: stamp, note: 'Binding accepted it. Confirm arrival in the inbox.' }, 200);
 }
 
 // ── GET /admin/reconciliation ────────────────────────────────────────────────

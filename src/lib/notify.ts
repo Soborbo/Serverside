@@ -16,30 +16,71 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from './error-c
 //    küld. Ha ezt átírod, a wrangler.toml-t is írd át — különben a send() dob.
 const ALERT_FROM = 'tracking-alerts@soborbo.co.uk';
 const ADMIN_EMAIL = 'laszlo@soborbo.co.uk';
+const MESSAGE_ID_HOST = 'soborbo.co.uk';
 
+function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+// A fejléc-szekció RFC 5322 szerint CSAK ASCII lehet. A subject viszont hordozhat
+// site-nevet és magyar hibaszöveget, ezért a nem-ASCII subject RFC 2047 encoded-word
+// formában megy ki. Nyers 8-bites fejléctől a send() dob.
+function encodeSubject(s: string): string {
+  if (/^[\x20-\x7e]*$/.test(s)) return s;
+  return `=?UTF-8?B?${toBase64(new TextEncoder().encode(s))}?=`;
+}
+
+// A törzs UTF-8, de a nyers 8-bites törzs nem legális 8BITMIME nélkül — base64-ben
+// megy ki, 76 karakteres sorokra tördelve (RFC 2045).
+function encodeBody(s: string): string {
+  const b64 = toBase64(new TextEncoder().encode(s));
+  return (b64.match(/.{1,76}/g) ?? []).join('\r\n');
+}
+
+function rfc5322Date(d: Date): string {
+  return d.toUTCString().replace(/GMT$/, '+0000');
+}
+
+/**
+ * @returns true, ha a binding elfogadta a levelet. FIGYELEM: ez „átvéve", nem
+ * „kézbesítve" — de a false már biztosan baj. A hívók zöme figyelmen kívül hagyja
+ * (egy elbukott riasztás ne döntse el a konverziós utat); a /admin/test-alert
+ * viszont ezt jelenti vissza, hogy a lánc ne tudjon csendben hazudni.
+ */
 export async function sendAdminEmail(
   env: Env,
   subject: string,
   bodyHtml: string,
   level: 'critical' | 'warning' | 'info' = 'warning'
-): Promise<void> {
+): Promise<boolean> {
   if (!env.ADMIN_EMAIL) {
     logStructured({
       level: 'warn',
       message: 'ADMIN_EMAIL binding not configured',
       subject
     });
-    return;
+    return false;
   }
 
+  const fullSubject = `[${level.toUpperCase()}] ${subject}`;
   try {
-    const fullSubject = `[${level.toUpperCase()}] ${subject}`;
-    const raw =
-      `From: ${ALERT_FROM}\r\n` +
-      `To: ${ADMIN_EMAIL}\r\n` +
-      `Subject: ${fullSubject}\r\n` +
-      `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
-      bodyHtml;
+    // A Cloudflare send_email binding teljes, RFC 5322-konform üzenetet vár. A
+    // MIME-Version / Message-ID / Date hiánya miatt a send() dobott, a catch pedig
+    // elnyelte — így MINDEN riasztás csendben elveszett.
+    const raw = [
+      `From: ${ALERT_FROM}`,
+      `To: ${ADMIN_EMAIL}`,
+      `Subject: ${encodeSubject(fullSubject)}`,
+      `Message-ID: <${crypto.randomUUID()}@${MESSAGE_ID_HOST}>`,
+      `Date: ${rfc5322Date(new Date())}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/html; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      encodeBody(bodyHtml)
+    ].join('\r\n');
 
     const msg = new EmailMessage(ALERT_FROM, ADMIN_EMAIL, raw);
     await env.ADMIN_EMAIL.send(msg);
@@ -49,13 +90,15 @@ export async function sendAdminEmail(
       message: 'Admin email sent',
       subject: fullSubject
     });
+    return true;
   } catch (err) {
     logStructured({
       level: 'error',
       message: 'Failed to send admin email',
-      subject,
+      subject: fullSubject,
       error: err instanceof Error ? err.message : String(err)
     });
+    return false;
   }
 }
 
