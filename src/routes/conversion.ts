@@ -741,7 +741,9 @@ function fanOut(
   // Modell 2: NINCS GA4 és NINCS Google Ads on-site láb (a böngésző birtokolja).
   // A szerver a Google Adset kizárólag offline-ként küldi (routes/lead-status.ts).
   const metaStart = Date.now();
-  const metaPromise: Promise<MetaCAPIResult> = adAllowed
+  // Nincs `meta` blokk (még nincs CAPI access token) → a Meta-láb kimarad, no-op
+  // success: se hívás, se DLQ. A ledger így is méri, hogy a cső él (lásd config.ts).
+  const metaPromise: Promise<MetaCAPIResult> = adAllowed && siteConfig.meta
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
     : Promise.resolve({ success: true });
   const tiktokStart = Date.now();

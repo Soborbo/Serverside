@@ -325,17 +325,29 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
 
   add('site_config', 'PASS', `site_id=${siteConfig.site_id}, country=${siteConfig.country_code}`);
 
-  // Meta
-  add('meta_pixel_id', siteConfig.meta.pixel_id ? 'PASS' : 'FAIL', present(siteConfig.meta.pixel_id));
-  add('meta_access_token', siteConfig.meta.access_token ? 'PASS' : 'FAIL', present(siteConfig.meta.access_token));
-  // CLAUDE.md 17: test_event_code prod-ban Test stream-be küld → csendes hiba.
-  add(
-    'meta_test_event_code',
-    siteConfig.meta.test_event_code ? 'WARN' : 'PASS',
-    siteConfig.meta.test_event_code
-      ? 'test_event_code SET — prod konverziók a Test stream-be mennek (CLAUDE.md 17)'
-      : 'absent (correct for production)'
-  );
+  // Meta (opcionális blokk — a site be lehet kötve, mielőtt a CAPI access token
+  // elkészül; ilyenkor a Meta-láb tisztán kimarad, lásd config.ts `meta?`).
+  const meta = siteConfig.meta;
+  if (!meta) {
+    // WARN, nem FAIL: a cső él és a ledger mér, de a Metához NEM megy konverzió.
+    // Ez pontosan az az állapot, amit nem szabad „zöldnek" hinni.
+    add(
+      'meta_config',
+      'WARN',
+      'no meta block — a Meta CAPI leg is SKIPPED (add pixel_id + access_token to KV to enable it; no redeploy needed)'
+    );
+  } else {
+    add('meta_pixel_id', meta.pixel_id ? 'PASS' : 'FAIL', present(meta.pixel_id));
+    add('meta_access_token', meta.access_token ? 'PASS' : 'FAIL', present(meta.access_token));
+    // CLAUDE.md 17: test_event_code prod-ban Test stream-be küld → csendes hiba.
+    add(
+      'meta_test_event_code',
+      meta.test_event_code ? 'WARN' : 'PASS',
+      meta.test_event_code
+        ? 'test_event_code SET — prod konverziók a Test stream-be mennek (CLAUDE.md 17)'
+        : 'absent (correct for production)'
+    );
+  }
 
   // GA4 (optional — a migration site may omit the ga4 block; the gateway then
   // skips the MP leg so its browser GA4 isn't double-counted).

@@ -8,7 +8,16 @@ export interface SiteConfig {
   // is kibocsát, a szűkebb típus hazudott volna (a runtime cast eddig elfedte).
   country_code: 'GB' | 'HU' | 'EU' | 'US' | 'DE' | 'FR' | 'IT' | 'ES';
   currency: string;
-  meta: {
+  // Optional, exactly like `ga4` below: a site can be onboarded BEFORE its Meta CAPI
+  // access token exists (the token is minted by hand in Events Manager, so it always
+  // lags the wiring). Absent → the Meta CAPI leg is skipped cleanly.
+  //
+  // The alternative — a placeholder token — is actively harmful: every conversion
+  // would 401 at Meta, fill the DLQ and fire alerts, i.e. a site that looks broken
+  // rather than one that is simply not finished. With the block absent, the ledger
+  // still measures that the pipe works end-to-end, and the Meta leg lights up the
+  // moment the token is added to KV (no redeploy).
+  meta?: {
     pixel_id: string;
     access_token: string;
     test_event_code?: string | null;
@@ -52,6 +61,13 @@ export interface SiteConfig {
   // (operator-default a még-nem-kiadott site-okhoz). Lásd routes/lead-status.ts +
   // az onboarding generate-site.mjs token-generálását.
   crm_token_sha256?: string;
+
+  // `false` → a site KIMARAD a napi digest / zero-conversion riasztásból (a fan-out
+  // és a ledger változatlanul működik). Nem-produkciós configokhoz: deploy-smoke
+  // dummy, félkész placeholder-pixeles site. Ezek sosem konvertálnak, tehát MINDEN
+  // nap „0 konverzió" CRITICAL riasztást adnának — a riasztás-fáradtság pedig pont
+  // azt a néma hibát fedné el, amiért a lánc létezik. Hiányzó/true → figyelve.
+  monitoring?: boolean;
 }
 
 /**
@@ -152,6 +168,12 @@ export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
       const page = await env.SITE_CONFIG.list({ limit: 1000, cursor });
       for (const k of page.keys) {
         const cfg = await env.SITE_CONFIG.get<SiteConfig>(k.name, { type: 'json' });
+        // `monitoring: false` → kimarad a napi digest / zero-conversion riasztásból.
+        // Ez NEM kozmetika: egy soha-nem-konvertáló config (placeholder pixel, deploy-
+        // smoke dummy) MINDEN nap „0 konverzió" CRITICAL riasztást szülne, és két hét
+        // alatt megtanulnánk figyelmen kívül hagyni a digestet — vagyis pont az a néma
+        // hiba maradna észrevétlen, amiért az egész riasztási lánc létezik.
+        if (cfg?.monitoring === false) continue;
         if (cfg?.site_id) siteIds.add(cfg.site_id);
       }
       if (page.list_complete) break;

@@ -62,7 +62,16 @@ export async function sendToMetaCAPI(
   hashedUserData: HashedUserData
 ): Promise<MetaCAPIResult> {
   const startedAt = Date.now();
-  const url = `https://graph.facebook.com/${META_API_VERSION}/${siteConfig.meta.pixel_id}/events`;
+
+  // Nincs `meta` blokk (a site be van kötve, de a CAPI access token még nincs
+  // kiállítva) → tiszta skip. NEM hiba: se hívás, se DLQ, se riasztás. A hívók is
+  // őrzik, ez a második védvonal (lásd config.ts `meta?`).
+  const meta = siteConfig.meta;
+  if (!meta) {
+    return { success: true };
+  }
+
+  const url = `https://graph.facebook.com/${META_API_VERSION}/${meta.pixel_id}/events`;
 
   // hashedUserData már tartalmazza az external_id-t (hash-elve), ha a kliens
   // küldte — a spread automatikusan beemeli a Meta user_data-ba.
@@ -93,7 +102,7 @@ export async function sendToMetaCAPI(
 
   const body: Record<string, unknown> = {
     data: [event],
-    access_token: siteConfig.meta.access_token
+    access_token: meta.access_token
   };
 
   // CCPA Limited Data Use — kötelező US-traffic opt-out kezeléséhez.
@@ -111,7 +120,7 @@ export async function sendToMetaCAPI(
   // A per-request kód ELŐBBRE való a KV-confignál: így egy szintetikus proof-event
   // determinisztikusan a Test stream-be megy, anélkül hogy az élő site-configot
   // (és vele a valódi leadek útját) módosítanánk. Lásd types.ts test_event_code.
-  const testEventCode = payload.test_event_code || siteConfig.meta.test_event_code;
+  const testEventCode = payload.test_event_code || meta.test_event_code;
   if (testEventCode) {
     body.test_event_code = testEventCode;
   }
@@ -142,6 +151,11 @@ export async function sendToMetaCAPI(
         event_name: payload.event_name,
         events_received: responseBody.events_received,
         fbtrace_id: responseBody.fbtrace_id,
+        // Melyik stream-be ment: Test vagy PRODUCTION. Enélkül a CLAUDE.md 17
+        // csendes hibája (bent felejtett test_event_code → minden konverzió a Test
+        // stream-be) csak hetekkel később, a hiányzó riportokból derül ki — és egy
+        // szintetikus proof-event Test-voltát sem lehet bizonyítani, csak hinni.
+        test_event: Boolean(testEventCode),
         duration_ms: Date.now() - startedAt
       });
       return {

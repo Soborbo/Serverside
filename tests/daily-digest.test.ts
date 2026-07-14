@@ -92,3 +92,29 @@ describe('collectAcceptedCounts', () => {
     expect(zeroSites).toEqual([]);
   });
 });
+
+/**
+ * A `monitoring: false` config kimarad a zero-conversion riasztásból. Enélkül egy
+ * soha-nem-konvertáló (placeholder / deploy-smoke) config MINDEN nap CRITICAL
+ * riasztást adna, és a digest két hét alatt zajjá válna — a néma hiba pedig, amiért
+ * az egész lánc létezik, észrevétlen maradna.
+ */
+describe('monitoring opt-out', () => {
+  it('a monitoring:false site nem kerül a figyelt site_id-k közé', async () => {
+    const { listConfiguredSiteIds } = await import('../src/lib/config');
+    const store: Record<string, unknown> = {
+      'painlessremovals.com': { site_id: 'painless' },
+      'agykontroll.co.uk': { site_id: 'agykontroll', monitoring: false },
+      'event-gateway.golaxo.workers.dev': { site_id: 'test-painless', monitoring: false }
+    };
+    const env = {
+      SITE_CONFIG: {
+        list: async () => ({ keys: Object.keys(store).map((name) => ({ name })), list_complete: true }),
+        get: async (k: string) => store[k] ?? null
+      }
+    } as unknown as Parameters<typeof listConfiguredSiteIds>[0];
+
+    const ids = await listConfiguredSiteIds(env);
+    expect([...ids]).toEqual(['painless']);
+  });
+});
