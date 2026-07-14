@@ -241,6 +241,60 @@ describe('server-to-server ingress — the browser path no longer needs a token'
   });
 });
 
+// A WAF rate-limiting szabály (Free plan) CSAK a `Path` mezőt tudja matchelni,
+// ezért a hitelesített money-path-ot egy KÜLÖN útvonal veszi ki alóla:
+// /api/event/conversion-server. Ez a kivétel viszont csak akkor biztonságos, ha az
+// az útvonal NEM nyitott a böngésző előtt — különben bárki odaposztolna hamisított
+// Origin-nel, és a limitet triviálisan megkerülné. Ezt zárják le az alábbiak.
+describe('server-only route (WAF-exempt path) is not a back door', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('accepts a valid per-site token', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+
+    const res = await handleConversion(
+      serverRequest({ token: SITE_TOKEN, origin: null }),
+      env,
+      ctx,
+      { serverOnly: true }
+    );
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+  });
+
+  it('401s a token-less request EVEN FROM AN ALLOWED ORIGIN (no browser fallback)', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+
+    // Ugyanez a kérés a böngésző-úton 204 lenne. Itt 401 — különben a
+    // rate-limit-kivétel ingyen bypass lenne.
+    const res = await handleConversion(serverRequest({}), env, ctx, { serverOnly: true });
+    expect(res.status).toBe(401);
+  });
+
+  it('401s the GLOBAL operator token here too', async () => {
+    installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx } = collectingCtx();
+
+    const res = await handleConversion(serverRequest({ token: GLOBAL_TOKEN }), env, ctx, {
+      serverOnly: true
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('server-to-server ingress — tenant isolation (no global bypass)', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => {});

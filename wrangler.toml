@@ -71,13 +71,26 @@ head_sampling_rate = 1.0
 # Valószínű ok: a számláló per-instance/per-colo, és a kérések szétszóródnak — így
 # alacsony limitnél gyakorlatilag sosem trippel.
 #
-# KÖVETKEZMÉNY: a Turnstile eltávolítása után a böngésző-ág EGYETLEN valóban
-# működő kontrollja az Origin allow-list (lib/origin.ts) + a body-cap + az
-# event-név allow-list + az idempotencia. Konverzió-spam ellen (hamisított Origin,
-# szkriptelt kliens) JELENLEG NINCS mennyiségi korlát. A pótlás emberi döntést
-# igényel — lásd a PR „Residual risk" szakaszát. A javasolt megoldás egy zóna-
-# szintű Cloudflare WAF rate-limiting rule (ez a platform valódi terméke, az
-# edge-en fut), NEM ez a binding.
+# A VALÓDI mennyiségi kontroll ezért egy ZÓNA-SZINTŰ WAF rate-limiting rule, ami az
+# edge-en fut (ez a platform tényleges terméke). KÉZZEL kell felvenni — a wrangler
+# OAuth-tokenje nem éri el a Rulesets API-t. Zónánként (painlessremovals.com,
+# beautyflow.pro), Free plan:
+#
+#   PUT /zones/{ZONE_ID}/rulesets/phases/http_ratelimit/entrypoint
+#   { "rules": [{
+#       "description": "Gateway conversion ingress — per-IP rate limit",
+#       "expression": "(http.request.uri.path eq \"/api/event/conversion\")",
+#       "action": "block",
+#       "ratelimit": { "characteristics": ["ip.src","cf.colo.id"],
+#                      "period": 10, "requests_per_period": 10, "mitigation_timeout": 10 }
+#   }] }
+#
+# FIGYELD MEG a path-ot: CSAK a böngésző-utat matcheli. A hitelesített szerver-
+# ingress a KÜLÖN `/api/event/conversion-server` úton megy (worker.ts), így a
+# szabály nem érinti — ez a money-path mentesítése. Azért kellett külön ÚTVONAL,
+# mert a Free plan rate-limiting rule-ja CSAK a `Path` mezőt engedi a match-
+# kifejezésben (header-mezőt, pl. X-Admin-Token-t, NEM). A szerver-út érvényes
+# per-site token nélkül 401 → a mentesítés nem hátsó ajtó.
 #
 # A bindinget SZÁNDÉKOSAN bent hagyjuk: nem árt, a kód guardolt, és ha a platform
 # viselkedése változik, azonnal él. De NE tekintsd működő kontrollnak.

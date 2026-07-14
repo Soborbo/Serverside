@@ -127,10 +127,22 @@ function rateLimited(env: Env, hostname: string, cors: HeadersInit, startedAt: n
   return new Response(null, { status: 429, headers: cors });
 }
 
+export interface ConversionRouteOptions {
+  /**
+   * `/api/event/conversion-server` — a WAF rate-limiting szabály alól KIVETT
+   * útvonal (Free planen a Path az egyetlen matchelhető mező). Épp ezért itt
+   * érvényes per-site token NÉLKÜL nincs belépés: böngésző-fallback nélkül 401.
+   * Enélkül a kivétel egy nyitott hátsó ajtó lenne — bárki ide posztolna
+   * hamisított Origin-nel, és a limitet triviálisan megkerülné.
+   */
+  serverOnly?: boolean;
+}
+
 export async function handleConversion(
   request: Request,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  options: ConversionRouteOptions = {}
 ): Promise<Response> {
   const startedAt = Date.now();
   const url = new URL(request.url);
@@ -276,7 +288,13 @@ export async function handleConversion(
   // A böngésző-ág (token nélküli/érvénytelen POST) posture-je VÁLTOZATLAN: aki
   // nem hoz érvényes per-site tokent, az pontosan a régi Turnstile-kapun megy át.
   const serverAuth = await authenticateServerIngress(request, siteConfig);
-  if (serverAuth === 'invalid') {
+
+  // A szerver-only útvonalon (WAF-mentesített) a hiányzó token ugyanolyan
+  // elutasítás, mint a rossz: ide böngésző NEM léphet be, különben a
+  // rate-limit-kivétel megkerülhető lenne egy hamisított Origin-nel.
+  const serverOnlyReject = options.serverOnly && serverAuth !== 'valid';
+
+  if (serverAuth === 'invalid' || serverOnlyReject) {
     // Jelen lévő, de rossz token → 401. NEM esünk vissza a böngésző-ágra: az
     // elnyelné a misconfigot (rossz secret → csendes „forbidden origin"-ként).
     //

@@ -52,8 +52,25 @@ export default {
         return handleOAuthDebug(request, env);
       }
 
+      // Böngésző-ág. Ezt az utat KELL a zóna WAF rate-limiting szabályának
+      // matchelnie (`http.request.uri.path eq "/api/event/conversion"`).
       if (request.method === 'POST' && url.pathname === '/api/event/conversion') {
         return handleConversion(request, env, ctx);
+      }
+
+      // Szerver-szerver ingress — KÜLÖN ÚTVONALON, hogy a WAF-szabály alól
+      // kivehető legyen. A Free plan rate-limiting rule-ja CSAK a `Path` mezőt
+      // engedi a match-kifejezésben (header-mezőt nem), tehát a hitelesített
+      // money-path-ot másképp nem lehet mentesíteni — és mentesíteni KELL: az a
+      // site backendjéből, EGYETLEN egress-IP-ről jön, így egy IP-kulcsos limit
+      // pont a pénzt jelentő konverziókat dobná el.
+      //
+      // A mentesítés ára, hogy ez az út NEM lehet nyitva a böngésző előtt:
+      // különben egy támadó ide posztolna hamisított Origin-nel, és a WAF-limitet
+      // triviálisan megkerülné. Ezért `serverOnly: true` → érvényes per-site token
+      // nélkül 401, böngésző-fallback NINCS.
+      if (request.method === 'POST' && url.pathname === '/api/event/conversion-server') {
+        return handleConversion(request, env, ctx, { serverOnly: true });
       }
 
       // CRM offline-loop — lead lifecycle státuszok → Enhanced Conversions for
