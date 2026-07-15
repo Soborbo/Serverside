@@ -118,3 +118,76 @@ describe('monitoring opt-out', () => {
     expect([...ids]).toEqual(['painless']);
   });
 });
+
+// ── Napi synthetic smoke-lead ellenőrzés (Run 6 utó) ──────────────────────────
+
+import { collectSmokeStatus } from '../src/scheduled/daily-digest';
+
+function makeSmokeLedger(
+  rows: Array<{ site_id: string; status: string; error_code: string | null }> | Error
+) {
+  return {
+    prepare: () => ({
+      bind: () => ({
+        all: async () => {
+          if (rows instanceof Error) throw rows;
+          return { results: rows };
+        }
+      })
+    })
+  };
+}
+
+describe('collectSmokeStatus — a füstteszt másnapi őre', () => {
+  it('minden elvárt site landolt (accepted VAGY skipped) → nincs riasztás', async () => {
+    const env: any = {
+      SMOKE_SITES: 'painless,beautyflow,lomtalan',
+      LEDGER: makeSmokeLedger([
+        { site_id: 'painless', status: 'accepted', error_code: null },
+        { site_id: 'beautyflow', status: 'accepted', error_code: null },
+        // lomtalan: nincs meta config → a smoke Meta-lába szándékos skip. Ez OK.
+        { site_id: 'lomtalan', status: 'skipped', error_code: null }
+      ])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.missing).toEqual([]);
+    expect(s.broken).toEqual([]);
+  });
+
+  it('hiányzó smoke-sor → missing (a site cron→gateway lánc nem futott le)', async () => {
+    const env: any = {
+      SMOKE_SITES: 'painless,beautyflow',
+      LEDGER: makeSmokeLedger([{ site_id: 'painless', status: 'accepted', error_code: null }])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.missing).toEqual(['beautyflow']);
+  });
+
+  it("rejected Meta-láb → broken, a vendor-hibakóddal", async () => {
+    const env: any = {
+      SMOKE_SITES: 'painless',
+      LEDGER: makeSmokeLedger([
+        { site_id: 'painless', status: 'rejected', error_code: 'TRK-600-004' }
+      ])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.broken).toEqual([{ site: 'painless', error_code: 'TRK-600-004' }]);
+    expect(s.missing).toEqual([]);
+  });
+
+  it('query-hiba → üres missing/broken (nincs hamis riasztás minden site-ra)', async () => {
+    const env: any = {
+      SMOKE_SITES: 'painless,beautyflow',
+      LEDGER: makeSmokeLedger(new Error('D1 down'))
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.missing).toEqual([]);
+    expect(s.broken).toEqual([]);
+  });
+
+  it('SMOKE_SITES nélkül a check kikapcsolt', async () => {
+    const s = await collectSmokeStatus({ LEDGER: makeSmokeLedger([]) } as any);
+    expect(s.expected).toEqual([]);
+    expect(s.missing).toEqual([]);
+  });
+});

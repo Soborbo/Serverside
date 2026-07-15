@@ -15,6 +15,15 @@ main = "src/worker.ts"
 compatibility_date = "2026-06-25"
 compatibility_flags = ["nodejs_compat"]
 account_id = "075668606da58c5b96a45a075f1ca99c"
+# A dashboardon kézzel beállított plain varok maradjanak meg deploykor is —
+# enélkül a lenti [vars] blokk kizárólagos forrás lenne, és a deploy törölné őket.
+keep_vars = true
+
+[vars]
+# Napi synthetic-lead füstteszt (site workerek 04:4x UTC cronjai) elvárt site-jai.
+# A daily digest (08:00) riaszt, ha bármelyiknek NINCS smoke- prefixű delivery-
+# sora az elmúlt 24 órából, vagy a Meta-lába 'rejected'. Vesszővel bővíthető.
+SMOKE_SITES = "painless,beautyflow,lomtalan"
 
 [observability]
 enabled = true

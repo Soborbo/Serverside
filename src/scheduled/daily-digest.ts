@@ -47,9 +47,63 @@ export async function collectAcceptedCounts(
   return { counts, zeroSites };
 }
 
+export interface SmokeStatus {
+  /** Az SMOKE_SITES-ban elvárt site-ok. Üres → a check kikapcsolt. */
+  expected: string[];
+  /** Elvárt site, aminek NINCS smoke- prefixű delivery-sora az elmúlt 24 órából. */
+  missing: string[];
+  /** Smoke-sor van, de a Meta-lába 'rejected' — a lánc él, a vendor-hívás bukik. */
+  broken: { site: string; error_code: string | null }[];
+}
+
+/**
+ * Napi synthetic-lead füstteszt ellenőrzése (#Run6 utó). A site workerek 04:4x
+ * UTC-kor determinisztikus `smoke-<site>-YYYYMMDD` eventet tolnak át a teljes
+ * szerver-láncon; itt (08:00) azt nézzük, hogy MINDEN elvárt site-nak landolt-e
+ * sora a ledgerben. A 'skipped' Meta-láb OK (szándékosan meta-nélküli site,
+ * pl. lomtalan amíg nincs CAPI token); a 'rejected' és a HIÁNYZÓ sor riasztás.
+ * Query-hiba → üres missing (nem riasztunk falsot minden site-ra).
+ */
+export async function collectSmokeStatus(env: Env): Promise<SmokeStatus> {
+  const expected = (env.SMOKE_SITES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const status: SmokeStatus = { expected, missing: [], broken: [] };
+  if (!env.LEDGER || expected.length === 0) return status;
+
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const rows = await env.LEDGER.prepare(
+      `SELECT site_id, status, error_code FROM deliveries
+       WHERE created_at >= ? AND platform = 'meta' AND event_id LIKE 'smoke-%'`
+    )
+      .bind(since)
+      .all<{ site_id: string; status: string; error_code: string | null }>();
+
+    const bySite = new Map<string, { status: string; error_code: string | null }>();
+    for (const r of rows.results ?? []) bySite.set(r.site_id, r);
+
+    for (const site of expected) {
+      const row = bySite.get(site);
+      if (!row) status.missing.push(site);
+      else if (row.status === 'rejected') status.broken.push({ site, error_code: row.error_code });
+    }
+  } catch (err) {
+    logStructured({
+      level: 'warn',
+      message: 'Daily digest: smoke-status query failed',
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  return status;
+}
+
 export async function handleDailyDigest(env: Env): Promise<void> {
   const siteCount = await countSiteConfigs(env);
   const { counts: acceptedCounts, zeroSites } = await collectAcceptedCounts(env);
+  const smoke = await collectSmokeStatus(env);
+  const smokeAlarm = smoke.missing.length > 0 || smoke.broken.length > 0;
 
   let totalDlqRecords = 0;
   let totalDeadRecords = 0;
@@ -102,6 +156,25 @@ export async function handleDailyDigest(env: Env): Promise<void> {
         : ''
     }
 
+    <h3>Synthetic smoke leads (last 24h)</h3>
+    ${
+      smoke.expected.length === 0
+        ? '<p>check disabled (no SMOKE_SITES)</p>'
+        : smokeAlarm
+          ? `<p><strong>⚠️ ${
+              smoke.missing.length > 0
+                ? `NO smoke event from: ${smoke.missing.join(', ')} — the site cron→gateway chain did not run or did not land. `
+                : ''
+            }${
+              smoke.broken.length > 0
+                ? `Meta REJECTED the smoke event for: ${smoke.broken
+                    .map((b) => `${b.site} (${b.error_code ?? 'no code'})`)
+                    .join(', ')}.`
+                : ''
+            }</strong></p>`
+          : `<p>✓ all expected sites delivered (${smoke.expected.join(', ')})</p>`
+    }
+
     <h3>Dead Letter Queue</h3>
     <ul>
       <li>Pending retries: ${totalDlqRecords}${truncated ? ' (≥10000 — list truncated)' : ''}</li>
@@ -126,11 +199,23 @@ export async function handleDailyDigest(env: Env): Promise<void> {
       sites: zeroSites.join(',')
     });
   }
+  if (smokeAlarm) {
+    logStructured({
+      level: 'error',
+      message: 'Daily digest: synthetic smoke-lead check FAILED',
+      missing: smoke.missing.join(','),
+      broken: smoke.broken.map((b) => `${b.site}:${b.error_code ?? '-'}`).join(',')
+    });
+  }
 
+  const alarmBits = [
+    ...(smokeAlarm ? [`smoke failed: ${[...smoke.missing, ...smoke.broken.map((b) => b.site)].join(', ')}`] : []),
+    ...(zeroSites.length > 0 ? [`zero conversions: ${zeroSites.join(', ')}`] : [])
+  ];
   await sendAdminEmail(
     env,
-    zeroSites.length > 0 ? `Daily Digest — ⚠️ zero conversions: ${zeroSites.join(', ')}` : 'Daily Digest',
+    alarmBits.length > 0 ? `Daily Digest — ⚠️ ${alarmBits.join(' | ')}` : 'Daily Digest',
     html,
-    zeroSites.length > 0 ? 'warning' : 'info'
+    alarmBits.length > 0 ? 'warning' : 'info'
   );
 }

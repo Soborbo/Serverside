@@ -56,6 +56,10 @@ export interface Env {
   // to the request hostname (workers.dev in test mode).
   ALLOWED_ORIGINS?: string;
 
+  // A napi synthetic-lead füstteszt elvárt site-jai (vesszővel elválasztva).
+  // A daily digest riaszt, ha bármelyiknek nincs friss smoke-sora a ledgerben.
+  SMOKE_SITES?: string;
+
 
 
 
