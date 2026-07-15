@@ -56,20 +56,20 @@ head_sampling_rate = 1.0
 #   3) vedd ki a kommentből az alábbi 3 blokkot + redeploy
 #   4) (opcionális) a lenti [triggers] cron DLQ-sora elhagyható Queues-módban
 #
-# [[queues.producers]]
-# binding = "DLQ"
-# queue = "event-gateway-dlq"
-#
-# [[queues.consumers]]
-# queue = "event-gateway-dlq"
-# max_batch_size = 10
-# max_batch_timeout = 30
-# # A worker.ts queue() handler maga kezeli a kimerülést (R2 'dead' archívum a
-# # MAX_RETRIES=3 utáni 4. kézbesítésnél). Ezért a platform max_retries-t
-# # MAGASABBRA állítjuk (>=4), hogy ne előzze meg a worker logikáját; a
-# # dead_letter_queue csak végső biztonsági háló (a kanonikus dead store az R2).
-# max_retries = 5
-# dead_letter_queue = "event-gateway-dlq-dead"
+[[queues.producers]]
+binding = "DLQ"
+queue = "event-gateway-dlq"
+
+[[queues.consumers]]
+queue = "event-gateway-dlq"
+max_batch_size = 10
+max_batch_timeout = 30
+# A worker.ts queue() handler maga kezeli a kimerülést (R2 'dead' archívum a
+# MAX_RETRIES=3 utáni 4. kézbesítésnél). Ezért a platform max_retries-t
+# MAGASABBRA állítjuk (>=4), hogy ne előzze meg a worker logikáját; a
+# dead_letter_queue csak végső biztonsági háló (a kanonikus dead store az R2).
+max_retries = 5
+dead_letter_queue = "event-gateway-dlq-dead"
 
 # ── Rate Limiting binding az ingestion végponton ─────────────────────────────
 # ⚠️ MÉRT TÉNY (2026-07-14): EZ A BINDING NEM KORLÁTOZ. Bizonyítva a live
