@@ -262,8 +262,9 @@ ${cfg.meta.test_event_code ? '- [ ] ⚠️ test_event_code KIVÉVE a KV-ből él
 
 ## Astro site oldal
 - [ ] client-lib/ (worker-tracking.ts + uuid.ts) bemásolva az Astro projekt src/lib/-jébe
-- [ ] PUBLIC_TURNSTILE_SITE_KEY beállítva (.env) + Turnstile invisible widget az oldalon
-      (\`<div id="cf-turnstile-invisible">\`)
+- [ ] Böngésző-út: a gateway Origin allow-listtel kapuz — Turnstile NEM kell a tracking
+      miatt (Run 6 kivette a gateway-ből). Ha a site a saját formját védi Turnstile-lal,
+      az független ettől.
 - [ ] CookieYes (GTM-ből) aktív → a consent automatikusan a cookieyes-consent cookie-ból jön
 - [ ] BÖNGÉSZŐ konverziós pontokon (klikk-eventek): \`trackConversion('<event_name>', { value, currency, user_data })\`
       Böngésző-úton engedett event-nevek: ${BROWSER_EVENT_NAMES.join(', ')}
