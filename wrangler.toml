@@ -284,17 +284,21 @@ zone_name = "beautyflow.pro"
 # pattern = "bristolcleaningheroes.co.uk/api/event/*"
 # zone_name = "bristolcleaningheroes.co.uk"
 #
-# Agykontroll UK (2026-07-14): a SITE_CONFIG KV-ban az agykontroll.co.uk + www
-# bejegyzés feltöltve (Meta/GA4 értékek egyelőre PLACEHOLDER-ek — cseréld ki éles
-# pixel_id/access_token/measurement_id/api_secret értékekre a KV-ban!). A zóna
-# még NINCS Cloudflare-en (NS: westernyoga.uk) — a domain átköltöztetése után
-# uncomment + redeploy.
-# [[routes]]
-# pattern = "agykontroll.co.uk/api/event/*"
-# zone_name = "agykontroll.co.uk"
-# [[routes]]
-# pattern = "www.agykontroll.co.uk/api/event/*"
-# zone_name = "agykontroll.co.uk"
+# Agykontroll UK — AKTÍV (2026-07-16). A zóna átkerült a Cloudflare-re, a route-ok
+# élnek a workeren (/api/event/health → 200 mindkét hoston); itt szinkronizálva,
+# hogy egy repo-állapotú deploy ne dobja el őket.
+# SITE_CONFIG KV: agykontroll.co.uk + www (site_id: agykontroll, GB/GBP,
+# require_consent: true). A `meta` és `ga4` blokk SZÁNDÉKOSAN hiányzik, amíg nincs
+# éles Meta CAPI access_token — a config.ts szerint a placeholder token 401-et adna
+# a Metánál, megtöltené a DLQ-t és riasztásokat lőne. Így a CAPI-ág tisztán kimarad;
+# a böngésző-oldali Meta Pixel (1114983601859742) és a GA4 (G-TTZEYC461Q) a GTM-ből
+# megy. A CAPI élesítése = a `meta` blokk beírása a KV-ba.
+[[routes]]
+pattern = "agykontroll.co.uk/api/event/*"
+zone_name = "agykontroll.co.uk"
+[[routes]]
+pattern = "www.agykontroll.co.uk/api/event/*"
+zone_name = "agykontroll.co.uk"
 #
 # Hét 10: Egyéb (femkeriteslechu, ballaconsulting, painlessb2b, stb.)
 # [[routes]]
