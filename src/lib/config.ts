@@ -62,6 +62,22 @@ export interface SiteConfig {
   // az onboarding generate-site.mjs token-generálását.
   crm_token_sha256?: string;
 
+  // Napi cross-platform reconciliation (lib/cross-check.ts): a ledger event-
+  // count-jait veti össze a GA4 Data API és a Google Ads API aznapi számaival.
+  // Hiányzó blokk → a site kimarad a cross-checkből (a ledger-belső recon fut
+  // tovább). Mindkét leg a `gads.customer_id`-hez tárolt OAuth-tokent használja.
+  recon?: {
+    // GA4 Data API NUMERIKUS property ID (pl. "453881143") — NEM a G-XXX
+    // measurement id. Az analytics.readonly scope-ot a 2026-07-16 utáni
+    // re-consent adja (oauth-init.ts); régi tokennel a leg logolt-skip.
+    ga4_property_id?: string;
+    // internal event_name → az ON-SITE (böngésző/GTM-gtag) Google Ads conversion
+    // action NEVE, ahogy a fiókban látszik (pl. "Callback requested"). NEM
+    // azonos a gads.conversion_actions-szel — az az OFFLINE (lead-status → Data
+    // Manager) célok ID-térképe, ez a böngésző-ág auditjáé.
+    gads_onsite_actions?: Record<string, string>;
+  };
+
   // `false` → a site KIMARAD a napi digest / zero-conversion riasztásból (a fan-out
   // és a ledger változatlanul működik). Nem-produkciós configokhoz: deploy-smoke
   // dummy, félkész placeholder-pixeles site. Ezek sosem konvertálnak, tehát MINDEN
@@ -155,13 +171,14 @@ export async function countSiteConfigs(env: Env): Promise<number> {
 }
 
 /**
- * A konfigurált site_id-k halmaza (www/apex dedup a config JSON `site_id`-ján).
- * A daily-digest zero-accepted ellenőrzése használja. Hibatűrő: KV-hiba esetén
- * az addig összegyűjtött halmazt adja vissza (a riasztás inkább maradjon el,
- * mint hogy fals pozitívot adjon részleges lista miatt).
+ * A monitorozott site-configok listája, site_id-n dedupolva (a www/apex kulcsok
+ * ugyanarra a configra mutatnak — az első találat nyer). A daily-digest és a
+ * cross-platform reconciliation használja. Hibatűrő: KV-hiba esetén az addig
+ * összegyűjtött listát adja vissza (a riasztás inkább maradjon el, mint hogy
+ * fals pozitívot adjon részleges lista miatt).
  */
-export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
-  const siteIds = new Set<string>();
+export async function listMonitoredSiteConfigs(env: Env): Promise<SiteConfig[]> {
+  const bySiteId = new Map<string, SiteConfig>();
   try {
     let cursor: string | undefined;
     for (;;) {
@@ -174,7 +191,7 @@ export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
         // alatt megtanulnánk figyelmen kívül hagyni a digestet — vagyis pont az a néma
         // hiba maradna észrevétlen, amiért az egész riasztási lánc létezik.
         if (cfg?.monitoring === false) continue;
-        if (cfg?.site_id) siteIds.add(cfg.site_id);
+        if (cfg?.site_id && !bySiteId.has(cfg.site_id)) bySiteId.set(cfg.site_id, cfg);
       }
       if (page.list_complete) break;
       cursor = page.cursor;
@@ -187,7 +204,16 @@ export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
       error: err instanceof Error ? err.message : String(err)
     });
   }
-  return siteIds;
+  return [...bySiteId.values()];
+}
+
+/**
+ * A konfigurált site_id-k halmaza (www/apex dedup a config JSON `site_id`-ján).
+ * A daily-digest zero-accepted ellenőrzése használja.
+ */
+export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
+  const configs = await listMonitoredSiteConfigs(env);
+  return new Set(configs.map((c) => c.site_id));
 }
 
 export async function getSiteConfig(hostname: string, env: Env): Promise<SiteConfig | null> {

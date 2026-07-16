@@ -23,6 +23,10 @@ keep_vars = true
 # Napi synthetic-lead füstteszt (site workerek 04:4x UTC cronjai) elvárt site-jai.
 # A daily digest (08:00) riaszt, ha bármelyiknek NINCS smoke- prefixű delivery-
 # sora az elmúlt 24 órából, vagy a Meta-lába 'rejected'. Vesszővel bővíthető.
+# MEGJEGYZÉS: a lomtalan ITT szerepel, de LENT a [[routes]]-ban NINCS — ez nem
+# ellentmondás: a lomtalan-weboldal worker SERVICE BINDINGON hívja a gateway-t
+# (szerver-ingress), zóna-route nélkül. A SMOKE_SITES a ledger-oldali elvárást
+# írja le, nem a routing-ot.
 SMOKE_SITES = "painless,beautyflow,lomtalan"
 
 [observability]
@@ -299,6 +303,17 @@ zone_name = "agykontroll.co.uk"
 [[routes]]
 pattern = "www.agykontroll.co.uk/api/event/*"
 zone_name = "agykontroll.co.uk"
+#
+# Lomtalan — SZÁNDÉKOSAN nincs route: a lomtalan-weboldal worker service
+# bindingon hívja a gateway-t (a same-zone route fetch-et a Cloudflare loop-
+# védelme rövidre zárná). Böngésző-út (tokenless klikk-eventek) jelenleg nincs
+# bekötve a lomtalanon; ha lesz, ide kell a route + SITE_CONFIG kulcs már van.
+# [[routes]]
+# pattern = "lomtalan.hu/api/event/*"
+# zone_name = "lomtalan.hu"
+# [[routes]]
+# pattern = "www.lomtalan.hu/api/event/*"
+# zone_name = "lomtalan.hu"
 #
 # Hét 10: Egyéb (femkeriteslechu, ballaconsulting, painlessb2b, stb.)
 # [[routes]]

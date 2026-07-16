@@ -5,11 +5,15 @@ import { issueOAuthState } from '../lib/oauth-state';
 const GOOGLE_OAUTH_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 // Data Manager API (offline conversions / ECL via lib/datamanager.ts) needs the
 // `datamanager` scope. `adwords` is kept for the dormant uploadClickConversions
-// path + general Google Ads access. Space-separated → one consent grants both.
-// NOTE: existing refresh tokens minted before this change are adwords-only and
-// must be re-consented (re-run /api/event/oauth-init) to gain datamanager.
+// path + general Google Ads access (the cross-check GAQL also rides on it).
+// `analytics.readonly` (added 2026-07-16) feeds the daily cross-platform
+// reconciliation GA4 leg (lib/cross-check.ts). Space-separated → one consent
+// grants all three.
+// NOTE: existing refresh tokens minted before a scope addition keep their OLD
+// scopes and must be re-consented (re-run /api/event/oauth-init) to gain the
+// new one — until then the dependent leg fails with 403 and is skipped.
 const GADS_SCOPE =
-  'https://www.googleapis.com/auth/datamanager https://www.googleapis.com/auth/adwords';
+  'https://www.googleapis.com/auth/datamanager https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/analytics.readonly';
 
 /**
  * Admin-only: starts the Google Ads OAuth flow for a given customer_id.
