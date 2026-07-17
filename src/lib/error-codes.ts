@@ -130,6 +130,12 @@ export enum TrackingErrorCode {
   // láthat (Modell 2: a GA4/GAds on-site konverziót a böngésző birtokolja).
   RECON_CROSS_PLATFORM_DRIFT = 'TRK-950-005',
   RECON_CROSS_QUERY_FAILED = 'TRK-950-006',
+  // Meta EMQ monitorozás (daily digest). A smoke-őr kézbesítést bizonyít, match-
+  // minőséget nem — a leggyakoribb csendes CAPI-regresszió (eltört fbc/fbp-
+  // forwarding) csak az EMQ-esésben látszik.
+  EMQ_BELOW_THRESHOLD = 'TRK-950-007',
+  EMQ_QUERY_FAILED = 'TRK-950-008',
+  EMQ_COVERAGE_DROP = 'TRK-950-009',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -246,6 +252,12 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Ledger event count diverges from the platform-side (GA4 / Google Ads) daily conversion count beyond threshold',
   [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]:
     'Cross-platform reconciliation query failed (D1 / Google Ads API / GA4 Data API) — that leg skipped for the day',
+  [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
+    'Meta Event Match Quality below threshold for a monitored event (Dataset Quality API)',
+  [TrackingErrorCode.EMQ_QUERY_FAILED]:
+    'Meta Dataset Quality API query failed — daily digest falls back to the ledger match-key coverage proxy',
+  [TrackingErrorCode.EMQ_COVERAGE_DROP]:
+    'Match-key (em/ph/fbc/fbp) 24h coverage dropped significantly vs the 7-day average — likely broken identifier forwarding',
   [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]:
     "Invariant violation: a delivery would have been recorded 'accepted' without a vendor HTTP status — recorded as 'skipped' instead",
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
@@ -334,6 +346,13 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RECON_CROSS_PLATFORM_DRIFT]: 'warning',
   [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]: 'warning',
+  [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
+  // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)
+  // tokennel dokumentáltan nem mindig kompatibilis — egy permanens token-
+  // inkompatibilitás napi warningja két hét alatt zajjá válna. A digest ilyenkor
+  // úgyis a proxy-metrikára esik vissza, az őrzés nem szűnik meg.
+  [TrackingErrorCode.EMQ_QUERY_FAILED]: 'info',
+  [TrackingErrorCode.EMQ_COVERAGE_DROP]: 'warning',
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RETENTION_R2_FAILED]: 'warning',
 

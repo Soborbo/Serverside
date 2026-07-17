@@ -289,6 +289,11 @@ export interface EventRawInput {
   ad_allowed: boolean;
   em_present: boolean;
   ph_present: boolean;
+  // Meta click-ID / browser-ID JELENLÉT (nem az érték!) — az EMQ-proxy metrika
+  // alapja a daily digestben. Egy csendben eltört fbc/fbp-forwarding itt látszik
+  // meg először (a kézbesítés-smoke zöld marad, csak a match-minőség esik).
+  fbc_present: boolean;
+  fbp_present: boolean;
 }
 
 export async function recordEventRaw(env: Env, e: EventRawInput): Promise<void> {
@@ -296,8 +301,8 @@ export async function recordEventRaw(env: Env, e: EventRawInput): Promise<void> 
   try {
     await env.LEDGER.prepare(
       `INSERT INTO events_raw
-         (id, event_id, lead_id, site_id, hostname, event_name, event_time, value, currency, ad_allowed, em_present, ph_present, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, hostname, event_name, event_time, value, currency, ad_allowed, em_present, ph_present, fbc_present, fbp_present, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -312,6 +317,8 @@ export async function recordEventRaw(env: Env, e: EventRawInput): Promise<void> 
         e.ad_allowed ? 1 : 0,
         e.em_present ? 1 : 0,
         e.ph_present ? 1 : 0,
+        e.fbc_present ? 1 : 0,
+        e.fbp_present ? 1 : 0,
         new Date().toISOString()
       )
       .run();
