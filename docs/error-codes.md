@@ -299,3 +299,15 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Severity**: Critical
 **Description**: Egy delivery 'accepted'-ként íródott volna vendor HTTP-státusz nélkül — azaz hívás nem történt, csak egy skip-ág elfelejtette a `skipped` flaget. A normalizeDelivery ilyenkor 'skipped'-et ír e kóddal.
 **Action**: Ez KÓDHIBA-jelző (a lomtalan 2026-07-14-i hamis-siker osztálya). Keresd meg az új/skip-utat, ami `{success:true}`-t ad `skipped:true` és `status` nélkül, és javítsd.
+
+## TRK-950-005 — Cross-platform drift (ledger vs GA4 / Google Ads)
+
+**Severity**: Warning (finding-szinten lehet critical a napi emailben)
+**Description**: A ledger event-countja és a GA4 Data API / Google Ads API aznapi konverzió-száma küszöb fölött tér el (site × event bontás, előző UTC-nap). Modell 2-ben a GA4-et és a Google Ads on-site konverziót a böngésző/GTM birtokolja — ha az az ág némán elromlik (GTM-publikálás, tag-törés, Consent Mode-regresszió), a ledger-belső recon NEM látja; pont ezt fogja meg ez a check (2026-07-15-i eset: ledger 4 callback, GA4 2, Google Ads 2, és semmi nem riasztott).
+**Action**: 1) Nézd meg, MELYIK irányban tér el: platform < ledger → a böngésző-ág (GTM Preview, tag-státusz, Consent Mode); platform > ledger → a gateway-ág (Workers logs, ledger). 2) Számolj a dokumentált zajjal: időzóna-nap-határ és consent-tiltás ±1-2 darabot csúsztathat — az ismétlődő vagy nagy eltérés a jel. 3) A config a SITE_CONFIG `recon` blokkja (lib/cross-check.ts).
+
+## TRK-950-006 — Cross-platform reconciliation query failed
+
+**Severity**: Warning
+**Description**: A cross-check egyik lekérdezése (D1 / Google Ads GAQL / GA4 Data API) elbukott — az adott láb aznap kimaradt, a többi lefutott. GA4 403 + "analytics.readonly scope" hint = a refresh token még a scope-bővítés ELŐTTI consenttel készült.
+**Action**: GA4 403-nál: re-consent (`/api/event/oauth-init?customer_id=...` a site gads customer-jével — az új consent a datamanager + adwords + analytics.readonly hármat adja). Google Ads hibánál: developer token / login-customer-id / OAuth token státusz. D1-hibánál: mint TRK-950-003.

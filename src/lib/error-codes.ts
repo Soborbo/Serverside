@@ -124,6 +124,12 @@ export enum TrackingErrorCode {
   // Accepted CSAK valós vendor-válasz mellett íródhat — e nélkül a "green monitor
   // over zero data" osztályú bug (lomtalan 2026-07-14) észrevétlen maradna.
   ACCEPTED_WITHOUT_VENDOR_STATUS = 'TRK-950-004',
+  // Cross-platform drift: a ledger event-countja és a GA4 / Google Ads aznapi
+  // konverzió-száma küszöb fölött tér el — a GTM-ág (vagy a gateway-ág) némán
+  // romlott el. Ez az az osztály, amit a ledger-belső recon szerkezetileg nem
+  // láthat (Modell 2: a GA4/GAds on-site konverziót a böngésző birtokolja).
+  RECON_CROSS_PLATFORM_DRIFT = 'TRK-950-005',
+  RECON_CROSS_QUERY_FAILED = 'TRK-950-006',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -236,6 +242,10 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
     'Eligible events did not reach the platform — coverage drift (reconciliation)',
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'Reconciliation D1 query failed',
+  [TrackingErrorCode.RECON_CROSS_PLATFORM_DRIFT]:
+    'Ledger event count diverges from the platform-side (GA4 / Google Ads) daily conversion count beyond threshold',
+  [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]:
+    'Cross-platform reconciliation query failed (D1 / Google Ads API / GA4 Data API) — that leg skipped for the day',
   [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]:
     "Invariant violation: a delivery would have been recorded 'accepted' without a vendor HTTP status — recorded as 'skipped' instead",
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
@@ -322,6 +332,8 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]: 'warning',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]: 'warning',
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
+  [TrackingErrorCode.RECON_CROSS_PLATFORM_DRIFT]: 'warning',
+  [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RETENTION_R2_FAILED]: 'warning',
 

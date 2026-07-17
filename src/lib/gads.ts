@@ -10,7 +10,9 @@ import { sanitizeErrorMessage } from './log-sanitize';
 // Google Ads API major verzió. A REST-útvonal csak a MAJOR verziót tartalmazza
 // (`/v24/`); a v24.x minor kiadások ugyanezen az úton mennek. 2026-06: v24 a
 // legfrissebb major (v24.2 a legújabb minor), sunset ~2027 közepe.
-const GADS_API_VERSION = 'v24';
+// Exportált: a cross-check (lib/cross-check.ts) GAQL-lekérdezése ugyanezen a
+// verzión megy — verzió-bump itt egy helyen történik.
+export const GADS_API_VERSION = 'v24';
 const GADS_API_TIMEOUT_MS = 5000;
 
 export interface GAdsPayload {
