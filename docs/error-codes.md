@@ -311,3 +311,21 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Severity**: Warning
 **Description**: A cross-check egyik lekérdezése (D1 / Google Ads GAQL / GA4 Data API) elbukott — az adott láb aznap kimaradt, a többi lefutott. GA4 403 + "analytics.readonly scope" hint = a refresh token még a scope-bővítés ELŐTTI consenttel készült.
 **Action**: GA4 403-nál: re-consent (`/api/event/oauth-init?customer_id=...` a site gads customer-jével — az új consent a datamanager + adwords + analytics.readonly hármat adja). Google Ads hibánál: developer token / login-customer-id / OAuth token státusz. D1-hibánál: mint TRK-950-003.
+
+## TRK-950-007 — Meta EMQ below threshold
+
+**Severity**: Warning
+**Description**: A Dataset Quality API szerint egy event composite EMQ score-ja a küszöb (7) alá esett a site-on. A smoke-őr kézbesítést bizonyít, match-minőséget nem — a leggyakoribb csendes CAPI-regresszió (eltört fbc/fbp- vagy em/ph-forwarding) csak itt látszik.
+**Action**: 1) Events Manager → dataset → Event Match Quality: melyik kulcs lefedettsége esett? 2) fbc/fbp-esésnél a kliens cookie-olvasás/`buildFbcFromFbclid` út és a site dispatch-kódja. 3) em/ph-esésnél a form→backend→gateway user_data lánc. 4) A digest EMQ-szekciója site-onként mutatja a score-okat.
+
+## TRK-950-008 — Meta Dataset Quality API query failed
+
+**Severity**: Info
+**Description**: Az EMQ-lekérdezés (`GET /{version}/dataset_quality`) elbukott — a digest a ledger-proxy metrikára (em/ph/fbc/fbp jelenlét-lefedettség) esik vissza. Várható ok: a Meta docs szerint az Events Manager-es client system user (CAPI-onboarding) token jelenleg NEM kompatibilis az EMQ API-val — ez permanens állapot lehet, ezért csak info.
+**Action**: Ha valódi EMQ-t akarsz: Business Manager rendes system user token `ads_read` + (`ads_management` VAGY `business_management`) engedéllyel a KV `meta.access_token`-be (a CAPI events-küldésnek is jó). Egyébként nincs teendő — a proxy-őrzés él.
+
+## TRK-950-009 — Match-key coverage drop (EMQ proxy)
+
+**Severity**: Warning
+**Description**: Egy match-kulcs (em/ph/fbc/fbp) 24 órás jelenlét-lefedettsége ≥25 százalékponttal a 7 napos átlaga alá esett (élő baseline-nál, ≥5 eventes mintán) — az eltört identifier-forwarding klasszikus képe, miközben a kézbesítés zöld marad.
+**Action**: 1) MELYIK kulcs esett? fbp → a kliens `_fbp` cookie-olvasása/dispatch; fbc → `_fbc` cookie + fbclid-attribúció; em/ph → a form/backend user_data lánc. 2) Nézd a site legutóbbi front-end deployát — a regresszió jellemzően onnan jön. 3) A flag-ek az events_raw `*_present` oszlopai (PII nincs tárolva).

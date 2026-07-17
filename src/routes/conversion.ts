@@ -549,7 +549,11 @@ function fanOut(
       currency: payload.currency,
       ad_allowed: adAllowed,
       em_present: Boolean(hashedUserData.em),
-      ph_present: Boolean(hashedUserData.ph)
+      ph_present: Boolean(hashedUserData.ph),
+      // A KÜLDÖTT fbc-t rögzítjük (cookie VAGY fbclid-ből épített) — a Meta ezt
+      // kapja, tehát a match-minőséget is ez határozza meg.
+      fbc_present: Boolean(fbc),
+      fbp_present: Boolean(payload.fbp)
     })
   );
   ctx.waitUntil(

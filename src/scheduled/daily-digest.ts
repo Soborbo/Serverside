@@ -1,6 +1,15 @@
 import type { Env } from '../env';
 import { sendAdminEmail } from '../lib/notify';
-import { countSiteConfigs, listConfiguredSiteIds } from '../lib/config';
+import { countSiteConfigs, listConfiguredSiteIds, listMonitoredSiteConfigs } from '../lib/config';
+import {
+  fetchDatasetEmq,
+  collectKeyCoverage,
+  detectCoverageDrops,
+  type EmqEventScore,
+  type CoverageStats,
+  type KeyCoverage
+} from '../lib/emq';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import { logStructured } from '../types';
 
 /**
@@ -99,11 +108,116 @@ export async function collectSmokeStatus(env: Env): Promise<SmokeStatus> {
   return status;
 }
 
+// ── Meta EMQ (Event Match Quality) szekció ───────────────────────────────────
+
+/** EMQ riasztási küszöb (0-10-es composite score). Meta ajánlás: a jó ≥ 7. */
+const EMQ_ALERT_THRESHOLD = 7;
+
+export interface EmqSiteStatus {
+  site: string;
+  /**
+   * Az adatforrás: 'emq' = valódi Dataset Quality API score; 'proxy' = ledger
+   * match-kulcs lefedettség (az EMQ API nem volt elérhető — pl. client system
+   * user token inkompatibilitás, lásd lib/emq.ts); 'none' = egyik sem ("n/a").
+   */
+  source: 'emq' | 'proxy' | 'none';
+  emqEvents?: EmqEventScore[];
+  coverage?: CoverageStats;
+  /** Riasztásra okot adó sorok (EMQ < küszöb vagy lefedettség-esés). */
+  alerts: string[];
+}
+
+/**
+ * Site-onkénti EMQ-státusz a Meta-configgal rendelkező, monitorozott site-okra.
+ * Meta-config nélküli site (pl. lomtalan) hangtalan skip. Elsődleges forrás a
+ * Dataset Quality API; BÁRMILYEN hibájánál a ledger-proxy (em/ph/fbc/fbp
+ * jelenlét-lefedettség 24h vs 7 nap); ha az sincs → 'none'. Hibatűrő: soha nem
+ * dob — a digestet EMQ-hiba nem buktathatja.
+ */
+export async function collectEmqStatus(env: Env): Promise<EmqSiteStatus[]> {
+  const statuses: EmqSiteStatus[] = [];
+  try {
+    const configs = await listMonitoredSiteConfigs(env);
+    for (const cfg of configs) {
+      if (!cfg.meta) continue; // nincs CAPI-láb → nincs mit mérni (hangtalan skip)
+      const status: EmqSiteStatus = { site: cfg.site_id, source: 'none', alerts: [] };
+
+      const emq = await fetchDatasetEmq(cfg.site_id, cfg.meta.pixel_id, cfg.meta.access_token);
+      if (emq.ok && emq.events.length > 0) {
+        status.source = 'emq';
+        status.emqEvents = emq.events;
+        for (const ev of emq.events) {
+          if (ev.score < EMQ_ALERT_THRESHOLD) {
+            status.alerts.push(`${ev.event_name} EMQ ${ev.score.toFixed(1)} < ${EMQ_ALERT_THRESHOLD}`);
+            logStructured({
+              level: 'warn',
+              error_code: TrackingErrorCode.EMQ_BELOW_THRESHOLD,
+              message: ERROR_DESCRIPTIONS[TrackingErrorCode.EMQ_BELOW_THRESHOLD],
+              site_id: cfg.site_id,
+              event_name: ev.event_name,
+              emq_score: ev.score
+            });
+          }
+        }
+      } else {
+        // EMQ API nem elérhető (vagy üres) → proxy: match-kulcs lefedettség a
+        // ledgerből. A hibát a lib már 'info'-n logolta (TRK-950-008).
+        const coverage = await collectKeyCoverage(env, cfg.site_id);
+        if (coverage) {
+          status.source = 'proxy';
+          status.coverage = coverage;
+          for (const drop of detectCoverageDrops(coverage)) {
+            status.alerts.push(
+              `${drop.key} coverage ${drop.pct24h}% (7d avg ${drop.pct7d}%)`
+            );
+            logStructured({
+              level: 'warn',
+              error_code: TrackingErrorCode.EMQ_COVERAGE_DROP,
+              message: ERROR_DESCRIPTIONS[TrackingErrorCode.EMQ_COVERAGE_DROP],
+              site_id: cfg.site_id,
+              match_key: drop.key,
+              pct_24h: drop.pct24h,
+              pct_7d: drop.pct7d
+            });
+          }
+        }
+      }
+      statuses.push(status);
+    }
+  } catch (err) {
+    // Defenzív: semmilyen EMQ-hiba nem buktathatja a digestet.
+    logStructured({
+      level: 'warn',
+      message: 'Daily digest: EMQ section failed',
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  return statuses;
+}
+
+function renderEmqLine(s: EmqSiteStatus): string {
+  if (s.source === 'emq' && s.emqEvents) {
+    const scores = s.emqEvents
+      .map((e) => `${e.event_name} ${e.score.toFixed(1)}`)
+      .join(', ');
+    return `${s.site}: ${scores}`;
+  }
+  if (s.source === 'proxy' && s.coverage) {
+    const keys = s.coverage.keys
+      .map((k: KeyCoverage) => `${k.key} ${k.pct24h}%`)
+      .join(' / ');
+    return `${s.site}: proxy coverage 24h (${s.coverage.events24h} events) — ${keys}`;
+  }
+  return `${s.site}: n/a (EMQ API + ledger proxy unavailable)`;
+}
+
 export async function handleDailyDigest(env: Env): Promise<void> {
   const siteCount = await countSiteConfigs(env);
   const { counts: acceptedCounts, zeroSites } = await collectAcceptedCounts(env);
   const smoke = await collectSmokeStatus(env);
   const smokeAlarm = smoke.missing.length > 0 || smoke.broken.length > 0;
+  const emqStatuses = await collectEmqStatus(env);
+  const emqAlerts = emqStatuses.filter((s) => s.alerts.length > 0);
 
   let totalDlqRecords = 0;
   let totalDeadRecords = 0;
@@ -175,6 +289,22 @@ export async function handleDailyDigest(env: Env): Promise<void> {
           : `<p>✓ all expected sites delivered (${smoke.expected.join(', ')})</p>`
     }
 
+    <h3>Meta EMQ (Event Match Quality)</h3>
+    ${
+      emqStatuses.length === 0
+        ? '<p>no sites with Meta config</p>'
+        : `<ul>
+      ${emqStatuses.map((s) => `<li>${renderEmqLine(s)}</li>`).join('\n      ')}
+    </ul>`
+    }
+    ${
+      emqAlerts.length > 0
+        ? `<p><strong>⚠️ Match-quality alert: ${emqAlerts
+            .map((s) => `${s.site} (${s.alerts.join('; ')})`)
+            .join(' | ')} — a delivery-green pipeline with falling EMQ usually means broken fbc/fbp or em/ph forwarding.</strong></p>`
+        : ''
+    }
+
     <h3>Dead Letter Queue</h3>
     <ul>
       <li>Pending retries: ${totalDlqRecords}${truncated ? ' (≥10000 — list truncated)' : ''}</li>
@@ -210,7 +340,8 @@ export async function handleDailyDigest(env: Env): Promise<void> {
 
   const alarmBits = [
     ...(smokeAlarm ? [`smoke failed: ${[...smoke.missing, ...smoke.broken.map((b) => b.site)].join(', ')}`] : []),
-    ...(zeroSites.length > 0 ? [`zero conversions: ${zeroSites.join(', ')}`] : [])
+    ...(zeroSites.length > 0 ? [`zero conversions: ${zeroSites.join(', ')}`] : []),
+    ...(emqAlerts.length > 0 ? [`EMQ alert: ${emqAlerts.map((s) => s.site).join(', ')}`] : [])
   ];
   await sendAdminEmail(
     env,
