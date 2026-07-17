@@ -38,10 +38,11 @@ interface LeadStatusBody {
   value?: number;
   currency?: string;
   user_data?: PlainUserData;
-  // A CRM autoritatív ad-consentje a leadre (a CRM marketingConsent-jéből). Ha
-  // jelen van, EZ gat-eli az offline upload-ot a Worker saját consent-ledger
-  // lookup-ja HELYETT — a CRM-flow-ban a böngészős consent-receipt (lead_id=NULL)
-  // úgysem köthető a CRM lead_id-hez. Hiányában visszaesés a ledgerre (weboldal-only).
+  // A CRM ad-consent jele a leadre (a CRM marketingConsent-jéből). FALLBACK:
+  // a Worker saját consent-receiptje (explicit GRANTED/DENIED capture-kori jel)
+  // MEGELŐZI — a CRM marketingConsent-je newsletter-optin szemantikájú, és a
+  // 2026-07-17-es consent-audit szerint a site-ok soha nem töltik a CookieYes
+  // ad-consentből, így önmagában minden uploadot némán blokkolna.
   ad_allowed?: boolean;
 }
 
@@ -144,18 +145,33 @@ export async function handleLeadStatus(
   const occurredAtIso = body.occurred_at ?? new Date().toISOString();
   const eventTimeSec = Math.floor(Date.parse(occurredAtIso) / 1000);
 
-  // GDPR-kapu. A CRM-flow-ban a böngészős consent-receipt lead_id=NULL-lal íródik,
-  // így a CRM lead_id-hez nem köthető → a CRM AUTORITATÍV consentjét (ad_allowed,
-  // a marketingConsent-jéből) preferáljuk, ha jelen van. Hiányában visszaesés a
-  // Worker saját consent-ledgerére (weboldal-only flow, ahol jön a lead_id).
-  // Fail-closed marad: explicit false → tiltott; require_consent + nincs jel → tiltott.
-  let leadConsent = null;
+  // GDPR-kapu, precedencia szerint (2026-07-17 consent-audit):
+  //  1. A Worker SAJÁT consent-receiptje, ha EXPLICIT capture-kori jelet hordoz
+  //     (ad_user_data GRANTED/DENIED). Ez az időbélyeges, bizonyítható consent —
+  //     a szerver-ingress dispatch óta a receipt hordozza a CRM lead_id-t.
+  //     (A korábbi „a receipt lead_id=NULL-lal íródik" premissza HAMIS volt, és a
+  //     CRM newsletter-szemantikájú marketingConsent-je — amit a site-ok soha nem
+  //     töltenek a CookieYes ad-consentből — némán blokkolt minden uploadot.)
+  //  2. A CRM ad_allowed jele — fallback, ha nincs explicit receipt (telefonos/
+  //     manuális lead, vagy fail-open site consent-objektum nélküli receipttel).
+  //  3. require_consent fail-closed: kötelező consent + semmilyen jel → tiltott.
+  // A jel nélküli receipt ad_allowed=1-e NEM evidencia (fail-open default is adhatja).
+  const leadConsent = await getLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
+  const receiptSignal =
+    leadConsent?.ad_user_data === 'GRANTED' || leadConsent?.ad_user_data === 'DENIED'
+      ? leadConsent.ad_user_data
+      : null;
   let consentBlocked: boolean;
-  if (body.ad_allowed !== undefined) {
+  let consentSource: 'receipt' | 'crm' | 'fallback';
+  if (receiptSignal !== null) {
+    consentBlocked = receiptSignal === 'DENIED';
+    consentSource = 'receipt';
+  } else if (body.ad_allowed !== undefined) {
     consentBlocked = body.ad_allowed === false;
+    consentSource = 'crm';
   } else {
-    leadConsent = await getLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
     consentBlocked = isOfflineUploadBlocked(leadConsent, siteConfig.require_consent === true);
+    consentSource = 'fallback';
   }
 
   // Ütközésbiztos, determinisztikus orderId: a (lead_id, status) SHA-256-ja —
@@ -174,7 +190,8 @@ export async function handleLeadStatus(
       site_id: siteConfig.site_id,
       event_name: eventName,
       require_consent: siteConfig.require_consent === true,
-      has_consent_record: leadConsent !== null
+      has_consent_record: leadConsent !== null,
+      consent_source: consentSource
     });
   } else if (siteConfig.gads.customer_id) {
     // Model 2: the server is Google-Ads-offline-only (Enhanced Conversions for
@@ -186,11 +203,11 @@ export async function handleLeadStatus(
     );
     // Consent Mode jelek a Data Manager eventre. EEA/DMA alatt a jelöletlen
     // (unspecified) consentű eventet a Google csendben kizárhatja az ads-
-    // mérésből — ha van POZITÍV consent-evidenciánk (a CRM autoritatív
-    // ad_allowed=true jele, vagy a ledger consent-receipt), azt explicit
-    // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site) a
-    // mező kimarad — consentet nem találunk ki.
-    const consentEvidence = body.ad_allowed === true || leadConsent?.ad_allowed === true;
+    // mérésből — ha van POZITÍV consent-evidenciánk (explicit GRANTED receipt a
+    // capture-ből, vagy a CRM ad_allowed=true jele), azt explicit
+    // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site jel
+    // nélküli receipttel) a mező kimarad — consentet nem találunk ki.
+    const consentEvidence = receiptSignal === 'GRANTED' || body.ad_allowed === true;
     const gadsPayload: GAdsPayload = {
       event_name: eventName,
       event_id: orderId,
@@ -297,6 +314,7 @@ export async function handleLeadStatus(
     // marad, értéke definíció szerint false.
     uploaded_to_ga4: false,
     consent_blocked: consentBlocked,
+    consent_source: consentSource,
     duration_ms: Date.now() - startedAt
   });
 

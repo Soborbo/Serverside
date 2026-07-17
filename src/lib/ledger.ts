@@ -435,6 +435,18 @@ export async function recordLeadStatus(env: Env, l: LeadStatusInput): Promise<vo
   }
 }
 
+export interface LeadConsentRecord {
+  ad_allowed: boolean;
+  /**
+   * A capture-kori EXPLICIT Consent Mode jel ('GRANTED' | 'DENIED' |
+   * 'UNSPECIFIED'), vagy null, ha a receipt jel nélkül íródott (fail-open site,
+   * consent-objektum nélküli szerver-dispatch). Az offline-kapu CSAK a
+   * GRANTED/DENIED értéket kezeli bizonyítékként — a jel nélküli receipt
+   * ad_allowed=1-e a require_consent=false defaultból is jöhet, az NEM consent.
+   */
+  ad_user_data: string | null;
+}
+
 /**
  * A lead legutóbbi consent-döntése (offline-loop GDPR-kapuhoz). Ha a capture-kor
  * a felhasználó visszavonta az ad-consentet (ad_allowed=0), az offline Google Ads
@@ -444,18 +456,18 @@ export async function getLatestConsentForLead(
   env: Env,
   siteId: string,
   leadId: string
-): Promise<{ ad_allowed: boolean } | null> {
+): Promise<LeadConsentRecord | null> {
   if (!env.LEDGER) return null;
   try {
     const row = await env.LEDGER.prepare(
-      `SELECT ad_allowed FROM consent_receipts
+      `SELECT ad_allowed, ad_user_data FROM consent_receipts
        WHERE site_id = ? AND lead_id = ?
        ORDER BY received_at DESC LIMIT 1`
     )
       .bind(siteId, leadId)
-      .first<{ ad_allowed: number }>();
+      .first<{ ad_allowed: number; ad_user_data: string | null }>();
     if (!row) return null;
-    return { ad_allowed: row.ad_allowed === 1 };
+    return { ad_allowed: row.ad_allowed === 1, ad_user_data: row.ad_user_data ?? null };
   } catch (err) {
     ledgerError('getLatestConsentForLead', err, { site_id: siteId });
     return null;
