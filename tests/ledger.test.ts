@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildIdempotencyKey,
   normalizeDelivery,
+  recordDeliveries,
   mapLeadStatusToEventName,
   isValidLeadId,
   VALID_LEAD_STATUSES,
@@ -104,6 +105,74 @@ describe('normalizeDelivery', () => {
       value: { success: true, status: 200 }
     });
     expect(r).toEqual({ platform: 'meta', status: 'accepted', http_status: 200 });
+  });
+});
+
+describe('recordDeliveries — az írás előtti utolsó védvonal', () => {
+  /** A bind-argumentumokat gyűjti; sorrend a recordDeliveries INSERT-jéből. */
+  function makeCapturingLedger() {
+    const bound: unknown[][] = [];
+    return {
+      bound,
+      env: {
+        LEDGER: {
+          prepare: () => ({ bind: (...args: unknown[]) => (bound.push(args), {}) }),
+          batch: async () => []
+        }
+      } as any
+    };
+  }
+  const STATUS_IDX = 6;
+  const HTTP_IDX = 7;
+  const ERROR_IDX = 8;
+
+  it('a normalizeDelivery-t MEGKERÜLŐ accepted sor HTTP nélkül nem íródik be accepted-ként', async () => {
+    // Ezt a típus már nem engedné — a cast pont azt a jövőbeli hívót modellezi,
+    // aki kézzel épít rekordot és megkerüli a fojtópontot.
+    const { bound, env } = makeCapturingLedger();
+    await recordDeliveries(env, {
+      event_id: 'evt-1',
+      site_id: 'lomtalan',
+      event_name: 'contact_form_submitted',
+      records: [{ platform: 'meta', status: 'accepted' } as any]
+    });
+
+    expect(bound).toHaveLength(1);
+    expect(bound[0][STATUS_IDX]).toBe('skipped');
+    expect(bound[0][STATUS_IDX]).not.toBe('accepted');
+    expect(bound[0][ERROR_IDX]).toBe('TRK-950-004');
+  });
+
+  it('a szabályos accepted sor érintetlenül megy át', async () => {
+    const { bound, env } = makeCapturingLedger();
+    await recordDeliveries(env, {
+      event_id: 'evt-2',
+      site_id: 'painless',
+      event_name: 'quote_calculator_submitted',
+      records: [{ platform: 'meta', status: 'accepted', http_status: 200 }]
+    });
+
+    expect(bound[0][STATUS_IDX]).toBe('accepted');
+    expect(bound[0][HTTP_IDX]).toBe(200);
+    expect(bound[0][ERROR_IDX]).toBeNull();
+  });
+
+  it('a rejected/skipped sor HTTP-státusz nélkül is érvényes marad', async () => {
+    const { bound, env } = makeCapturingLedger();
+    await recordDeliveries(env, {
+      event_id: 'evt-3',
+      site_id: 'painless',
+      event_name: 'contact_form_submitted',
+      records: [
+        { platform: 'tiktok', status: 'skipped' },
+        { platform: 'meta', status: 'rejected', error_code: 'TRK-600-004' }
+      ]
+    });
+
+    expect(bound[0][STATUS_IDX]).toBe('skipped');
+    expect(bound[0][HTTP_IDX]).toBeNull();
+    expect(bound[1][STATUS_IDX]).toBe('rejected');
+    expect(bound[1][ERROR_IDX]).toBe('TRK-600-004');
   });
 });
 

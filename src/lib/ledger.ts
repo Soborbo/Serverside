@@ -36,13 +36,24 @@ export function buildIdempotencyKey(
 
 export type DeliveryStatus = 'accepted' | 'rejected' | 'skipped';
 
-export interface DeliveryRecord {
+interface DeliveryRecordBase {
   platform: Platform;
-  status: DeliveryStatus;
-  http_status?: number;
   error_code?: string;
   vendor_message?: string;
 }
+
+/**
+ * INVARIÁNS A TÍPUSBAN: 'accepted' CSAK vendor HTTP-státusszal létezik.
+ *
+ * Diszkriminált unió, nem egy közös `http_status?: number` — utóbbi mellett egy
+ * kézzel összerakott `{ status: 'accepted' }` rekord LEFORDULT volna, és csak
+ * futásidőben (vagy sehol) derült volna ki. A ledger épp azt hivatott mérni,
+ * hogy egy platform-láb él-e; egy HTTP-státusz nélküli 'accepted' pont azt a
+ * kérdést hazudja meg, amiért a tábla létezik (lomtalan, 2026-07-14).
+ */
+export type DeliveryRecord =
+  | (DeliveryRecordBase & { status: 'accepted'; http_status: number })
+  | (DeliveryRecordBase & { status: 'rejected' | 'skipped'; http_status?: number });
 
 /** Egységes alak, amit mind a Meta/GA4/GAds + extra platform eredmény kielégít. */
 export interface VendorResult {
@@ -372,17 +383,43 @@ export interface DeliveriesInput {
   records: DeliveryRecord[];
 }
 
+/**
+ * Utolsó védvonal az írás előtt. A típus (DeliveryRecord) már kizárja a HTTP
+ * nélküli 'accepted'-et, a normalizeDelivery pedig a négy hívó-út közös
+ * fojtópontja — ez a harmadik réteg arra van, hogy egy `as any` cast vagy egy
+ * jövőbeli, normalizeDelivery-t megkerülő hívó SE tudjon ilyen sort a ledgerbe
+ * tenni. Nem dobunk (a ledger-írás soha nem buktathat konverziót): a sort
+ * 'skipped'-re minősítjük vissza, CRITICAL kóddal, ami a füstteszten is bukik.
+ */
+function enforceVendorStatus(r: DeliveryRecord, siteId: string): DeliveryRecord {
+  if (r.status !== 'accepted' || typeof r.http_status === 'number') return r;
+  logStructured({
+    level: 'error',
+    error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS,
+    message: ERROR_DESCRIPTIONS[TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS],
+    platform: r.platform,
+    site_id: siteId
+  });
+  return {
+    platform: r.platform,
+    status: 'skipped',
+    error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS,
+    vendor_message: r.vendor_message
+  };
+}
+
 export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<void> {
   if (!env.LEDGER || d.records.length === 0) return;
   const origin = d.origin ?? 'fanout';
   const now = new Date().toISOString();
+  const records = d.records.map((r) => enforceVendorStatus(r, d.site_id));
   try {
     const stmt = env.LEDGER.prepare(
       `INSERT INTO deliveries
          (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, attempt, origin, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    const batch = d.records.map((r) =>
+    const batch = records.map((r) =>
       stmt.bind(
         id(),
         d.event_id,
