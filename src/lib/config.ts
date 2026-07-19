@@ -62,6 +62,28 @@ export interface SiteConfig {
   // az onboarding generate-site.mjs token-generálását.
   crm_token_sha256?: string;
 
+  // A site-tól ELVÁRT platform-lábak — a füstteszt sikerkritériuma (daily-digest).
+  // Létezésének oka: a smoke korábban CSAK a `rejected` Meta-lábra riasztott, a
+  // `skipped`-et OK-nak vette („szándékosan meta-nélküli site"). Emiatt amikor a
+  // lomtalan `meta` blokkja 2026-07-15-én KIESETT a KV-ből, a fan-out némán
+  // skip-re váltott, a napi füstteszt pedig ÖT NAPON ÁT zöld maradt. Egy hiányzó
+  // config és egy szándékos kihagyás a delivery-sorból nézve azonos — ezért az
+  // elvárást KÜLÖN, explicit módon kell rögzíteni, nem a config meglétéből
+  // levezetni (a levezetés pont a törlést nem venné észre).
+  //
+  //   smoke:   a napi synthetic lead körében accepted-nek KELL lennie.
+  //   offline: a CRM lifecycle-ág (lead-status → Google Ads) elvárt platformjai.
+  //            SZÁNDÉKOSAN nem a böngésző-smoke ellenőrzi — annak külön
+  //            hitelesített offline synthetic teszt / OAuth health check kell.
+  //
+  // Hiányzó blokk → a digest a MEGFIGYELT előzményre esik vissza (ami korábban
+  // accepted volt, annak accepted-nek kell maradnia), tehát a regresszió akkor
+  // is kiderül, ha ide még nem került be semmi.
+  expected_platforms?: {
+    smoke?: string[];
+    offline?: string[];
+  };
+
   // Napi cross-platform reconciliation (lib/cross-check.ts): a ledger event-
   // count-jait veti össze a GA4 Data API és a Google Ads API aznapi számaival.
   // Hiányzó blokk → a site kimarad a cross-checkből (a ledger-belső recon fut

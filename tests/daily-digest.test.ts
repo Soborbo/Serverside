@@ -123,66 +123,179 @@ describe('monitoring opt-out', () => {
 
 import { collectSmokeStatus } from '../src/scheduled/daily-digest';
 
-function makeSmokeLedger(
-  rows: Array<{ site_id: string; status: string; error_code: string | null }> | Error
-) {
+type SmokeRow = {
+  site_id: string;
+  platform: string;
+  status: string;
+  http_status?: number | null;
+  error_code?: string | null;
+};
+
+/**
+ * A `recent` (utolsó 24h, minden platform) és a `baseline` (SELECT DISTINCT,
+ * korábban accepted) lekérdezést a SQL alapján kell szétválasztani — a smoke-őr
+ * kettőt futtat, és pont az összjátékukon áll a regresszió-felismerés.
+ */
+function makeSmokeLedger(recent: SmokeRow[] | Error, baseline: SmokeRow[] = []) {
   return {
-    prepare: () => ({
+    prepare: (sql: string) => ({
       bind: () => ({
         all: async () => {
-          if (rows instanceof Error) throw rows;
-          return { results: rows };
+          if (recent instanceof Error) throw recent;
+          return { results: sql.includes('DISTINCT') ? baseline : recent };
         }
       })
     })
   };
 }
 
+/** SITE_CONFIG stub a `expected_platforms` explicit ágához. */
+function makeSiteConfigKv(configs: Record<string, unknown>) {
+  return {
+    list: async () => ({ keys: Object.keys(configs).map((name) => ({ name })), list_complete: true }),
+    get: async (name: string) => configs[name] ?? null
+  };
+}
+
 describe('collectSmokeStatus — a füstteszt másnapi őre', () => {
-  it('minden elvárt site landolt (accepted VAGY skipped) → nincs riasztás', async () => {
+  it('minden elvárt platform accepted, HTTP-státusszal → nincs riasztás', async () => {
     const env: any = {
-      SMOKE_SITES: 'painless,beautyflow,lomtalan',
+      SMOKE_SITES: 'painless,beautyflow',
+      SITE_CONFIG: makeSiteConfigKv({
+        'painlessremovals.com': { site_id: 'painless', expected_platforms: { smoke: ['meta'] } },
+        'beautyflow.pro': { site_id: 'beautyflow', expected_platforms: { smoke: ['meta'] } }
+      }),
       LEDGER: makeSmokeLedger([
-        { site_id: 'painless', status: 'accepted', error_code: null },
-        { site_id: 'beautyflow', status: 'accepted', error_code: null },
-        // lomtalan: nincs meta config → a smoke Meta-lába szándékos skip. Ez OK.
-        { site_id: 'lomtalan', status: 'skipped', error_code: null }
+        { site_id: 'painless', platform: 'meta', status: 'accepted', http_status: 200 },
+        { site_id: 'beautyflow', platform: 'meta', status: 'accepted', http_status: 200 },
+        // Nem elvárt platformok szándékos kihagyása változatlanul OK.
+        { site_id: 'painless', platform: 'tiktok', status: 'skipped' },
+        { site_id: 'beautyflow', platform: 'linkedin', status: 'skipped' }
       ])
     };
     const s = await collectSmokeStatus(env);
     expect(s.missing).toEqual([]);
-    expect(s.broken).toEqual([]);
+    expect(s.failures).toEqual([]);
   });
 
-  it('hiányzó smoke-sor → missing (a site cron→gateway lánc nem futott le)', async () => {
+  it('REGRESSZIÓ: elvárt platform skipped → CRITICAL (a lomtalan 2026-07-15 esete)', async () => {
+    const env: any = {
+      SMOKE_SITES: 'lomtalan',
+      SITE_CONFIG: makeSiteConfigKv({
+        'lomtalan.hu': { site_id: 'lomtalan', expected_platforms: { smoke: ['meta'] } }
+      }),
+      LEDGER: makeSmokeLedger([
+        // A meta blokk kiesett a KV-ből → a fan-out némán skip-re váltott.
+        { site_id: 'lomtalan', platform: 'meta', status: 'skipped' }
+      ])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.failures).toEqual([
+      {
+        site: 'lomtalan',
+        platform: 'meta',
+        reason: 'skipped',
+        error_code: null,
+        expectation: 'config'
+      }
+    ]);
+  });
+
+  it('expected_platforms nélkül is bukik, ha a platform KORÁBBAN accepted volt', async () => {
+    const env: any = {
+      SMOKE_SITES: 'lomtalan',
+      SITE_CONFIG: makeSiteConfigKv({ 'lomtalan.hu': { site_id: 'lomtalan' } }),
+      LEDGER: makeSmokeLedger(
+        [{ site_id: 'lomtalan', platform: 'meta', status: 'skipped' }],
+        [{ site_id: 'lomtalan', platform: 'meta', status: 'accepted' }]
+      )
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.failures).toHaveLength(1);
+    expect(s.failures[0]).toMatchObject({ platform: 'meta', reason: 'skipped', expectation: 'history' });
+  });
+
+  it('sosem-volt-accepted platform kihagyása NEM hiba', async () => {
+    const env: any = {
+      SMOKE_SITES: 'agykontroll',
+      SITE_CONFIG: makeSiteConfigKv({ 'agykontroll.co.uk': { site_id: 'agykontroll' } }),
+      LEDGER: makeSmokeLedger([{ site_id: 'agykontroll', platform: 'meta', status: 'skipped' }])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.failures).toEqual([]);
+    expect(s.missing).toEqual([]);
+  });
+
+  it('accepted vendor HTTP-státusz NÉLKÜL → CRITICAL (belső ellentmondás)', async () => {
+    const env: any = {
+      SMOKE_SITES: 'painless',
+      SITE_CONFIG: makeSiteConfigKv({
+        'painlessremovals.com': { site_id: 'painless', expected_platforms: { smoke: ['meta'] } }
+      }),
+      LEDGER: makeSmokeLedger([
+        { site_id: 'painless', platform: 'meta', status: 'accepted', http_status: null }
+      ])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.failures[0]).toMatchObject({
+      platform: 'meta',
+      reason: 'accepted_without_http_status'
+    });
+  });
+
+  it('rejected elvárt láb → a vendor-hibakóddal együtt', async () => {
+    const env: any = {
+      SMOKE_SITES: 'painless',
+      SITE_CONFIG: makeSiteConfigKv({
+        'painlessremovals.com': { site_id: 'painless', expected_platforms: { smoke: ['meta'] } }
+      }),
+      LEDGER: makeSmokeLedger([
+        {
+          site_id: 'painless',
+          platform: 'meta',
+          status: 'rejected',
+          http_status: 400,
+          error_code: 'TRK-600-004'
+        }
+      ])
+    };
+    const s = await collectSmokeStatus(env);
+    expect(s.failures).toEqual([
+      {
+        site: 'painless',
+        platform: 'meta',
+        reason: 'rejected',
+        error_code: 'TRK-600-004',
+        expectation: 'config'
+      }
+    ]);
+    expect(s.missing).toEqual([]);
+  });
+
+  it('egyetlen sor sincs → site-szintű missing, nem N darab platform-hiba', async () => {
     const env: any = {
       SMOKE_SITES: 'painless,beautyflow',
-      LEDGER: makeSmokeLedger([{ site_id: 'painless', status: 'accepted', error_code: null }])
+      SITE_CONFIG: makeSiteConfigKv({
+        'beautyflow.pro': { site_id: 'beautyflow', expected_platforms: { smoke: ['meta'] } }
+      }),
+      LEDGER: makeSmokeLedger([
+        { site_id: 'painless', platform: 'meta', status: 'accepted', http_status: 200 }
+      ])
     };
     const s = await collectSmokeStatus(env);
     expect(s.missing).toEqual(['beautyflow']);
+    expect(s.failures).toEqual([]);
   });
 
-  it("rejected Meta-láb → broken, a vendor-hibakóddal", async () => {
-    const env: any = {
-      SMOKE_SITES: 'painless',
-      LEDGER: makeSmokeLedger([
-        { site_id: 'painless', status: 'rejected', error_code: 'TRK-600-004' }
-      ])
-    };
-    const s = await collectSmokeStatus(env);
-    expect(s.broken).toEqual([{ site: 'painless', error_code: 'TRK-600-004' }]);
-    expect(s.missing).toEqual([]);
-  });
-
-  it('query-hiba → üres missing/broken (nincs hamis riasztás minden site-ra)', async () => {
+  it('query-hiba → üres eredmény (nincs hamis riasztás minden site-ra)', async () => {
     const env: any = {
       SMOKE_SITES: 'painless,beautyflow',
+      SITE_CONFIG: makeSiteConfigKv({}),
       LEDGER: makeSmokeLedger(new Error('D1 down'))
     };
     const s = await collectSmokeStatus(env);
     expect(s.missing).toEqual([]);
-    expect(s.broken).toEqual([]);
+    expect(s.failures).toEqual([]);
   });
 
   it('SMOKE_SITES nélkül a check kikapcsolt', async () => {
