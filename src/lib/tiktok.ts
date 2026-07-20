@@ -1,4 +1,5 @@
 import type { SiteConfig } from './config';
+import type { SkipReason } from './skip-reason';
 import type { HashedUserData } from './hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
@@ -60,6 +61,8 @@ export interface TikTokResult {
   error_code?: TrackingErrorCode;
   status?: number;
   skipped?: boolean;
+  // Miért maradt ki — lásd lib/skip-reason.ts. A fan-out ez alapján dönt DLQ-ról.
+  skip_reason?: SkipReason;
 }
 
 export async function sendToTikTok(
@@ -69,7 +72,7 @@ export async function sendToTikTok(
 ): Promise<TikTokResult> {
   const cfg = siteConfig.tiktok;
   if (!cfg || !cfg.pixel_code || !cfg.access_token) {
-    return { success: true, skipped: true }; // nem konfigurált → no-op skip
+    return { success: true, skipped: true, skip_reason: 'not_configured' };
   }
 
   const event = cfg.event_names?.[payload.event_name] || DEFAULT_EVENT_MAP[payload.event_name] || payload.event_name;

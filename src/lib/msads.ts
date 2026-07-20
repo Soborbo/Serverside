@@ -1,4 +1,5 @@
 import type { SiteConfig } from './config';
+import type { SkipReason } from './skip-reason';
 import type { HashedUserData } from './hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode } from './error-codes';
@@ -39,6 +40,8 @@ export interface MsAdsResult {
   status?: number;
   scaffolded?: boolean; // true = a rekord felépült, de a live transport TODO
   skipped?: boolean; // ledger: ne számítson valódi kézbesítésnek
+  // Miért maradt ki — lásd lib/skip-reason.ts. A fan-out ez alapján dönt DLQ-ról.
+  skip_reason?: SkipReason;
 }
 
 /** A kanonikus offline-conversion rekord (a live transport ezt küldené). */
@@ -77,7 +80,7 @@ export async function sendToMsAds(
 ): Promise<MsAdsResult> {
   const conversion = buildOfflineConversion(siteConfig, payload);
   if (!conversion) {
-    return { success: true, skipped: true }; // nem konfigurált / nincs msclkid → no-op skip
+    return { success: true, skipped: true, skip_reason: 'not_configured' };
   }
 
   // TODO(live): itt menne a Bing Ads ApplyOfflineConversions kiküldés (lásd a

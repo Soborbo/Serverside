@@ -5,6 +5,36 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 export const MAX_RETRIES = 3;
 const RETRY_WINDOW_HOURS = 24;
 
+/**
+ * Konfigurációs blokk (hiányzó config egy ELVÁRT platformon) — külön retry-keret.
+ *
+ * Egy 500-as vendor-hiba percek alatt magától elmúlhat, ezért ott a [60s, 5p, 30p]
+ * backoff és a 3 próbálkozás helyes. Egy hiányzó config viszont SOHA nem javul meg
+ * magától — csak akkor, ha valaki visszaírja a KV-t. A rövid kerettel a rekord
+ * ~35 perc alatt kimerülne és a dead-archívumba esne, jóval azelőtt, hogy bárki
+ * észrevenné a riasztást. Ezért: ritka próbálkozás, hosszú ablak.
+ *
+ * Az ablak felső határát a Meta CAPI 7 napos elfogadási ablaka szabja meg — ezen
+ * túl a retry amúgy is értelmetlen, a rekord mehet a dead-archívumba.
+ */
+const BLOCKED_CONFIG_BACKOFF_SECONDS = 6 * 3600; // 6 óra
+const BLOCKED_CONFIG_WINDOW_HOURS = 7 * 24; // 7 nap (Meta CAPI ablak)
+export const MAX_RETRIES_BLOCKED_CONFIG = Math.floor(
+  (BLOCKED_CONFIG_WINDOW_HOURS * 3600) / BLOCKED_CONFIG_BACKOFF_SECONDS
+); // = 28
+
+/** A rekordra érvényes retry-plafon (a konfigurációs blokk külön keretet kap). */
+export function maxRetriesFor(record: Pick<DeadLetterRecord, 'blocked_configuration'>): number {
+  return record.blocked_configuration === true ? MAX_RETRIES_BLOCKED_CONFIG : MAX_RETRIES;
+}
+
+/** A rekordra érvényes retry-ablak órában. */
+export function retryWindowHoursFor(
+  record: Pick<DeadLetterRecord, 'blocked_configuration'>
+): number {
+  return record.blocked_configuration === true ? BLOCKED_CONFIG_WINDOW_HOURS : RETRY_WINDOW_HOURS;
+}
+
 // Queues delivery-delay backoff 0-alapú index szerint (másodperc). Cloudflare
 // Queues max delaySeconds = 86400 (24h) — a lenti értékek bőven belül vannak.
 // HÍVÁSI KONVENCIÓ: a paraméter 0-ALAPÚ (0 = első késleltetés). A consumer a
@@ -30,6 +60,11 @@ export interface DeadLetterRecord {
   event_payload: Record<string, unknown>;
   hashed_user_data?: Record<string, unknown>;
   failure_reason: string;
+  // true → nem vendor-hiba, hanem KONFIGURÁCIÓS blokk: az elvárt platformnak
+  // nincs config-blokkja ezen a site-on, tehát hívás nem is történt. Magától soha
+  // nem javul meg → ritka próbálkozás, hosszú ablak (maxRetriesFor /
+  // retryWindowHoursFor), különben a rekord percek alatt kimerülne.
+  blocked_configuration?: boolean;
   retry_count: number;
   first_failed_at: string;
   last_attempted_at: string;
@@ -48,7 +83,13 @@ export interface DeadLetterRecord {
  * elveszne (platform-hiba + Queue-hiba + R2-hiba hármas kiesés).
  */
 export async function enqueueFailure(env: Env, record: DeadLetterRecord): Promise<boolean> {
-  if (env.DLQ) {
+  // Konfigurációs blokk → EGYENESEN az R2 DLQ-ba, a Queue megkerülésével.
+  // Indok: a Queue saját `max_retries`-e (wrangler.toml) néhány kézbesítés után
+  // véglegesen eldobja az üzenetet, és a `delaySeconds` felső korlátja 24 óra —
+  // egy config-hiány viszont napokig állhat. Az R2-rekordot az óránkénti cron
+  // nézi, a lejáratot pedig a mi 7 napos ablakunk szabja (retryWindowHoursFor),
+  // nem a Queue élettartama. Így a rekord túléli a config helyreállításáig.
+  if (env.DLQ && record.blocked_configuration !== true) {
     try {
       await env.DLQ.send(record, { delaySeconds: backoffSeconds(record.retry_count) });
       logStructured({
@@ -91,7 +132,7 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
   // A 'dead' marad a 2. szegmens (isDeadKey ezt nézi), de a dátum is bekerül
   // UTÁNA, hogy a dead archívum is lexikálisan dátum-rendezhető/scan-elhető legyen.
   const prefix =
-    record.retry_count >= MAX_RETRIES
+    record.retry_count >= maxRetriesFor(record)
       ? `${record.site_id}/${record.platform}/dead/${dateStr}`
       : `${record.site_id}/${record.platform}/${dateStr}`;
 
@@ -107,7 +148,7 @@ export async function writeDeadLetter(env: Env, record: DeadLetterRecord): Promi
       httpMetadata: { contentType: 'application/json' }
     });
 
-    const isDead = record.retry_count >= MAX_RETRIES;
+    const isDead = record.retry_count >= maxRetriesFor(record);
     logStructured({
       level: isDead ? 'warn' : 'info',
       error_code: isDead ? TrackingErrorCode.MAX_RETRIES_EXCEEDED : undefined,
@@ -160,7 +201,7 @@ export async function listPendingRetries(
   maxExpired = 200
 ): Promise<PendingRetryScan> {
   const now = Date.now();
-  const cutoffMs = RETRY_WINDOW_HOURS * 60 * 60 * 1000;
+  // A cutoff rekordonként változik: a konfigurációs blokk hosszabb ablakot kap.
 
   const results: { key: string; record: DeadLetterRecord }[] = [];
   const expired: { key: string; record: DeadLetterRecord }[] = [];
@@ -185,7 +226,8 @@ export async function listPendingRetries(
         const record = (await body.json()) as DeadLetterRecord;
 
         const firstFailedMs = new Date(record.first_failed_at).getTime();
-        if (now - firstFailedMs > cutoffMs || record.retry_count >= MAX_RETRIES) {
+        const cutoffMs = retryWindowHoursFor(record) * 60 * 60 * 1000;
+        if (now - firstFailedMs > cutoffMs || record.retry_count >= maxRetriesFor(record)) {
           if (expired.length < maxExpired) expired.push({ key: obj.key, record });
           continue;
         }
