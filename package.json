@@ -9,6 +9,7 @@
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
     "check:events": "node server/check-event-contract.mjs",
+    "check:contract": "node scripts/contract-hash.mjs --check",
     "test": "vitest run",
     "test:watch": "vitest"
   },
