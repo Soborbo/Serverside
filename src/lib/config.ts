@@ -264,3 +264,23 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
     return null;
   }
 }
+
+/**
+ * Elvárt-e ez a platform a site-on (a böngésző-ingress fan-outja szempontjából)?
+ *
+ * Forrás: `expected_platforms.smoke` — ugyanaz a lista, amit a napi digest
+ * smoke-őre használ. SZÁNDÉKOSAN nem az `offline` lista: az a CRM lifecycle-ág
+ * (lead-status → Google Ads) elvárásait rögzíti, ami nem ezen az úton fut.
+ *
+ * FONTOS, hogy ez NE a config meglétéből legyen levezetve: pont a config
+ * eltűnését (lomtalan Meta, 2026-07-15) kell észrevennie. Egy „van config →
+ * elvárt" szabály a törlés pillanatában maga is eltűnne.
+ *
+ * Hiányzó `expected_platforms` blokk → `false`, azaz a config-hiányos skip
+ * terminális marad. Ez tudatos fail-safe: az elvárást explicit módon kell
+ * felvenni (B-2), különben minden be nem kötött platform DLQ-rekordot gyártana
+ * minden eventre, minden site-on.
+ */
+export function isExpectedPlatform(siteConfig: SiteConfig, platform: string): boolean {
+  return siteConfig.expected_platforms?.smoke?.includes(platform) === true;
+}

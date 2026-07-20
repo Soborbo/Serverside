@@ -57,9 +57,17 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         succeeded++;
       } else {
         if (result.skipped) logSkippedRetry(record);
+        // A retry_count VALÓDI kézbesítési kísérleteket számol. Egy konfigurációs
+        // blokk skipje NEM kísérlet: hívás nem történt, a vendor nem is látta az
+        // eventet. Ha ezt is számolnánk, az óránkénti cron ~egy nap alatt
+        // kimerítené a keretet, és a rekord a dead-archívumba esne még azelőtt,
+        // hogy a hiányzó configot bárki visszaírná — vagyis a „tartós retry"
+        // pontosan a lomtalan-forgatókönyvben mondana csődöt. Így a rekordot
+        // egyedül a 7 napos ablak (retryWindowHoursFor) járatja le.
+        const configBlocked = record.blocked_configuration === true && result.skipped === true;
         const incremented = {
           ...record,
-          retry_count: record.retry_count + 1,
+          retry_count: configBlocked ? record.retry_count : record.retry_count + 1,
           last_attempted_at: new Date().toISOString()
         };
         if (record.platform === 'ga4') {

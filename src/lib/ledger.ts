@@ -3,6 +3,7 @@ import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import type { ConsentState } from './consent';
 import type { Platform } from './deadletter';
+import type { SkipReason } from './skip-reason';
 
 /**
  * D1 ledger — append-only bizonyíték a beérkező konverziókról, a vendor-
@@ -66,6 +67,11 @@ export interface VendorResult {
   // transport). 'skipped'-ként kerül a ledgerbe, hogy ne torzítsa a reconciliation
   // coverage-számítását valódi kézbesítésként.
   skipped?: boolean;
+  // MIÉRT maradt ki. A `skipped` flag önmagában nem különbözteti meg a jogos
+  // kihagyást a konfigurációs blokktól — lásd lib/skip-reason.ts. A fan-out ez
+  // alapján dönt DLQ-ról és riasztásról; a ledger-státusz mindhárom esetben
+  // 'skipped'. Hiányzó érték = a régi, meg nem különböztetett viselkedés.
+  skip_reason?: SkipReason;
 }
 
 /**
@@ -79,6 +85,18 @@ export function normalizeDelivery(
   settled: PromiseSettledResult<VendorResult>
 ): DeliveryRecord {
   if (settled.status === 'fulfilled' && settled.value.skipped === true) {
+    // A státusz mindhárom skip-oknál 'skipped' (vendorhívás nem történt), de a
+    // KONFIGURÁCIÓS BLOKK hibakódot is kap: enélkül a ledgerben semmi nem
+    // különböztetné meg egy jogos consent-kihagyástól, és a napi digest újra
+    // csak annyit látna, hogy „skipped" — pontosan ez rejtette el a lomtalan
+    // Meta-kiesést 2026-07-15 és 07-20 között.
+    if (settled.value.skip_reason === 'not_configured') {
+      return {
+        platform,
+        status: 'skipped',
+        error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED
+      };
+    }
     return { platform, status: 'skipped' };
   }
   if (settled.status === 'rejected') {
