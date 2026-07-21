@@ -33,6 +33,23 @@ export interface PlainUserDataPayload {
   external_id?: string;
 }
 
+// F3-A/2 · Prehashed PII contract (SZERVER-INGRESS-ONLY). A CRM outbox már-hash-elt
+// user_data-t küld, hogy a gateway NE hash-eljen újra (dupla hash → néma match-rate
+// esés). Minden mező 64-hosszú lowercase hex SHA-256; a `user_data`-val KÖLCSÖNÖSEN
+// KIZÁRÓ. A gateway a böngésző-ágon eldobja (mint a client_ip / test_event_code) —
+// különben egy böngésző áldozat hash-elt identitására lőhetne konverziót plaintext
+// nélkül. A hash-mezők a HashedUserData em/ph/fn/ln/ct/zp/country/external_id-re map-elnek.
+export interface HashedUserDataPayload {
+  sha256_email?: string;
+  sha256_phone?: string;
+  sha256_first_name?: string;
+  sha256_last_name?: string;
+  sha256_city?: string;
+  sha256_postal_code?: string;
+  sha256_country?: string;
+  sha256_external_id?: string;
+}
+
 export interface ConversionRequestPayload {
   event_name: string;
   event_id: string;
@@ -71,6 +88,9 @@ export interface ConversionRequestPayload {
   service?: string;
   event_source_url?: string;
   user_data?: PlainUserDataPayload;
+  // F3-A/2 prehashed PII contract (server-ingress only). Kölcsönösen kizáró a
+  // `user_data`-val; a gateway NEM hash-eli újra. Lásd HashedUserDataPayload.
+  user_data_hashed?: HashedUserDataPayload;
   fbp?: string;
   fbc?: string;
   client_id?: string;
@@ -240,5 +260,14 @@ export function isValidConversionPayload(payload: unknown): payload is Conversio
   // jelentené, hogy egy join-kulcs formátumhibája a pénzt jelentő konverziót
   // magát nyeli el 204-gyel (lásd Run 6 audit). Charset-őr: isValidLeadId
   // (lib/ledger.ts) a route-ban.
+  // user_data_hashed: ha jelen van, objektum KELL legyen (strukturális őr). A
+  // per-mező 64-hex validáció és a user_data-val való kölcsönös kizárás a route-ban
+  // van (TRK-400-018/019), hogy a hitelesített CRM-hívó KONKRÉT 400-at kapjon (retry).
+  if (
+    p.user_data_hashed !== undefined &&
+    (typeof p.user_data_hashed !== 'object' || p.user_data_hashed === null || Array.isArray(p.user_data_hashed))
+  ) {
+    return false;
+  }
   return true;
 }
