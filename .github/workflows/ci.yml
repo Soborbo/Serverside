@@ -37,10 +37,39 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # A vendored src/events.json nem sodródhat el a deklarált hash-tol. Kulon
-      # lepes (nem csak a vitesten belul), hogy a bukas oka egy pillantasra lathato.
+      # A KANONIKUS src/events.json nem sodródhat el a deklarált hash-tol (deliberate-
+      # edit lock). Kulon lepes (nem csak a vitesten belul), hogy a bukas oka lathato.
       - name: Contract sync-guard
         run: npm run check:contract
 
       - name: Test
+        run: npm test
+
+  # A soborbo-tracking kliens-lib csomag (2026-07-21 óta itt él, sajat package.json +
+  # jsdom vitest). A ../src/events.json-t OLVASSA (egyetlen forras, nincs vendor-masolat).
+  tracking-package:
+    name: soborbo-tracking package (client lib)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: soborbo-tracking
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: soborbo-tracking/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Browser event contract (dataLayer <-> docs <-> GTM <-> canonical events.json)
+        run: npm run check:events
+
+      - name: Test (vitest + jsdom)
         run: npm test
