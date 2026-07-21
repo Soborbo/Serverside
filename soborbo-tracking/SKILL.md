@@ -15,8 +15,9 @@ description: >-
   guard. Consent Mode v2 + CookieYes, gclid/gbraid/wbraid/fbclid + full UTM
   capture, calculator funnel, form abandonment, phone dedup, first/last touch
   attribution. Bilingual / multi-market (HU + UK) via PUBLIC_TRACKING_* config.
-  Includes the server-side onboarding generator (server/generate-site.mjs) and
-  backend dispatch reference (server/backend/). Use when a new Astro site needs
+  Includes the onboarding runbook (INSTALL.md) driving the repo's canonical
+  generator (../scripts/generate-site.mjs) and backend dispatch reference
+  (server/backend/). Use when a new Astro site needs
   GA4 + Meta + Google Ads tracking. No Zaraz, no Stape. To INSTALL end-to-end,
   follow INSTALL.md (the ordered agent runbook).
 ---
@@ -31,24 +32,27 @@ the v5 Turnstile-gated browser dispatch are deprecated — this supersedes them.
 > dispatch → server binding → OAuth → verification). The sections below are
 > reference; `INSTALL.md` is the spine.
 
-## Engine repository (read this too)
+## This package lives IN the engine repo
 
-This skill is the **standard / client** half. The **engine** is a separate repo —
-the event-gateway Cloudflare Worker — and the **single source of truth for the
-event taxonomy** lives there:
+This package is the **client / standard** half of Soborbo tracking; the **engine**
+half — the event-gateway Cloudflare Worker — lives in the **same repo**
+(`github.com/Soborbo/Serverside`), one level up. As of 2026-07-21 the package was
+**consolidated INTO Serverside** (it used to be a separate `Soborbo/claudeskills`
+skill that vendored a copy of `events.json`); there is now **one repo and no
+vendored copy**.
 
-| | repo | role |
+| | location | role |
 |---|---|---|
-| **engine** | `github.com/Soborbo/Serverside` | gateway worker; `src/events.json` is the canonical event source |
-| **skill** | `github.com/Soborbo/claudeskills` → `soborbo-tracking/` | client components + backend dispatch + onboarding + GTM |
+| **engine** | `../src`, `../scripts`, `../server` (the Serverside worker) | gateway worker; **`../src/events.json` is the single canonical event source** |
+| **client** | `soborbo-tracking/` (this package) | client components + backend dispatch + onboarding runbook + GTM |
 
-See [`repos.json`](repos.json). The canonical `events.json` is **vendored** into
-this skill (`soborbo-tracking/events.json`, a copy of `Serverside/src/events.json`);
-the generators (`server/generate-site.mjs`, `gtm/gen-container.mjs`) and
-`lib/event-contract.ts` derive from it, and two machine checks guard drift:
-`tests/event-contract.test.ts` (lib ↔ events.json) and
-`server/check-event-contract.mjs --engine` (events.json ↔ engine). Any change to
-gateway behaviour happens in the **engine** repo.
+See [`repos.json`](repos.json). The **single** `../src/events.json` is read directly
+by both halves: the worker, and here by `tests/event-contract.test.ts` +
+`server/gen-event-aliases.mjs` + `server/check-event-contract.mjs`.
+`lib/event-contract.ts` mirrors it, guarded by `tests/event-contract.test.ts`
+(lib ↔ events.json). The per-site generator is the one canonical
+`../scripts/generate-site.mjs`. Any change to gateway behaviour happens in
+`../src`.
 
 ## Architecture — two channels, two ingress paths, ONE event_id
 
@@ -153,10 +157,10 @@ lib/          index.ts (entry), event-contract.ts (ingress split — test-guarde
               config.ts (market), events.ts (dataLayer/GTM), persistence.ts
               (attribution/normalization), consent.ts (CookieYes), gateway.ts
               (browser-path dispatch), observability.ts (diagnostic codes), uuid.ts
-events.json   vendored canonical event source (copy of Serverside/src/events.json)
-server/       generate-site.mjs (onboarding generator, HARD test-code gate),
-              site-config.schema.json, SETUP-SERVER.md, check-event-contract.mjs,
-              smoke-test.sh (gate checks), site-inputs/
+              (the canonical event source is ../src/events.json — one repo, no copy)
+server/       SETUP-SERVER.md, check-event-contract.mjs (browser dataLayer↔docs↔GTM),
+              site-config.schema.json, smoke-test.sh (gate checks), site-inputs/
+              (the per-site generator is the canonical ../scripts/generate-site.mjs)
 server/backend/  gateway-dispatch.ts + smoke.ts + worker.ts + README.md —
               the SITE BACKEND's server leg (verbatim from the live sites)
 examples/     ready-to-copy wiring (Layout + form + .env + route)
@@ -210,7 +214,7 @@ The gateway also accepts legacy GA4 names (`quote_calculator_conversion`,
 `callback_conversion`, `contact_form_submit`, `phone_conversion`,
 `email_conversion`, `whatsapp_conversion`, `booking_click`) and **normalizes them
 to canonical at ingress** — which is also why `gads.conversion_actions` keys must
-be canonical. The source of truth is `events.json` (vendored from the engine);
+be canonical. The source of truth is the single `../src/events.json`;
 `lib/event-contract.ts` mirrors the split and the tests enforce the mirror.
 
 ## Invariants kept (still apply)
@@ -229,12 +233,13 @@ be canonical. The source of truth is `events.json` (vendored from the engine);
 
 ## Server side (gateway) — summary
 
-Server logic is the **`Soborbo/Serverside` event-gateway worker**. This skill
-does not duplicate it — `server/SETUP-SERVER.md` + `generate-site.mjs` bind a
-site (KV config + route + per-site token + Google Ads OAuth with the
-`datamanager` scope), and `server/backend/` is the site-side dispatch. Gateway
-tests live there. Engine error-code runbook: `Serverside/docs/error-codes.md`
-(TRK-400-017 browser-gate, TRK-900-007 retry-persist, TRK-950-004 ledger honesty).
+Server logic is the **event-gateway worker in this same repo** (`../src`). This
+package does not duplicate it — `server/SETUP-SERVER.md` + the canonical
+`../scripts/generate-site.mjs` bind a site (KV config + route + per-site token +
+Google Ads OAuth with the `datamanager` scope), and `server/backend/` is the
+site-side dispatch. Gateway tests live in `../tests`. Engine error-code runbook:
+`../docs/error-codes.md` (TRK-400-017 browser-gate, TRK-900-007 retry-persist,
+TRK-950-004 ledger honesty).
 
 ## Env vars
 
@@ -243,9 +248,9 @@ tests live there. Engine error-code runbook: `Serverside/docs/error-codes.md`
 **Site worker (backend dispatch + smoke):** `TRACKING_GATEWAY_TOKEN` *(secret)*,
 `SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`.
 (Meta/Ads secrets do NOT go here — they live in the gateway KV.)
-**Gateway (separate worker):** see `Soborbo/Serverside` — GADS_* (OAuth with
-`datamanager` scope), ADMIN_API_TOKEN, the per-site config KV, `SMOKE_SITES`,
-and `DATAMANAGER_VALIDATE_ONLY` for dry-run.
+**Gateway (the worker in `../`):** GADS_* (OAuth with `datamanager` scope),
+ADMIN_API_TOKEN, the per-site config KV, `SMOKE_SITES`, and
+`DATAMANAGER_VALIDATE_ONLY` for dry-run.
 
 ## Tests
 
@@ -255,8 +260,8 @@ never reach the browser path; callback dataLayer-only; TRK-1005/1006 diagnostics
 shared event_id on click conversions, gateway payload (no turnstile_token),
 no-PII-in-dataLayer + EC side-channel, GTM container export, market config,
 `tests/event-contract.test.ts` drift guards. Also `npm run typecheck` and
-`node server/check-event-contract.mjs [--engine <Serverside>/src/events.json]`.
-Server-side tests live in Soborbo/Serverside.
+`node server/check-event-contract.mjs`. Server-side (worker) tests live in
+`../tests`.
 
 ## Reference docs
 

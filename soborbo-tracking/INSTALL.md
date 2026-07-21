@@ -181,18 +181,25 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
    No `ga4` block for new sites (the gateway sends no GA4). No `test_event_code`
    (the generator hard-errors). `gads.conversion_actions` keys are the **offline
    CRM events**, canonical names only.
-2. **Generate:**
+2. **Generate** — run the repo's **single canonical** generator from the Serverside
+   root (`../scripts/generate-site.mjs` relative to this package):
    ```bash
-   node server/generate-site.mjs --input /tmp/<site>.json --out /tmp/<site>-out
+   # NEW site → --new-site (the token-rotation guard requires it when the input
+   # carries no crm_token, else the generator exits 1):
+   node scripts/generate-site.mjs --input /tmp/<site>.json --out /tmp/<site>-out --new-site
    ```
    Validates (bad input → exit 1; fix the input, not the script) and emits
    `site-config.json`, `routes.toml`, `kv-put.sh`, `crm-secret.env`, `INTEGRATION.md`.
    Save the generated token from `crm-secret.env` immediately.
+   > **Token-rotation guard:** for an EXISTING site a plain re-run would overwrite
+   > the live KV token (the site backend would 401 on `/lead-status`). There, either
+   > pass the existing token as `crm_token` (reuse) or `--rotate-token` for a
+   > deliberate rotation (then redeploy the CRM with the new token).
 3. **Upload KV** — one entry per hostname, into SITE_CONFIG
    (`edd34e28eee847c09c26f9d9e3ea04ab`): run the `kv-put.sh` commands (wrangler) or
    use the Cloudflare MCP `kv_put`.
-4. **Route + deploy** — add the `routes.toml` block to the `Soborbo/Serverside`
-   `wrangler.toml`, open a **branch + PR into the deployed branch** (Step 1); the
+4. **Route + deploy** — add the `routes.toml` block to the repo's `../wrangler.toml`
+   (Serverside root), open a **branch + PR into the deployed branch** (Step 1); the
    user lands it. This makes `https://<host>/api/event/*` resolve to the gateway.
 5. **Register the smoke guard** — add the `site_id` to the gateway's `SMOKE_SITES`
    var (wrangler.toml `[vars]`), same PR.
@@ -247,6 +254,7 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
 - **Migration:** don't rename live GA4 events mid-stream — use the per-site
   `event-aliases.json` + `cutover_date`; run paths in parallel ≥7 days
   (`docs/MIGRATION-existing-sites.md`, `docs/EVENT-MIGRATION.md`).
-- **One generator, one source of truth** — always run `server/generate-site.mjs`;
-  never improvise the JSON. events.json is vendored from the engine; check drift
-  with `node server/check-event-contract.mjs --engine <Serverside>/src/events.json`.
+- **One generator, one source of truth** — always run the canonical
+  `../scripts/generate-site.mjs` (repo root: `scripts/generate-site.mjs`); never
+  improvise the JSON. There is a single `../src/events.json` (no vendored copy);
+  the browser contract is checked with `node server/check-event-contract.mjs`.

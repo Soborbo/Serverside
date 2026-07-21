@@ -1,9 +1,9 @@
 # Canonical event map (source of truth for names)
 
-This file is **authoritative** for browser event names in this skill. The deeper
-source of truth is the engine's `events.json` (vendored at `../events.json`); the
-generators read it and `server/check-event-contract.mjs` guards drift. (`EVENTS.md`
-is the funnel-adaptation guide; in a name conflict THIS file wins.)
+This file is **authoritative** for browser event names in this package. The deeper
+source of truth is the single `../src/events.json` (shared in-repo with the gateway
+worker); the generators read it and `server/check-event-contract.mjs` guards drift.
+(`EVENTS.md` is the funnel-adaptation guide; in a name conflict THIS file wins.)
 
 **One canonical name per event, across all layers** — the browser dataLayer event,
 the GA4 event name, and the gateway `event_name` are now the SAME string. The old

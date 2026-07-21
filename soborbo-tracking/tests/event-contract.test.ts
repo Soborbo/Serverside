@@ -6,12 +6,12 @@ import {
 import { CLICK_GATEWAY_EVENT } from '../lib/index';
 
 /**
- * DRIFT GUARDS. events.json (vendored from Serverside/src/events.json) is the
- * single source of truth; lib/event-contract.ts is its hand-written mirror that
- * ships with lib/ into sites. If any of these fail: regenerate the arrays in
- * lib/event-contract.ts from events.json — do NOT change these tests.
- * (`server/check-event-contract.mjs --engine` guards events.json itself against
- * engine drift.)
+ * DRIFT GUARDS. The single canonical ../src/events.json (shared in-repo with the
+ * gateway worker) is the source of truth; lib/event-contract.ts is its hand-written
+ * mirror that ships with lib/ into sites. If any of these fail: regenerate the
+ * arrays in lib/event-contract.ts from events.json — do NOT change these tests.
+ * (The worker-side ../server/check-event-contract.mjs guards events.json's internal
+ * shape; this package's server/check-event-contract.mjs guards the browser contract.)
  */
 
 interface EventDef {

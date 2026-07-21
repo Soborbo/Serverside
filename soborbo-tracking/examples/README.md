@@ -15,7 +15,7 @@ No need to generate anything, just copy + swap 3 identifiers.
 
 ## Server (event-gateway, ONCE per site)
 6. Following the `wrangler-route.example.toml` example, add the route to the Serverside
-   `wrangler.toml` (or run `server/generate-site.mjs` → `routes.toml`).
+   `wrangler.toml` (or run the canonical `scripts/generate-site.mjs` → `routes.toml`).
 7. Upload the KV site-config (Meta/Ads IDs + secrets, `crm_token_sha256`) —
    `server/SETUP-SERVER.md`.
 8. Backend leg: `server/backend/` → `src/lib/tracking/` + `src/worker.ts` (service

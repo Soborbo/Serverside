@@ -1,11 +1,13 @@
 # Server wiring — event-gateway worker
 
-The server side is the **`Soborbo/Serverside` event-gateway worker**. Wiring a new
-site = KV site-config + route + per-site token + (if Google Ads) OAuth. The config
-is produced deterministically by `generate-site.mjs` — **never hand-write it**.
+The server side is the **event-gateway worker in this same repo** (Serverside). This
+package (`soborbo-tracking/`) lives one level below the worker. Wiring a new site =
+KV site-config + route + per-site token + (if Google Ads) OAuth. The config is
+produced deterministically by the canonical `../scripts/generate-site.mjs` —
+**never hand-write it**.
 
 ## 0. Prerequisite
-- `Soborbo/Serverside` repo available (`git clone https://github.com/Soborbo/Serverside.git`).
+- You are in the `Soborbo/Serverside` repo (the worker + this package are one repo).
   Verify its DEFAULT branch and the Workers Builds production branch before any PR.
 - SITE_CONFIG KV namespace id: `edd34e28eee847c09c26f9d9e3ea04ab`.
 
@@ -27,7 +29,8 @@ is produced deterministically by `generate-site.mjs` — **never hand-write it**
 
 ## 2. Generate
 ```bash
-node server/generate-site.mjs --input /tmp/<site>.json --out /tmp/<site>-out
+# from the Serverside repo root; add --new-site for a new site (token-rotation guard):
+node scripts/generate-site.mjs --input /tmp/<site>.json --out /tmp/<site>-out --new-site
 ```
 Input (see the validator in the script):
 ```json

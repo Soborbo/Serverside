@@ -1,7 +1,7 @@
 /**
  * Event ingress contract — WHICH events may travel WHICH path to the gateway.
  *
- * Source of truth: `events.json` (vendored copy of `Serverside/src/events.json`).
+ * Source of truth: the single `../src/events.json` (shared in-repo with the worker).
  * This file is a hand-written mirror of the derived sets so that sites which copy
  * only `lib/` still carry the contract. `tests/event-contract.test.ts` asserts this
  * file NEVER drifts from events.json — if that test fails, regenerate these arrays

@@ -4,12 +4,13 @@ import { readFileSync } from 'node:fs';
 import { CONTRACT_PATH, LOCK_PATH, contractHash, normalizeContract } from '../scripts/contract-hash.mjs';
 
 // ============================================================
-// Contract sync-guard (F1-4).
+// Contract sync-guard (F1-4) — intra-repo deliberate-edit lock.
 //
-// Az `src/events.json` VENDORED MÁSOLAT; a kanonikus otthon a
-// Soborbo/claudeskills repo `soborbo-tracking/events.json`-ja. Egy itt kézzel
-// beleírt sor némán szétvinné a két repót, és a drift csak akkor derülne ki,
-// amikor egy event már rossz néven megy ki egy hirdetési platformra.
+// Az `src/events.json` a KANONIKUS, EGYETLEN forrás. 2026-07-21 óta a
+// soborbo-tracking kliens-csomag IS ebbe a repóba került (soborbo-tracking/),
+// és ugyanezt a fájlt olvassa közvetlenül — NINCS vendor-másolat, NINCS
+// kereszt-repó drift. A lock innentől véletlen/néma szerkesztés ellen véd:
+// egy itt kézzel átírt sor csak a lock-diffel válik láthatóvá a PR-ben.
 //
 // Ez a teszt a meglévő CI-be kapcsolódik (`npm test`), nem kell külön workflow-lépés.
 // ============================================================
@@ -20,18 +21,19 @@ const lock = () => JSON.parse(readFileSync(LOCK_PATH, 'utf8'));
 describe('contract deliberate-edit lock', () => {
   it('a KANONIKUS events.json megegyezik a lock contract_hash-sel', () => {
     // Ha ez bukik: ez a KANONIKUS forrás, ITT szerkeszd. Módosítsd az events.json-t,
-    // majd `contract-hash.mjs --update`, és re-vendorold a claudeskills-másolatot.
+    // majd `contract-hash.mjs --update`. (Nincs több claudeskills-másolat re-vendorolni.)
     expect(contractHash(raw())).toBe(lock().contract_hash);
   });
 
-  it('a lock a Serverside-ot jelöli forrásnak, a claudeskills-t downstreamnek', () => {
+  it('a lock canonical-source, és az in-repo soborbo-tracking csomagot jelöli fogyasztónak', () => {
     const l = lock();
     // Ez a repo a source of truth — a lock szerepe canonical-source, NEM vendored.
     expect(l.role).toBe('canonical-source');
     expect(l.contract_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
-    // A downstream fogyasztó (claudeskills) INNEN vendorol; a lock ezt dokumentálja.
-    const consumers = l.downstream_consumers ?? [];
-    expect(consumers.some((c: { repository?: string }) => c.repository === 'Soborbo/claudeskills')).toBe(true);
+    // A csomag beolvadt: az in-repo fogyasztó közvetlenül ezt a fájlt olvassa,
+    // nincs külső vendor-másolat (a régi downstream_consumers → in_repo_consumers).
+    const consumers = l.in_repo_consumers ?? [];
+    expect(consumers.some((c: { path?: string }) => c.path === 'soborbo-tracking/')).toBe(true);
   });
 });
 

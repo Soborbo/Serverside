@@ -1,7 +1,7 @@
 # Site inputs — pre-filled generator inputs
 
-Ready-to-fill inputs for `../generate-site.mjs`, with the **non-secret IDs already
-gathered**.
+Ready-to-fill inputs for the canonical generator (`../../scripts/generate-site.mjs`,
+repo root: `scripts/generate-site.mjs`), with the **non-secret IDs already gathered**.
 
 > **⚠️ LIVE SITES ARE NOT HERE, ON PURPOSE.** `painless`, `beautyflow`, and
 > `lomtalan` are wired and in production. Re-running the generator for a live site
@@ -15,9 +15,9 @@ gathered**.
 
 1. Copy the input, fill the `REPLACE_ME_*` fields **outside git**:
    - `meta.access_token` — Meta Events Manager → Conversions API → System User token.
-2. Run the generator:
+2. Run the canonical generator from the Serverside repo root:
    ```bash
-   node ../generate-site.mjs --input /tmp/trapezlemezes.json --out /tmp/trapez-out
+   node scripts/generate-site.mjs --input /tmp/trapezlemezes.json --out /tmp/trapez-out --new-site
    ```
    It validates and emits `site-config.json`, `routes.toml`, `kv-put.sh`,
    `crm-secret.env` (SAVE THE TOKEN — the KV stores only its hash), and

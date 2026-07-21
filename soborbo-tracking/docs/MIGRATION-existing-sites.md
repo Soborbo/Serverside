@@ -18,7 +18,7 @@ pieces (Meta CAPI + Google Ads server-side):
 2. Backend: wire the gated form conversions through
    `server/backend/gateway-dispatch.ts` (browser dispatch for them is 403'd) —
    audit EVERY call site in the repo first (INVARIANTS #24).
-3. Server: `server/generate-site.mjs` for the site config (no `ga4` block — the
+3. Server: the canonical `scripts/generate-site.mjs` (repo root) for the site config (no `ga4` block — the
    gateway sends no GA4 at all). Meta CAPI + offline Google Ads run server-side.
 4. Route + KV + token + Google Ads OAuth (see `server/SETUP-SERVER.md`).
 5. Verification: smoke cron ledger row, Meta Test Events via the smoke lead

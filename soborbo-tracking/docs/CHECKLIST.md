@@ -12,9 +12,8 @@ not "done" until every applicable item is checked.
 - [ ] Every new browser event (`push({ event: 'X' })` in `events.ts`) is in
       `docs/CANONICAL-EVENTS.md` with: GA4 event name, gateway `event_name`,
       consuming GTM trigger, tag(s), and destination platform(s).
-- [ ] `npm run check:events` (i.e. `server/check-event-contract.mjs`) passes —
-      with `--engine <Serverside>/src/events.json` when the engine repo is checked
-      out (vendored events.json must not drift).
+- [ ] `npm run check:events` (i.e. `server/check-event-contract.mjs`) passes — it
+      reads the single canonical `../src/events.json` (no vendored copy any more).
 - [ ] `npm test` and `npm run typecheck` pass — including
       `tests/event-contract.test.ts` (the ingress-split drift guard).
 - [ ] Updated GTM container export is committed in the same PR

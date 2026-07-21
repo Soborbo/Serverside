@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * gen-event-aliases.mjs — generates `event-aliases.json` + `docs/EVENT-MIGRATION.md`
- * from the vendored `events.json` (§5.10).
+ * from the canonical `../src/events.json` (§5.10).
  *
  * Purpose: existing live sites emit the LEGACY event names (GA4 + dataLayer). A
  * reporting tool reads `event-aliases.json` to UNION the legacy + canonical names
