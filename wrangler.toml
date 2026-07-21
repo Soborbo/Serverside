@@ -267,12 +267,12 @@ zone_name = "skinlabhungary.hu"
 pattern = "www.skinlabhungary.hu/api/event/*"
 zone_name = "skinlabhungary.hu"
 #
-# [[routes]]
-# pattern = "szelloztessokosan.hu/api/event/*"
-# zone_name = "szelloztessokosan.hu"
-# [[routes]]
-# pattern = "www.szelloztessokosan.hu/api/event/*"
-# zone_name = "szelloztessokosan.hu"
+[[routes]]
+pattern = "szelloztessokosan.hu/api/event/*"
+zone_name = "szelloztessokosan.hu"
+[[routes]]
+pattern = "www.szelloztessokosan.hu/api/event/*"
+zone_name = "szelloztessokosan.hu"
 #
 [[routes]]
 pattern = "olcsokontenerhaz.hu/api/event/*"
