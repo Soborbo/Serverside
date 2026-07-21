@@ -2,7 +2,14 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { getSiteConfig } from '../lib/config';
 import { authenticateLeadStatus } from '../lib/admin-auth';
-import { hashUserDataForGoogle, sha256Hex, type CountryCode, type PlainUserData } from '../lib/hash';
+import {
+  hashUserDataForGoogle,
+  mapPrehashedUserData,
+  sha256Hex,
+  type CountryCode,
+  type HashedUserData,
+  type PlainUserData
+} from '../lib/hash';
 import { type GAdsPayload } from '../lib/gads';
 import { sendToDataManager } from '../lib/datamanager';
 import { enqueueFailure } from '../lib/deadletter';
@@ -38,6 +45,15 @@ interface LeadStatusBody {
   value?: number;
   currency?: string;
   user_data?: PlainUserData;
+  // F3-D · Prehashed PII contract a lifecycle-lábhoz. A CRM outbox CSAK SHA-256
+  // hash-eket tárol (nyers email/telefon soha), és a Google-normalizált hash-eket
+  // (`email_sha256_google` = Gmail dot/plus strip) ITT küldi, hogy a gateway NE
+  // hash-eljen újra (dupla hash → néma Google EC match-rate esés). Kölcsönösen
+  // kizáró a `user_data` NYERS identity-mezőivel (email/telefon/név) — a plain CÍM
+  // (postal_code/country) viszont a `user_data`-ban marad (a Data Manager plain-t
+  // vár rájuk). Az endpoint teljes egészében admin-auth (szerver-szerver), ezért —
+  // a /conversion-server böngésző-ágával ellentétben — nincs külön serverIngress-kapu.
+  user_data_hashed?: Record<string, unknown>;
   // A CRM ad-consent jele a leadre (a CRM marketingConsent-jéből). FALLBACK:
   // a Worker saját consent-receiptje (explicit GRANTED/DENIED capture-kori jel)
   // MEGELŐZI — a CRM marketingConsent-je newsletter-optin szemantikájú, és a
@@ -76,6 +92,17 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
   // ad_allowed: ha jelen van, csak boolean lehet (a CRM autoritatív consentje).
   if (p.ad_allowed !== undefined && typeof p.ad_allowed !== 'boolean') return null;
 
+  // user_data_hashed: objektum, de NEM tömb (a mező-tartalmi hash-validáció a
+  // handlerben, mapPrehashedUserData-val — az fail-loud hibás mezőnévvel).
+  if (
+    p.user_data_hashed !== undefined &&
+    (typeof p.user_data_hashed !== 'object' ||
+      p.user_data_hashed === null ||
+      Array.isArray(p.user_data_hashed))
+  ) {
+    return null;
+  }
+
   return {
     lead_id: p.lead_id as string,
     status: p.status,
@@ -86,6 +113,7 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
     // 3-betűs ISO uppercase (a Google Ads/Meta nagybetűt vár).
     currency: typeof p.currency === 'string' ? p.currency.toUpperCase() : undefined,
     user_data: p.user_data as PlainUserData | undefined,
+    user_data_hashed: p.user_data_hashed as Record<string, unknown> | undefined,
     ad_allowed: p.ad_allowed as boolean | undefined
   };
 }
@@ -140,6 +168,45 @@ export async function handleLeadStatus(
   const eventName = mapLeadStatusToEventName(body.status);
   if (!eventName) {
     return json({ error: 'unknown_status' }, 400);
+  }
+
+  // ── F3-D · Prehashed PII contract ────────────────────────────────────────
+  // A CRM lifecycle-outbox a Google-normalizált hash-eket küldi (`user_data_hashed`),
+  // hogy a gateway NE hash-eljen újra. Fail-loud: hibás hash / kettős identity-forrás
+  // → 400 (a néma pass-through Google EC match-et rontana jel nélkül). Az identity
+  // (email/telefon/név) prehashed; a plain CÍM (postal_code/country) a user_data-ban
+  // marad — a kettő diszjunkt, ezért együtt élhet.
+  let prehashedUserData: HashedUserData | null = null;
+  if (body.user_data_hashed) {
+    const ud = body.user_data ?? {};
+    const rawIdentityPresent = !!(ud.email || ud.phone_number || ud.first_name || ud.last_name);
+    if (rawIdentityPresent) {
+      logStructured({
+        level: 'info',
+        error_code: TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: eventName,
+        duration_ms: Date.now() - startedAt
+      });
+      return json({ error: 'user_data and user_data_hashed are mutually exclusive' }, 400);
+    }
+    const mapped = mapPrehashedUserData(body.user_data_hashed);
+    if ('invalidField' in mapped) {
+      logStructured({
+        level: 'info',
+        error_code: TrackingErrorCode.INVALID_PREHASHED_USER_DATA,
+        // A mezőNÉV nem PII (a hash-érték sem az) — a konkrét mező kell a CRM-nek.
+        message: `${ERROR_DESCRIPTIONS[TrackingErrorCode.INVALID_PREHASHED_USER_DATA]} (${mapped.invalidField})`,
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: eventName,
+        duration_ms: Date.now() - startedAt
+      });
+      return json({ error: `invalid_user_data_hashed`, field: mapped.invalidField }, 400);
+    }
+    prehashedUserData = mapped.data;
   }
 
   const occurredAtIso = body.occurred_at ?? new Date().toISOString();
@@ -197,10 +264,12 @@ export async function handleLeadStatus(
     // Model 2: the server is Google-Ads-offline-only (Enhanced Conversions for
     // Leads), delivered via the Data Manager API. The email hash MUST use the
     // Google normalization (Gmail dot/plus strip), NOT the Meta rule.
-    const hashed = await hashUserDataForGoogle(
-      body.user_data ?? {},
-      siteConfig.country_code as CountryCode
-    );
+    // F3-D: a CRM lifecycle-outbox már Google-normalizált hash-eket küld
+    // (`user_data_hashed`) → ilyenkor NEM hash-elünk újra (nincs dupla-hash). Plain
+    // user_data esetén (pl. telefonos/manuális lead) a gateway hash-el, mint eddig.
+    const hashed =
+      prehashedUserData ??
+      (await hashUserDataForGoogle(body.user_data ?? {}, siteConfig.country_code as CountryCode));
     // Consent Mode jelek a Data Manager eventre. EEA/DMA alatt a jelöletlen
     // (unspecified) consentű eventet a Google csendben kizárhatja az ads-
     // mérésből — ha van POZITÍV consent-evidenciánk (explicit GRANTED receipt a
