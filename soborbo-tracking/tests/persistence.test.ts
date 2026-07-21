@@ -27,6 +27,12 @@ describe('normalizePhone — bilingual UK + HU', () => {
   it('HU 06… → +36… (auto-detect, regardless of config)', () => {
     expect(normalizePhone('06 20 123 4567')).toBe('+36201234567');
   });
+  it('HU 06 landline (10-jegyű) → strip 06, egyezik a szerverrel (nem +36 6…)', () => {
+    // Regresszió: a 10-jegyű 06-os vezetékes a `06 && length===11` gyorsútból
+    // kiesett, és korábban csak a `0`-t vágta → +36612345678 (plusz 6), eltérve a
+    // szerver hash.ts +3612345678-tól → néma EC/CAPI hash-divergencia.
+    expect(normalizePhone('06 1 234 5678', 'HU')).toBe('+3612345678');
+  });
   it('keeps already-international (+)', () => {
     expect(normalizePhone('+44 7123 456789')).toBe('+447123456789');
     expect(normalizePhone('+36 20 123 4567')).toBe('+36201234567');

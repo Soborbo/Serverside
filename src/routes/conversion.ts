@@ -740,8 +740,17 @@ function fanOut(
         includeUserData: boolean,
         platformStart: number
       ) => {
+        // Egy not_configured skip {success:true}-t ad (hívás nem történt) — de a
+        // fan-out SIKER-metrikában ez NEM siker, különben egy config-vesztés
+        // (lomtalan-osztály) zöldnek látszana az AE-dashboardon. A ledger-sor +
+        // CRITICAL riasztás elkapja, de az AE-nézet félrevezetne. (A jogos
+        // consent-skip marad success:true — az a fan-out helyes működése.)
+        const notConfigured =
+          result.status === 'fulfilled' &&
+          result.value.skipped === true &&
+          result.value.skip_reason === 'not_configured';
         const success =
-          result.status === 'fulfilled' && result.value.success;
+          result.status === 'fulfilled' && result.value.success && !notConfigured;
         const errorCode =
           result.status === 'fulfilled' ? result.value.error_code : undefined;
 

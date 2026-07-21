@@ -147,6 +147,12 @@ export function normalizePhone(
       cleaned = '+1' + cleaned;
     }
   } else {
+    // Ismeretlen országhoz (nem GB/HU/US/EU) nincs hívókód-szabályunk. Egy NEMZETI
+    // formátumú szám (trunk-`0`, pl. DE `0176…`) így `+0176…`-ként némán ROSSZ hash-t
+    // adna, ami se a böngésző-Pixellel, se a Google EC-vel nem match-el. Csak a már
+    // teljes nemzetközi (0-val NEM kezdődő) számot fogadjuk el; a nemzetit inkább
+    // eldobjuk (a hiányzó telefon jobb, mint a megmérgezett — a match megy email/fbp-n).
+    if (cleaned.startsWith('0')) return undefined;
     cleaned = '+' + cleaned;
   }
 
@@ -335,16 +341,22 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
  * Validates + maps an already-hashed `user_data_hashed` input to {@link HashedUserData}.
  * Each present `sha256_*` field MUST be a 64-char lowercase hex SHA-256; anything else
  * fails loud with the offending field name (never a silent pass-through — a bad hash
- * would corrupt the Meta match without any signal). Unknown keys are ignored
- * (forward-compat). The gateway does NOT re-hash these values.
+ * would corrupt the match without any signal).
+ *
+ * UNKNOWN keys also fail loud (NOT ignored): a caller that sends the wrong key name
+ * for an identity field (e.g. `email_sha256_google` instead of `sha256_email`) would
+ * otherwise have that field SILENTLY dropped — the best match signal gone with zero
+ * signal, worse than a 400. The contract is a fixed sha256_* key set; anything else
+ * is a bug the caller must see. The gateway does NOT re-hash these values.
  */
 export function mapPrehashedUserData(
   input: Record<string, unknown>
 ): { data: HashedUserData } | { invalidField: string } {
   const data: HashedUserData = {};
-  for (const [inKey, outKey] of Object.entries(PREHASHED_FIELD_MAP)) {
-    const v = input[inKey];
+  for (const [inKey, v] of Object.entries(input)) {
     if (v === undefined || v === null) continue;
+    const outKey = PREHASHED_FIELD_MAP[inKey];
+    if (!outKey) return { invalidField: inKey };
     if (typeof v !== 'string' || !SHA256_HEX_RE.test(v)) {
       return { invalidField: inKey };
     }

@@ -246,7 +246,11 @@ for (const lead of leads) {
   if (EXECUTE) {
     const tmp = `${TMP_DIR}/dlq-${safeEventId}.json`;
     writeFileSync(tmp, JSON.stringify(record));
-    wrangler(['r2', 'object', 'put', `${R2_BUCKET}/${key}`, '--file', tmp, '--remote']);
+    // A DLQ-bucket EU-jurisdikciós (wrangler.toml: jurisdiction = "eu"). A raw
+    // wrangler CLI a flag NÉLKÜL a DEFAULT jurisdikciós namespace-ben keresné a
+    // bucketet → "bucket not found", és az éles futás elhasalna. A production
+    // Worker ezt nem látja, mert bindingon ír (a binding hordozza a jurisdikciót).
+    wrangler(['r2', 'object', 'put', `${R2_BUCKET}/${key}`, '--file', tmp, '--remote', '--jurisdiction', 'eu']);
     unlinkSync(tmp);
   }
 }

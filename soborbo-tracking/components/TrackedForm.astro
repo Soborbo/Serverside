@@ -166,6 +166,11 @@ const {
           }
           form.submit();
         }
+        // A guardot feloldjuk: a re-entry MÁR lefutott (requestSubmit synchron
+        // fire-öl), a natív submit pedig vagy navigál (az oldal úgyis elhagyja ezt),
+        // vagy egy másik listener megszakította — utóbbinál e nélkül isSubmitting
+        // örökre true maradna, és MINDEN további tracked submit némán no-op lenne.
+        isSubmitting = false;
       });
 
       // Cleanup abandon tracking on Astro route change

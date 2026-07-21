@@ -14,20 +14,27 @@
  * Dev mode → allow all for testing convenience.
  */
 
+// CookieYes `getCkyConsent().categories` real key set — verified against the
+// official API docs (https://www.cookieyes.com/documentation/retrieving-consent-data-using-api-getckyconsent/).
+// There is NO `marketing` category: the ads/marketing category is `advertisement`
+// (same key the cookie parser in gateway.ts uses). Do NOT rename `advertisement`
+// back to `marketing` — that reads `undefined` and silently kills every
+// marketing-gated leg in production.
 declare global {
   interface Window {
     getCkyConsent?: () => {
       categories: {
-        analytics: boolean;
-        marketing: boolean;
-        functional: boolean;
         necessary: boolean;
+        functional: boolean;
+        analytics: boolean;
+        performance: boolean;
+        advertisement: boolean;
       };
     };
   }
 }
 
-export type ConsentCategory = 'analytics' | 'marketing' | 'functional' | 'necessary';
+export type ConsentCategory = 'necessary' | 'functional' | 'analytics' | 'performance' | 'advertisement';
 
 function getCookieYesConsent(): Record<ConsentCategory, boolean> | null {
   if (typeof window === 'undefined') return null;
@@ -44,7 +51,8 @@ function isDevMode(): boolean {
 export function hasMarketingConsent(): boolean {
   const c = getCookieYesConsent();
   if (!c) return isDevMode();
-  return c.marketing === true;
+  // Ads/marketing category in CookieYes is `advertisement`, NOT `marketing`.
+  return c.advertisement === true;
 }
 
 export function hasAnalyticsConsent(): boolean {

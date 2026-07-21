@@ -83,6 +83,11 @@ export function normalizePhone(raw: string, country: Market = trackingConfig.cou
   else if (p.startsWith('06') && p.length === 11) p = '+36' + p.slice(2);
   else if (country === 'HU') {
     if (p.startsWith('36')) p = '+' + p;
+    // 06 → strip trunk `06` (slice(2)) FELTÉTEL NÉLKÜL — a szerver hash.ts:134
+    // ugyanígy. A korábbi `06 && length===11` fenti gyorsút miatt egy 10-jegyű HU
+    // vezetékes (0612345678) ide esett, és csak a `0`-t vágta le → +36612345678
+    // (plusz 6), ami eltért a szerver +3612345678-tól → néma EC/CAPI hash-divergencia.
+    else if (p.startsWith('06')) p = '+36' + p.slice(2);
     else if (p.startsWith('0')) p = '+36' + p.slice(1);
     else p = '+36' + p;
   } else {

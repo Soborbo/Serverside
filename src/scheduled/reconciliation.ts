@@ -71,11 +71,18 @@ export async function handleReconciliation(env: Env): Promise<void> {
   // nem látja, ha a böngésző/GTM-ág romlik el (Modell 2) — ez a check pont azt
   // fogja meg. Hibatűrő: bármely leg query-hibája logolt skip, a cron nem dől el.
   let crossFindings: CrossCheckFinding[] = [];
+  // Ha a cross-check ELDŐL (lejárt analytics.readonly scope, API 5xx, visszavont
+  // token), az NEM „nincs drift" — a Modell-2 böngésző/GTM-vakfolt egyetlen monitora
+  // sötétbe borul. Enélkül a flag nélkül egy tiszta ledger-nap mellett NEM ment volna
+  // email, és a „Reconciliation completed" log cross_platform_findings:0-t írt volna —
+  // megkülönböztethetetlenül a „minden rendben"-től.
+  let crossCheckFailed = false;
   try {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const siteConfigs = await listMonitoredSiteConfigs(env);
     crossFindings = await runCrossPlatformCheck(env, siteConfigs, yesterday);
   } catch (err) {
+    crossCheckFailed = true;
     logStructured({
       level: 'error',
       error_code: TrackingErrorCode.RECON_CROSS_QUERY_FAILED,
@@ -120,14 +127,17 @@ export async function handleReconciliation(env: Env): Promise<void> {
     worst: summary.worst
   });
 
-  if (summary.findings.length + crossFindings.length > 0) {
+  if (summary.findings.length + crossFindings.length > 0 || crossCheckFailed) {
     const criticalCount = summary.critical_count + crossCritical;
     const warningCount = summary.warning_count + crossWarning;
+    const failNote = crossCheckFailed
+      ? '<p><strong>⚠️ A cross-platform check ELDŐLT — a GA4/Google-Ads vs ledger összevetés (a Modell-2 böngésző/GTM-vakfolt monitora) MA NEM futott le. Ellenőrizd az analytics.readonly tokent / az API-státuszt.</strong></p>'
+      : '';
     await sendAdminEmail(
       env,
-      `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning`,
-      buildDriftEmail(summary.findings, crossFindings, since),
-      criticalCount > 0 ? 'critical' : 'warning'
+      `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning${crossCheckFailed ? ' + cross-check FAILED' : ''}`,
+      failNote + buildDriftEmail(summary.findings, crossFindings, since),
+      criticalCount > 0 || crossCheckFailed ? 'critical' : 'warning'
     );
   }
 }

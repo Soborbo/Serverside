@@ -204,6 +204,17 @@ function toSiteConfig(cfg) {
   if (cfg.meta.test_event_code) sc.meta.test_event_code = cfg.meta.test_event_code;
   if (cfg.gads.conversion_actions) sc.gads.conversion_actions = cfg.gads.conversion_actions;
   if (cfg.require_consent === true) sc.require_consent = true;
+
+  // Fázis-0 néma-kiesés védelem: rögzítjük, MELY platformokat vár a site, hogy egy
+  // későbbi config-eltűnés (a lomtalan-osztályú csendes Meta-kiesés) RIASZTÁST
+  // váltson ki, ne csendet. Enélkül isExpectedPlatform/isExpectedOfflinePlatform
+  // false-t adna, és az új site kimaradna a védelemből (B-2 / CLAUDE.md 11).
+  //  - smoke: a böngésző-fan-out on-site sinkje Modell 2-ben a Meta (a GA4 MP
+  //    kikapcsolt, ezért NEM tesszük bele — sosem lenne kézbesítés, örök hamis riasztás).
+  //  - offline: a lifecycle-láb (lead-status → Google Ads), ha van customer_id.
+  sc.expected_platforms = { smoke: ['meta'] };
+  if (cfg.gads.customer_id) sc.expected_platforms.offline = ['gads'];
+
   return sc;
 }
 
@@ -240,12 +251,15 @@ function crmSecretEnv(cfg, token) {
 }
 
 function routeBlock(hostnames) {
-  // A zóna a fő (apex) domain — a www-t is ugyanaz a zóna szolgálja ki.
-  const apex = hostnames
-    .map((h) => h.replace(/^www\./, ''))
-    .reduce((a, b) => (a.length <= b.length ? a : b));
+  // A zóna hostnám-onként a SAJÁT apex-e (a www-t ugyanaz a zóna szolgálja ki).
+  // NEM egyetlen közös apex az összesre: egy több-domaines site (pl. brand.com +
+  // brand.co.uk) esetén a közös (legrövidebb) apex a nem-egyező route-okra rossz
+  // zone_name-et adott → a `wrangler deploy` elutasítja / rossz zónára mutat.
   return hostnames
-    .map((h) => `[[routes]]\npattern = "${h}/api/event/*"\nzone_name = "${apex}"`)
+    .map((h) => {
+      const zone = h.replace(/^www\./, '');
+      return `[[routes]]\npattern = "${h}/api/event/*"\nzone_name = "${zone}"`;
+    })
     .join('\n\n');
 }
 

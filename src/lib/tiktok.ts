@@ -85,8 +85,12 @@ export async function sendToTikTok(
   if (payload.client_user_agent) user.user_agent = payload.client_user_agent;
 
   const properties: Record<string, unknown> = {};
-  if (typeof payload.value === 'number' && payload.value > 0) properties.value = payload.value;
-  if (payload.currency) properties.currency = payload.currency;
+  // A currency-t a value>0-hoz kötjük (mint minden más platform). Lone currency
+  // value nélkül a TikTok malformed/zero-value konverzióként kezelhetné (§3).
+  if (typeof payload.value === 'number' && payload.value > 0) {
+    properties.value = payload.value;
+    if (payload.currency) properties.currency = payload.currency;
+  }
 
   const body = {
     event_source: 'web',

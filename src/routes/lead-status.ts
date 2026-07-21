@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
-import { getSiteConfig } from '../lib/config';
+import { getSiteConfig, isExpectedOfflinePlatform } from '../lib/config';
 import { authenticateLeadStatus } from '../lib/admin-auth';
 import {
   hashUserDataForGoogle,
@@ -46,13 +46,23 @@ interface LeadStatusBody {
   currency?: string;
   user_data?: PlainUserData;
   // F3-D · Prehashed PII contract a lifecycle-lábhoz. A CRM outbox CSAK SHA-256
-  // hash-eket tárol (nyers email/telefon soha), és a Google-normalizált hash-eket
-  // (`email_sha256_google` = Gmail dot/plus strip) ITT küldi, hogy a gateway NE
-  // hash-eljen újra (dupla hash → néma Google EC match-rate esés). Kölcsönösen
-  // kizáró a `user_data` NYERS identity-mezőivel (email/telefon/név) — a plain CÍM
-  // (postal_code/country) viszont a `user_data`-ban marad (a Data Manager plain-t
-  // vár rájuk). Az endpoint teljes egészében admin-auth (szerver-szerver), ezért —
-  // a /conversion-server böngésző-ágával ellentétben — nincs külön serverIngress-kapu.
+  // hash-eket tárol (nyers email/telefon soha), és a wire-kulcsok a KANONIKUS
+  // `sha256_*` nevek (`sha256_email`, `sha256_phone`, … — lásd hash.ts
+  // PREHASHED_FIELD_MAP); ismeretlen kulcs (pl. a régi doksi `email_sha256_google`-je)
+  // 400-at ad, NEM némán eldobva. A gateway NE hash-eljen újra (dupla hash → néma
+  // Google EC match-rate esés).
+  //
+  // ⚠️ NORMALIZÁCIÓS FIGYELEM: EZEN a végponton az `sha256_email` a GOOGLE-normalizált
+  // email hash-e (Gmail dot/plus strip — normalizeEmailForGoogle). UGYANEZ a wire-kulcs
+  // a /conversion-server (Meta) végponton a META-normalizált hash-t hordozza — a
+  // kulcsnév NEM különbözteti meg a kettőt, ezért a CRM outbox felelőssége, hogy
+  // ENDPOINT-HELYES normalizálóval hash-eljen. Meta-hash ide küldve a Gmail-userek
+  // EC match-je CSENDBEN romlik (a hash opaque, a gateway nem tudja ellenőrizni).
+  //
+  // Kölcsönösen kizáró a `user_data` NYERS identity-mezőivel (email/telefon/név) — a
+  // plain CÍM (postal_code/country) viszont a `user_data`-ban marad (a Data Manager
+  // plain-t vár rájuk). Az endpoint teljes egészében admin-auth (szerver-szerver),
+  // ezért — a /conversion-server böngésző-ágával ellentétben — nincs külön serverIngress-kapu.
   user_data_hashed?: Record<string, unknown>;
   // A CRM ad-consent jele a leadre (a CRM marketingConsent-jéből). FALLBACK:
   // a Worker saját consent-receiptje (explicit GRANTED/DENIED capture-kori jel)
@@ -228,6 +238,12 @@ export async function handleLeadStatus(
     leadConsent?.ad_user_data === 'GRANTED' || leadConsent?.ad_user_data === 'DENIED'
       ? leadConsent.ad_user_data
       : null;
+  // ad_personalization KÜLÖN jel — NEM az ad_user_data-ból vezetjük le (lásd lentebb
+  // a Data Manager consent-építésnél). Csak az explicit GRANTED/DENIED bizonyíték.
+  const receiptAdPersonalization =
+    leadConsent?.ad_personalization === 'GRANTED' || leadConsent?.ad_personalization === 'DENIED'
+      ? leadConsent.ad_personalization
+      : null;
   let consentBlocked: boolean;
   let consentSource: 'receipt' | 'crm' | 'fallback';
   if (receiptSignal !== null) {
@@ -276,7 +292,20 @@ export async function handleLeadStatus(
     // capture-ből, vagy a CRM ad_allowed=true jele), azt explicit
     // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site jel
     // nélküli receipttel) a mező kimarad — consentet nem találunk ki.
-    const consentEvidence = receiptSignal === 'GRANTED' || body.ad_allowed === true;
+    // ad_user_data és ad_personalization KÜLÖN Consent Mode jel — NEM egyenlők.
+    // Az ad_user_data-t a receipt/CRM evidencia adja; az ad_personalization-t NEM
+    // vezetjük le belőle (különben hamis GRANTED menne olyan usernek, aki csak a
+    // data-használatot engedte). Az ad_personalization csak SAJÁT bizonyítékra
+    // GRANTED: explicit receipt-jel, VAGY — granular receipt hiányában — a CRM
+    // ad_allowed=true (a CookieYes `advertisement` az ads-consentet egységként adja,
+    // ad_user_data + ad_personalization együtt). Explicit DENIED receiptet tisztelünk.
+    const adUserDataGranted = receiptSignal === 'GRANTED' || body.ad_allowed === true;
+    const adPersonalizationGranted =
+      receiptAdPersonalization === 'GRANTED' ||
+      (receiptAdPersonalization === null && receiptSignal === null && body.ad_allowed === true);
+    const consentSignals: { ad_user_data?: 'GRANTED'; ad_personalization?: 'GRANTED' } = {};
+    if (adUserDataGranted) consentSignals.ad_user_data = 'GRANTED';
+    if (adPersonalizationGranted) consentSignals.ad_personalization = 'GRANTED';
     const gadsPayload: GAdsPayload = {
       event_name: eventName,
       event_id: orderId,
@@ -287,9 +316,7 @@ export async function handleLeadStatus(
       // postal_code/country (plain) are carried into the address identifier.
       postal_code: body.user_data?.postal_code ?? undefined,
       country: body.user_data?.country ?? undefined,
-      consent: consentEvidence
-        ? { ad_user_data: 'GRANTED', ad_personalization: 'GRANTED' }
-        : undefined
+      consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined
     };
     const result = await sendToDataManager(siteConfig, env, gadsPayload, hashed);
     // `skipped` (nincs conversion action / nincs identifier) NEM upload — ha
@@ -355,6 +382,53 @@ export async function handleLeadStatus(
           }
         })
       );
+    }
+  } else {
+    // NEM consent-tiltott, de nincs gads.customer_id → az offline gads-láb nincs
+    // bekötve. Ha a site VÁRJA az offline gads-t (expected_platforms.offline), ez a
+    // PÉNZ-lábon jelentkező config-vesztés (lomtalan-osztály) → hangos riasztás +
+    // 'skipped|not_configured' ledger-sor, NEM némaság. Ha nem várt, jogos no-op.
+    if (isExpectedOfflinePlatform(siteConfig, 'gads')) {
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.PLATFORM_NOT_CONFIGURED],
+        site_id: siteConfig.site_id,
+        hostname,
+        event_name: eventName,
+        platform: 'gads'
+      });
+      ctx.waitUntil(
+        sendAlert(env, TrackingErrorCode.PLATFORM_NOT_CONFIGURED, {
+          site_id: siteConfig.site_id,
+          hostname,
+          platform: 'gads',
+          event_name: eventName,
+          lead_status: body.status
+        }).catch(() => {})
+      );
+      ctx.waitUntil(
+        recordDeliveries(env, {
+          event_id: orderId,
+          lead_id: body.lead_id,
+          site_id: siteConfig.site_id,
+          event_name: eventName,
+          origin: 'offline',
+          records: [
+            normalizeDelivery('gads', {
+              status: 'fulfilled',
+              value: { success: true, skipped: true, skip_reason: 'not_configured' }
+            })
+          ]
+        })
+      );
+    } else {
+      logStructured({
+        level: 'info',
+        message: 'Offline gads not configured (not expected for this site) — no-op',
+        site_id: siteConfig.site_id,
+        event_name: eventName
+      });
     }
   }
 

@@ -284,3 +284,17 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
 export function isExpectedPlatform(siteConfig: SiteConfig, platform: string): boolean {
   return siteConfig.expected_platforms?.smoke?.includes(platform) === true;
 }
+
+/**
+ * Elvárt-e ez a platform a site OFFLINE lifecycle-lábán (lead-status → Google Ads
+ * Enhanced Conversions)? Forrás: `expected_platforms.offline` — a browser-fan-out
+ * `smoke` listájától KÜLÖN, mert a két út más platform-halmazt vár.
+ *
+ * Ez zárja be a lomtalan-osztályú néma kiesést a PÉNZ-lábon: ha egy site offline
+ * gads-t vár, de a `gads.customer_id` eltűnt a configból, a lead-status enélkül
+ * csendben `uploaded_to_gads:false`-t írna (se DLQ, se riasztás). A helper explicit
+ * elvárás nélkül `false`-t ad (fail-safe: nem gyárt riasztást be nem kötött lábra).
+ */
+export function isExpectedOfflinePlatform(siteConfig: SiteConfig, platform: string): boolean {
+  return siteConfig.expected_platforms?.offline?.includes(platform) === true;
+}
