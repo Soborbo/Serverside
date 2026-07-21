@@ -310,3 +310,45 @@ export async function hashUserDataForGoogle(
 ): Promise<HashedUserData> {
   return hashUserData(input, countryCode, { emailNormalizer: normalizeEmailForGoogle });
 }
+
+// ── F3-A/2 · Prehashed PII contract ─────────────────────────────────────────
+// The CRM outbox stores only SHA-256 hashes and sends them via `user_data_hashed`
+// so the gateway does NOT re-hash (a double hash → the Meta match rate silently
+// drops to zero). The CRM MUST run the SAME normalizer as hashUserData BEFORE
+// hashing (email lowercase/trim, phone E.164, city keep-accents, postal
+// uppercase-no-space, country ISO-2 lowercase) — else Pécs/pecs and +36/06 mismatch
+// the browser Pixel's hashes and dedup/EMQ silently degrade.
+const PREHASHED_FIELD_MAP: Record<string, keyof HashedUserData> = {
+  sha256_email: 'em',
+  sha256_phone: 'ph',
+  sha256_first_name: 'fn',
+  sha256_last_name: 'ln',
+  sha256_city: 'ct',
+  sha256_postal_code: 'zp',
+  sha256_country: 'country',
+  sha256_external_id: 'external_id'
+};
+
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Validates + maps an already-hashed `user_data_hashed` input to {@link HashedUserData}.
+ * Each present `sha256_*` field MUST be a 64-char lowercase hex SHA-256; anything else
+ * fails loud with the offending field name (never a silent pass-through — a bad hash
+ * would corrupt the Meta match without any signal). Unknown keys are ignored
+ * (forward-compat). The gateway does NOT re-hash these values.
+ */
+export function mapPrehashedUserData(
+  input: Record<string, unknown>
+): { data: HashedUserData } | { invalidField: string } {
+  const data: HashedUserData = {};
+  for (const [inKey, outKey] of Object.entries(PREHASHED_FIELD_MAP)) {
+    const v = input[inKey];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string' || !SHA256_HEX_RE.test(v)) {
+      return { invalidField: inKey };
+    }
+    data[outKey] = v;
+  }
+  return { data };
+}

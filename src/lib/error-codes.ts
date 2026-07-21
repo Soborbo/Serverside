@@ -56,6 +56,13 @@ export enum TrackingErrorCode {
   // Workers rate-limit binding bizonyítottan nem throttle-ol → e nélkül bárki
   // hamis lead-konverziót lőhetne tetszőleges hash-elt email/telefonnal.
   HIGH_VALUE_EVENT_BROWSER_REJECTED = 'TRK-400-017',
+  // F3-A/2 prehashed PII contract. Az outbox/CRM már-hash-elt user_data-t küldhet
+  // (`user_data_hashed`), hogy a gateway NE hash-eljen újra (dupla hash → néma Meta
+  // match-rate esés). `user_data` és `user_data_hashed` KÖLCSÖNÖSEN KIZÁRÓ.
+  PREHASHED_AND_RAW_USER_DATA = 'TRK-400-018',
+  // A `user_data_hashed` bármely mezője nem 64-hosszú lowercase hex → 400, NEM néma
+  // átengedés (a CRM-nek a hibát tudnia kell, hogy javíthasson/retry-olhasson).
+  INVALID_PREHASHED_USER_DATA = 'TRK-400-019',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -194,6 +201,10 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Accepted conversions for a site spiked far above its 7-day baseline — possible conversion spam on the tokenless browser path',
   [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]:
     'High-value conversion rejected on the browser path — it must arrive via the authenticated /api/event/conversion-server ingress (per-site token)',
+  [TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA]:
+    'user_data and user_data_hashed are mutually exclusive — send exactly one (which normalizer ran is ambiguous otherwise)',
+  [TrackingErrorCode.INVALID_PREHASHED_USER_DATA]:
+    'user_data_hashed contains a field that is not a 64-char lowercase hex SHA-256',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -376,6 +387,8 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // Warning (nem info): legitim forgalomból nem jöhet — vagy támadó próbálkozik,
   // vagy egy site kliens-kódja regressziósan a böngésző-útra tette a form-eventet.
   [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]: 'warning',
+  [TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA]: 'info',
+  [TrackingErrorCode.INVALID_PREHASHED_USER_DATA]: 'info',
   // Kritikus: a tokenless böngésző-ág egyetlen visszamaradt kockázata a
   // konverzió-spam. Ha megtörténik, azonnal tudni akarunk róla (SMS is megy).
   [TrackingErrorCode.CONVERSION_SPIKE]: 'critical',

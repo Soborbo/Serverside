@@ -11,7 +11,7 @@ import { corsHeaders } from '../worker';
 import { getSiteConfig, isExpectedPlatform, type SiteConfig } from '../lib/config';
 import { checkOrigin } from '../lib/origin';
 import { authenticateServerIngress } from '../lib/admin-auth';
-import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
+import { hashUserData, mapPrehashedUserData, type CountryCode, type HashedUserData } from '../lib/hash';
 import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../lib/meta';
 // Modell 2 (§0/§4.3): az on-site fan-outból a GA4 ÉS a Google Ads láb kikerült.
 // On-site GA4 = csak böngésző (GA4 nem dedup-ol event_id-re → dupla lenne).
@@ -410,10 +410,79 @@ export async function handleConversion(
     }
   }
 
-  const hashedUserData = await hashUserData(
-    payload.user_data || {},
-    siteConfig.country_code as CountryCode
-  );
+  // ── F3-A/2 · Prehashed PII contract ──────────────────────────────────────
+  // A CRM outbox már-hash-elt user_data-t küldhet (`user_data_hashed`), hogy a
+  // gateway NE hash-eljen újra (dupla hash → néma Meta match-rate esés). Ez
+  // SZERVER-INGRESS-ONLY bizalmi mező (mint a client_ip / test_event_code): a
+  // böngésző-ágon eldobjuk — különben bárki egy áldozat hash-elt identitására
+  // lőhetne konverziót a plaintext ismerete nélkül.
+  if (!serverIngress) {
+    payload.user_data_hashed = undefined;
+  }
+
+  let hashedUserData: HashedUserData;
+  if (payload.user_data_hashed) {
+    // user_data ÉS user_data_hashed kölcsönösen kizáró — mindkettő jelenléte
+    // kliens-bug (melyik normalizáló futott?). Fail-loud, sosem néma választás.
+    const rawUserDataPresent =
+      payload.user_data != null && Object.keys(payload.user_data).length > 0;
+    if (rawUserDataPresent) {
+      const errorCode = TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA;
+      logStructured({
+        level: 'info',
+        error_code: errorCode,
+        message: ERROR_DESCRIPTIONS[errorCode],
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        duration_ms: Date.now() - startedAt
+      });
+      recordConversionMetric(env, {
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        accepted: false,
+        error_code: errorCode,
+        total_duration_ms: Date.now() - startedAt
+      });
+      return new Response(
+        dropStatus === 204 ? null : 'user_data and user_data_hashed are mutually exclusive',
+        { status: dropStatus, headers: cors }
+      );
+    }
+    const mapped = mapPrehashedUserData(payload.user_data_hashed as Record<string, unknown>);
+    if ('invalidField' in mapped) {
+      const errorCode = TrackingErrorCode.INVALID_PREHASHED_USER_DATA;
+      logStructured({
+        level: 'info',
+        error_code: errorCode,
+        // A mezőNÉV nem PII (a hash-érték sem az) — a konkrét mező kell a CRM-nek.
+        message: `${ERROR_DESCRIPTIONS[errorCode]} (${mapped.invalidField})`,
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        duration_ms: Date.now() - startedAt
+      });
+      recordConversionMetric(env, {
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        accepted: false,
+        error_code: errorCode,
+        total_duration_ms: Date.now() - startedAt
+      });
+      return new Response(
+        dropStatus === 204 ? null : `Invalid user_data_hashed.${mapped.invalidField}`,
+        { status: dropStatus, headers: cors }
+      );
+    }
+    hashedUserData = mapped.data;
+  } else {
+    hashedUserData = await hashUserData(
+      payload.user_data || {},
+      siteConfig.country_code as CountryCode
+    );
+  }
 
   // Szerver-ingressen a transport-IP/UA a HÍVÓ WORKERÉ, nem a végfelhasználóé —
   // ha ezt küldenénk a Metának, rossz geo + romló EMQ lenne (CLAUDE.md #2: az

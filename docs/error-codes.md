@@ -288,6 +288,18 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Description**: Form/lead/purchase konverzió (`quote_calculator_submitted`, `callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`, `purchase`) érkezett a böngésző-útra (`/api/event/conversion`). Ezek KIZÁRÓLAG a hitelesített `/api/event/conversion-server` ingressen jöhetnek (per-site token) — az Origin curl-ből hamisítható.
 **Action**: 1) Ha ismeretlen forrás → hamisított-konverzió kísérlet, az elutasítás a helyes viselkedés. 2) Ha egy SAJÁT site kliens-kódja termeli → a site backendjének kell dispatchelnie (lásd painless/lomtalan minta: `sendGatewayConversion`), a böngésző-leg csak a Meta Pixelé.
 
+## TRK-400-018 — user_data and user_data_hashed are mutually exclusive
+
+**Severity**: Info (client 400)
+**Description**: A hívó EGYSZERRE küldött nyers `user_data`-t ÉS `user_data_hashed`-et (F3-A/2 prehashed contract). Kétértelmű, melyik normalizáló futott — ezért 400, nem néma választás. (Csak szerver-ingressen fordulhat elő: a böngésző-ág eldobja a `user_data_hashed`-et.)
+**Action**: A hívó (CRM/outbox) KÜLDJÖN pontosan egyet. Ha az outbox már-hash-elt PII-t tárol, CSAK `user_data_hashed` menjen; nyers PII soha nem hagyja el a CRM-et.
+
+## TRK-400-019 — Invalid prehashed user_data field
+
+**Severity**: Info (client 400)
+**Description**: A `user_data_hashed` egy mezője nem 64-hosszú lowercase hex SHA-256 (F3-A/2). A gateway NEM engedi át némán — egy rossz hash némán rontaná a Meta match rate-et.
+**Action**: A CRM-nek UGYANAZT a normalizálót kell futtatnia hash ELŐTT, mint a gateway (`lib/hash.ts`: email lowercase/trim, telefon E.164, város ékezet-tartó, irsz. uppercase-no-space, ország ISO-2 lowercase), majd lowercase hex SHA-256-ot küldeni. A hibaüzenet megnevezi a hibás mezőt.
+
 ## TRK-900-007 — Retry record could not be stored anywhere
 
 **Severity**: Critical
