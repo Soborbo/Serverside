@@ -150,12 +150,65 @@ export async function sendCriticalSMS(env: Env, message: string): Promise<void> 
   }
 }
 
+/**
+ * Riasztás-throttling: azonos (errorCode, site) riasztás legfeljebb ablakonként
+ * egyszer megy ki. Enélkül egy TARTÓS hiba leadenként küldene emailt+SMS-t (egy
+ * lejárt Meta-token minden konverzióra), az SLO-check pedig 30 percenként
+ * újraküldené ugyanazt a „dead records" levelet — akár 90 napig, több ezer levél.
+ *
+ * A throttle-state a meglévő OAUTH_TOKENS KV-ben él (külön `alert-throttle:` prefix
+ * + expirationTtl) — nincs új binding, nincs deploy-kockázat. KV-hiba/hiány esetén
+ * NEM throttle-özünk: egy riasztást elküldeni akkor is jobb, mint némán elnyelni.
+ * A get→put nem atomi (KV eventual consistency); egy burst elején átcsúszhat pár
+ * duplikátum, de a leadenkénti több ezres áradatot néhány darabra vágja.
+ */
+const ALERT_THROTTLE_WINDOW_SEC = 3600; // 1 óra
+
+/**
+ * Throttle-primitív: `true` = MEHET (az adott kulcs nem szólalt meg az ablakban),
+ * `false` = ELNYOMVA. A state a meglévő OAUTH_TOKENS KV-ben, `alert-throttle:`
+ * prefixen. KV-hiba/hiány → `true` (inkább szóljon, mint hogy némán elnyeljük).
+ * A get→put nem atomi (KV eventual consistency) — burst elején átcsúszhat pár
+ * duplikátum, de a tartós áradatot ablakonként egyre vágja. A slo-check DLQ/dead
+ * riasztásai is EZT hívják (azok sendAdminEmail-en mennek, nem sendAlert-en).
+ */
+export async function throttleOncePer(env: Env, key: string, windowSec: number): Promise<boolean> {
+  const kv = env.OAUTH_TOKENS;
+  if (!kv) return true;
+  const k = `alert-throttle:${key}`;
+  try {
+    if (await kv.get(k)) return false;
+    await kv.put(k, new Date().toISOString(), { expirationTtl: windowSec });
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+async function alertThrottled(
+  env: Env,
+  errorCode: TrackingErrorCode,
+  siteId: string
+): Promise<boolean> {
+  return !(await throttleOncePer(env, `${errorCode}:${siteId}`, ALERT_THROTTLE_WINDOW_SEC));
+}
+
 export async function sendAlert(
   env: Env,
   errorCode: TrackingErrorCode,
   context: Record<string, unknown> = {}
 ): Promise<void> {
   const severity = ERROR_SEVERITY[errorCode] || 'warning';
+  const siteId = (context.site_id as string) || (context.hostname as string) || 'global';
+  if (await alertThrottled(env, errorCode, siteId)) {
+    logStructured({
+      level: 'info',
+      message: 'Alert suppressed — throttled (same errorCode+site within window)',
+      error_code: errorCode,
+      site_id: siteId
+    });
+    return;
+  }
   const description = ERROR_DESCRIPTIONS[errorCode] || 'Unknown error';
 
   const subject = `${errorCode}: ${description.slice(0, 80)}`;

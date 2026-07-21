@@ -76,7 +76,7 @@ export function initTracking(): void {
   captureUrlParams();
   if (!consentListenerBound) {
     consentListenerBound = true;
-    onConsentChange((c) => { if (c.marketing) persistTrackingParams(); });
+    onConsentChange((c) => { if (c.advertisement) persistTrackingParams(); });
   }
   if (hasMarketingConsent()) persistTrackingParams();
 }

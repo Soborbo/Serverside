@@ -56,7 +56,16 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         await deleteDeadLetter(env, key);
         succeeded++;
       } else {
-        if (result.skipped) logSkippedRetry(record);
+        if (result.skipped) {
+          logSkippedRetry(record);
+        } else {
+          // Valódi vendor-bukás a retry-n → 'rejected' delivery a ledgerbe. Enélkül a
+          // reconciliation vendor-hibarátája PONT kiesés alatt mér alul: az eredeti
+          // fan-out kísérlet után minden retry-bukás láthatatlan maradna. (A SKIP nem
+          // vendor-hívás → azt NEM könyveljük, különben a 7 napos configblokk
+          // óránként új sort írna. A retry_count korlátozza a rejected-sorok számát.)
+          await recordRetryDelivery(env, record, result);
+        }
         // A retry_count VALÓDI kézbesítési kísérleteket számol. Egy konfigurációs
         // blokk skipje NEM kísérlet: hívás nem történt, a vendor nem is látta az
         // eventet. Ha ezt is számolnánk, az óránkénti cron ~egy nap alatt
@@ -142,12 +151,14 @@ export function isRealRetrySuccess(result: VendorResult): boolean {
 }
 
 /**
- * Sikeres retry könyvelése a ledgerbe 'retry' origin-nal — az EGYETLEN közös
+ * Retry-kézbesítés könyvelése a ledgerbe 'retry' origin-nal — az EGYETLEN közös
  * pontja mind a négy replay-útnak (cron, Queues consumer, admin single/bulk).
- * Enélkül a reconciliation (csak 'fanout'+'retry' origint számol accepted-ként)
- * hamis coverage_drift CRITICAL-t adna minden visszanyert kézbesítésre.
- * normalizeDelivery: accepted CSAK vendor HTTP-státusszal; a lead_id a DLQ-
- * rekordból utazik tovább, hogy a lead-trail a visszanyert kézbesítést is lássa.
+ * SIKER és VALÓDI BUKÁS egyaránt ide fut: a sikeres retry 'accepted', a bukott
+ * 'rejected' sort ír (normalizeDelivery dönt a VendorResult alapján) — enélkül a
+ * vendor-hibaráta kiesés alatt alulmérne. (A szándékos SKIP-et a hívó NEM adja
+ * ide.) A reconciliation csak 'fanout'+'retry' origint számol; enélkül hamis
+ * coverage_drift CRITICAL menne minden visszanyert kézbesítésre. accepted CSAK
+ * vendor HTTP-státusszal; a lead_id a DLQ-rekordból utazik tovább a lead-trailhez.
  */
 export async function recordRetryDelivery(
   env: Env,

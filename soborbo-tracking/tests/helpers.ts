@@ -1,11 +1,19 @@
 /** Közös teszt-segédek a jsdom környezethez. */
 
+/**
+ * Emits a REAL-shaped CookieYes `getCkyConsent()` payload. The `marketing`
+ * option is the test's semantic word for the ads category — CookieYes exposes
+ * it under the key `advertisement` (there is no `marketing` key). Mapping it
+ * here keeps the test call-sites readable while exercising the real contract,
+ * so a regression to the wrong key (the 2026-07 silent-death bug) fails a test.
+ */
 export function setCkyConsent(opts: { analytics?: boolean; marketing?: boolean } = {}): void {
   const categories = {
-    analytics: !!opts.analytics,
-    marketing: !!opts.marketing,
-    functional: true,
     necessary: true,
+    functional: true,
+    analytics: !!opts.analytics,
+    performance: false,
+    advertisement: !!opts.marketing,
   };
   (window as unknown as { getCkyConsent: () => unknown }).getCkyConsent = () => ({ categories });
 }

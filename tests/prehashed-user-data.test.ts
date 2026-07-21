@@ -139,9 +139,15 @@ describe('mapPrehashedUserData (unit)', () => {
     expect(r).toEqual({ data: { em: hex('a') } });
   });
 
-  it('ignores unknown keys (forward-compat)', () => {
+  it('fails loud on unknown keys (a rossz kulcsnév NEM némán eldobva)', () => {
+    // Egy ismeretlen kulcs (pl. a régi doksi `email_sha256_google`-je, vagy egy
+    // elgépelt mező) NEM csúszhat át némán: a hozzá tartozó identity-hash különben
+    // jeltelenül elveszne (romló match). Fail-loud a mezőNÉVvel (a hash nem PII).
     const r = mapPrehashedUserData({ sha256_email: hex('a'), sha256_future_field: hex('b') });
-    expect(r).toEqual({ data: { em: hex('a') } });
+    expect(r).toEqual({ invalidField: 'sha256_future_field' });
+
+    const r2 = mapPrehashedUserData({ email_sha256_google: hex('a') });
+    expect(r2).toEqual({ invalidField: 'email_sha256_google' });
   });
 
   it.each([

@@ -41,8 +41,12 @@ const defaultLabel = type === 'email' ? 'Show email' : 'Show phone';
         if (btn.className) a.className = btn.className;
         btn.replaceWith(a);
         // Fire the canonical conversion (both channels, shared event_id, session-deduped).
-        if (kind === 'email') trackEmailConversion({ email: value });
-        else trackPhoneConversion({ phone: value });
+        // Do NOT pass `value` as user_data: it is the COMPANY's own email/phone, not the
+        // visitor's. Sending it would hash the same company identity for every visitor who
+        // clicks — identical em/ph across all "leads" → Meta EMQ actively degrades, and it
+        // is not even the visitor's data. The click conversion matches on fbp/fbc/IP/UA.
+        if (kind === 'email') trackEmailConversion();
+        else trackPhoneConversion();
       });
     });
   }

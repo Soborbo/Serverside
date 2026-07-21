@@ -66,13 +66,23 @@ describe('normalizeDelivery', () => {
     expect(r.vendor_message).toBe('partial boom');
   });
 
-  it('truncates very long vendor messages', () => {
+  it('sanitizes + caps vendor messages (§13: no PII persisted to the ledger)', () => {
+    // sanitizeErrorMessage a perzisztencia-határon: 200-ra vág ÉS PII-t strippel.
     const longMsg = 'x'.repeat(900);
     const r = normalizeDelivery(
       'meta',
       { status: 'fulfilled', value: { success: false, error: longMsg } }
     );
-    expect(r.vendor_message?.length).toBe(500);
+    expect(r.vendor_message?.length).toBe(200);
+
+    // A vendor visszhangozhatja a beküldött email/telefont — a ledgerbe NEM kerülhet.
+    const echoed = normalizeDelivery('meta', {
+      status: 'fulfilled',
+      value: { success: false, error: 'Invalid parameter: jane@example.com / +447123456789' }
+    });
+    expect(echoed.vendor_message).not.toContain('jane@example.com');
+    expect(echoed.vendor_message).not.toContain('447123456789');
+    expect(echoed.vendor_message).toContain('[email]');
   });
 
   // ── Fix 1 invariáns: accepted SOHA nem íródhat vendor HTTP-státusz nélkül ────
