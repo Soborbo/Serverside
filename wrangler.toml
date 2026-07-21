@@ -27,7 +27,7 @@ keep_vars = true
 # ellentmondás: a lomtalan-weboldal worker SERVICE BINDINGON hívja a gateway-t
 # (szerver-ingress), zóna-route nélkül. A SMOKE_SITES a ledger-oldali elvárást
 # írja le, nem a routing-ot.
-SMOKE_SITES = "painless,beautyflow,lomtalan"
+SMOKE_SITES = "painless,beautyflow,lomtalan,skinlab"
 
 [observability]
 enabled = true
@@ -257,6 +257,15 @@ zone_name = "beautyflow.pro"
 [[routes]]
 pattern = "www.beautyflow.pro/api/event/*"
 zone_name = "beautyflow.pro"
+#
+# Skinlab (skinlabhungary.hu) — Astro site worker, service binding a backend
+# konverziókhoz + zóna-route a böngésző-út (/api/event/conversion) számára.
+[[routes]]
+pattern = "skinlabhungary.hu/api/event/*"
+zone_name = "skinlabhungary.hu"
+[[routes]]
+pattern = "www.skinlabhungary.hu/api/event/*"
+zone_name = "skinlabhungary.hu"
 #
 # [[routes]]
 # pattern = "szelloztessokosan.hu/api/event/*"
