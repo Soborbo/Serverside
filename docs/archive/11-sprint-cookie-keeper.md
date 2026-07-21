@@ -1,3 +1,13 @@
+> ---
+> **status: archived** · **do_not_use_for_implementation: true**
+> superseded_by: README.md + CLAUDE.md + docs/HANDOVER-run6.md (a kanonikus élő állapot)
+>
+> Ez egy TERVEZÉSI/SPRINT-dokumentum a Run 1–6 építési fázisból. A benne leírt
+> premisszák egy része AZÓTA MEGDŐLT (pl. Turnstile-before-everything, quote-state
+> Durable Object, offline GA4 — mind törölve; lásd CLAUDE.md Rule 10/17). NE
+> implementálj ez alapján; a jelenlegi valóság a fenti kanonikus fájlokban van.
+> ---
+
 # Sprint 11 — Cookie Keeper (Safari ITP server-set first-party cookies)
 
 **Cél:** Safari ITP-megkerülés server-set HTTPOnly cookie-kkal. `_fbc` (és opcionálisan `_fbp`) megmarad 7 nap helyett 365 napig Safari-on.
