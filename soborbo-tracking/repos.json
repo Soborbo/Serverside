@@ -1,0 +1,7 @@
+{
+  "repo": "github.com/Soborbo/Serverside",
+  "package_path": "soborbo-tracking/",
+  "canonical_event_source": "../src/events.json",
+  "generator": "../scripts/generate-site.mjs",
+  "_comment": "A soborbo-tracking csomag (kliens-lib: components/lib/gtm + backend-dispatch referencia + onboarding) 2026-07-21-én BEOLVADT a Serverside motor-repóba (event-gateway Cloudflare Worker) — nincs többé KÉT külön repó és nincs vendor-másolat. Az EGYETLEN kanonikus event-forrás a ../src/events.json, amit a worker ÉS ez a csomag (tests/event-contract.test.ts, server/gen-event-aliases.mjs, server/check-event-contract.mjs) közösen olvas. A per-site generátor is egyetlen: ../scripts/generate-site.mjs (a korábbi vendored server/generate-site.mjs port törölve). A worker-oldali src/events.json belső-alak-guardja: ../server/check-event-contract.mjs; ez a csomag server/check-event-contract.mjs-e a böngésző dataLayer<->docs<->GTM szerződést guardolja. Korábban ez a fájl a KÉT-repós vendoring-modellt írta le (Soborbo/claudeskills:soborbo-tracking)."
+}
