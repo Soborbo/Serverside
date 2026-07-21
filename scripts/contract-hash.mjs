@@ -1,11 +1,13 @@
-#!/usr/bin/env node
 /**
- * Contract sync-guard (F1-4) — a vendored `src/events.json` és a deklarált hash őre.
+ * Contract deliberate-edit lock (F1-4) — a KANONIKUS `src/events.json` őre.
  *
- * MIÉRT: az `events.json` kanonikus otthona a `Soborbo/claudeskills` repo
- * (`soborbo-tracking/events.json`); ez a fájl itt VENDORED MÁSOLAT. Egy kézzel
- * beleírt sor itt némán szétvinné a két repót, és a drift csak akkor derülne ki,
- * amikor egy event már rossz néven megy ki egy hirdetési platformra.
+ * MIÉRT: az `events.json` a gateway-é, ITT a source of truth — ezt fogyasztja a
+ * worker build-időben és tartatja be futásidőben (server_ingress_only kapuzás,
+ * név-kanonizálás). A lock egy néma szerkesztés ellen véd: ha valaki módosítja a
+ * fájlt, a CI addig bukik, amíg a `--update` le nem fut, így a lock-diff a PR-ben
+ * LÁTHATÓVÁ teszi, hogy a szerződés változott. A downstream fogyasztó
+ * (`Soborbo/claudeskills`, `soborbo-tracking/events.json`) INNEN vendorol; annak
+ * saját drift-guardja a claudeskills `check-event-contract.mjs --engine`.
  *
  * A HASH DETERMINISZTIKUS — kizárólag a *normalizált szerződéstartalomból* képződik:
  *   - az objektum-kulcsok rekurzívan rendezve  → a kulcssorrend nem számít
@@ -85,18 +87,17 @@ if (isMain) {
     lock.generated_at = new Date().toISOString();
     writeFileSync(LOCK_PATH, `${JSON.stringify(lock, null, 2)}\n`);
     console.log(previous === actual ? `változatlan: ${actual}` : `frissítve:\n  ${previous}\n→ ${actual}`);
-    console.log('FIGYELEM: a source_commit mezőt KÉZZEL állítsd a claudeskills commitjára.');
+    console.log('A downstream claudeskills-másolatot ezután re-vendorold (soborbo-tracking/events.json).');
   } else if (mode === '--check') {
     const lock = readLock();
     if (lock.contract_hash !== actual) {
-      console.error('CONTRACT DRIFT — a vendored src/events.json nem egyezik a deklarált hash-sel.');
-      console.error(`  deklarált: ${lock.contract_hash}`);
+      console.error('CONTRACT CHANGED — a kanonikus src/events.json nem egyezik a lock hash-sel.');
+      console.error(`  lock:      ${lock.contract_hash}`);
       console.error(`  tényleges: ${actual}`);
       console.error('');
-      console.error('Ha a változtatás SZÁNDÉKOS: előbb a kanonikus repóban (Soborbo/claudeskills,');
-      console.error('soborbo-tracking/events.json) módosíts, hozd át ide, majd futtasd:');
+      console.error('Ha a szerkesztés SZÁNDÉKOS (ez a kanonikus forrás, itt szerkeszd): futtasd');
       console.error('  node scripts/contract-hash.mjs --update');
-      console.error('és állítsd a source_commit-ot a claudeskills commitjára.');
+      console.error('majd re-vendorold a downstream claudeskills-másolatot. Ha NEM szándékos, vond vissza.');
       process.exit(1);
     }
     console.log(`contract OK: ${actual}`);

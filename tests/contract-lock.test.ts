@@ -17,20 +17,21 @@ import { CONTRACT_PATH, LOCK_PATH, contractHash, normalizeContract } from '../sc
 const raw = () => readFileSync(CONTRACT_PATH, 'utf8');
 const lock = () => JSON.parse(readFileSync(LOCK_PATH, 'utf8'));
 
-describe('contract sync-guard', () => {
-  it('a vendored events.json megegyezik a deklarált contract_hash-sel', () => {
-    // Ha ez bukik: NE a lockot írd át reflexből. Előbb a kanonikus repóban
-    // (claudeskills) módosíts, hozd át ide, majd `contract-hash.mjs --update`.
+describe('contract deliberate-edit lock', () => {
+  it('a KANONIKUS events.json megegyezik a lock contract_hash-sel', () => {
+    // Ha ez bukik: ez a KANONIKUS forrás, ITT szerkeszd. Módosítsd az events.json-t,
+    // majd `contract-hash.mjs --update`, és re-vendorold a claudeskills-másolatot.
     expect(contractHash(raw())).toBe(lock().contract_hash);
   });
 
-  it('a lock provenance-mezői ki vannak töltve', () => {
+  it('a lock a Serverside-ot jelöli forrásnak, a claudeskills-t downstreamnek', () => {
     const l = lock();
-    expect(l.source_repository).toBe('Soborbo/claudeskills');
-    expect(l.source_path).toBe('soborbo-tracking/events.json');
-    // 40 hexa = teljes git SHA; a rövidített forma nem azonosít egyértelműen.
-    expect(l.source_commit).toMatch(/^[0-9a-f]{40}$/);
+    // Ez a repo a source of truth — a lock szerepe canonical-source, NEM vendored.
+    expect(l.role).toBe('canonical-source');
     expect(l.contract_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // A downstream fogyasztó (claudeskills) INNEN vendorol; a lock ezt dokumentálja.
+    const consumers = l.downstream_consumers ?? [];
+    expect(consumers.some((c: { repository?: string }) => c.repository === 'Soborbo/claudeskills')).toBe(true);
   });
 });
 
