@@ -1,8 +1,13 @@
 {
-  "_comment": "Sync-guard a vendored events.json-hoz (F1-4). A contract_hash a NORMALIZÁLT tartalomból képződik (scripts/contract-hash.mjs) — a kulcssorrend, a tömb-sorrend és a formázás NEM bemenete, a generated_at/source_commit SEM. Ellenőrzés: npm run check:contract. Szándékos frissítés: node scripts/contract-hash.mjs --update.",
+  "_comment": "Deliberate-edit lock a KANONIKUS src/events.json-hoz. A gateway a source of truth: az events.json ITT él, ezt fogyasztja a worker build-időben és tartatja be futásidőben (server_ingress_only kapuzás, név-kanonizálás). A lock véletlen/néma szerkesztés ellen véd — a contract_hash a NORMALIZÁLT tartalomból képződik (scripts/contract-hash.mjs: kulcssorrend/tömb-sorrend/formázás NEM bemenete). Szerkesztés menete: módosítsd az events.json-t, majd node scripts/contract-hash.mjs --update — a lock-diff a PR-ben láthatóvá teszi, hogy a szerződés változott. Ellenőrzés: npm run check:contract. A downstream fogyasztó (Soborbo/claudeskills, soborbo-tracking/events.json) INNEN vendorol; annak drift-guardja a claudeskills-oldali check-event-contract.mjs --engine (byte-egyezés a mi forrásunkkal).",
+  "role": "canonical-source",
   "contract_hash": "sha256:f12c272ef4b0250c5123c808f37487317ec97f79fa6a6c1cb56b6ad0768a95c4",
-  "source_repository": "Soborbo/claudeskills",
-  "source_path": "soborbo-tracking/events.json",
-  "source_commit": "3523da23ce8be45f209b9e339958b3670e61bc3c",
+  "downstream_consumers": [
+    {
+      "repository": "Soborbo/claudeskills",
+      "path": "soborbo-tracking/events.json",
+      "drift_guard": "server/check-event-contract.mjs --engine <path-to-Serverside/src/events.json>"
+    }
+  ],
   "generated_at": "2026-07-20T21:40:00.000Z"
 }
