@@ -8,7 +8,7 @@ import {
   type ConversionRequestPayload
 } from '../types';
 import { corsHeaders } from '../worker';
-import { getSiteConfig, type SiteConfig } from '../lib/config';
+import { getSiteConfig, isExpectedPlatform, type SiteConfig } from '../lib/config';
 import { checkOrigin } from '../lib/origin';
 import { authenticateServerIngress } from '../lib/admin-auth';
 import { hashUserData, type CountryCode, type HashedUserData } from '../lib/hash';
@@ -25,6 +25,7 @@ import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/conse
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
+import { isTerminalSkip } from '../lib/skip-reason';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from '../lib/error-codes';
 import { recordFanoutMetric, recordConversionMetric } from '../lib/metrics';
 import { sendAlert } from '../lib/notify';
@@ -623,9 +624,17 @@ function fanOut(
   // A flag NEM elhagyható: e nélkül a ledger 'accepted'-et írna vendor HTTP-státusz
   // nélkül — a lomtalan Meta-lába pont így nézett ki egészségesnek, miközben a
   // Meta semmit nem kapott (2026-07-14, D1 ledger). Lásd normalizeDelivery.
-  const skippedResult = () => Promise.resolve({ success: true as const, skipped: true as const });
+  const skippedResult = () =>
+    Promise.resolve({
+      success: true as const,
+      skipped: true as const,
+      skip_reason: 'consent_denied' as const
+    });
   const metaStart = Date.now();
-  const metaPromise: Promise<MetaCAPIResult> = adAllowed && siteConfig.meta
+  // A `&& siteConfig.meta` szándékosan KIKERÜLT: a config-hiányt a sender jelzi
+  // `not_configured` okkal, hogy a fan-out meg tudja különböztetni a
+  // consent-tiltástól. Korábban a kettő ugyanabba a néma skipbe olvadt össze.
+  const metaPromise: Promise<MetaCAPIResult> = adAllowed
     ? sendToMetaCAPI(siteConfig, metaPayload, hashedUserData)
     : skippedResult();
   const tiktokStart = Date.now();
@@ -685,6 +694,70 @@ function fanOut(
               event_name: payload.event_name
             })
           );
+        }
+
+        // ── Skip-osztályozás ────────────────────────────────────────────────
+        // Három eset, három kimenet (lásd lib/skip-reason.ts). A `skipped` flag
+        // önmagában NEM elég: 2026-07-15 és 07-20 között a lomtalan hiányzó Meta
+        // configja pontosan úgy nézett ki, mint egy jogos consent-kihagyás, így
+        // 3 valódi lead veszett el retry-rekord nélkül, zöld monitor mellett.
+        const skipped =
+          result.status === 'fulfilled' && result.value.skipped === true;
+        if (skipped) {
+          const skipReason = result.value.skip_reason;
+          // (a) consent_denied / no-identifier / scaffold → terminális, nincs DLQ.
+          if (isTerminalSkip(skipReason)) return;
+          // (b) not_configured, de a platform nem is elvárt ezen a site-on
+          //     (pl. TikTok egy csak-Meta site-on) → szintén terminális. Az okot
+          //     `not_expected`-re minősítjük, hogy a ledger NE kapjon
+          //     PLATFORM_NOT_CONFIGURED hibakódot: egy sosem-bekötött platform
+          //     nem hiba, és ha kódot kapna, a digest tele lenne álriasztással.
+          //     A minősítés a normalizeDelivery ELŐTT történik (lásd lentebb).
+          if (!isExpectedPlatform(siteConfig, platform)) {
+            result.value.skip_reason = 'not_expected';
+            return;
+          }
+          // (c) ELVÁRT platform + hiányzó config → retryable konfigurációs blokk.
+          //     Ez az egyetlen skip, ami DLQ-rekordot és CRITICAL riasztást kap:
+          //     magától soha nem javul meg, viszont a config helyreállítása után
+          //     az EREDETI event_id-vel és event_time-mal újrajátszható.
+          logStructured({
+            level: 'error',
+            error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
+            message: ERROR_DESCRIPTIONS[TrackingErrorCode.PLATFORM_NOT_CONFIGURED],
+            site_id: siteConfig.site_id,
+            hostname,
+            platform,
+            event_name: payload.event_name
+          });
+          alerts.push(
+            sendAlert(env, TrackingErrorCode.PLATFORM_NOT_CONFIGURED, {
+              site_id: siteConfig.site_id,
+              hostname,
+              platform,
+              event_name: payload.event_name
+            })
+          );
+          dlqWrites.push(
+            enqueueFailure(env, {
+              platform,
+              site_id: siteConfig.site_id,
+              hostname,
+              lead_id: leadId,
+              event_payload: platformPayload,
+              hashed_user_data: includeUserData
+                ? (hashedUserData as unknown as Record<string, unknown>)
+                : undefined,
+              failure_reason: `expected platform '${platform}' has no config block for this site`,
+              // Konfigurációs blokk: a retry-keretet nem szabad percek alatt
+              // elégetnie (lásd lib/deadletter.ts backoffSeconds/blocked flag).
+              blocked_configuration: true,
+              retry_count: 0,
+              first_failed_at: nowIso,
+              last_attempted_at: nowIso
+            })
+          );
+          return;
         }
 
         if (success) return;

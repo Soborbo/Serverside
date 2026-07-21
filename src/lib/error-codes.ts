@@ -116,6 +116,12 @@ export enum TrackingErrorCode {
   // letenni → az event minden tárból kiesett. Ilyenkor a dispatched flag 0 marad,
   // hogy egy kliens-retry újrakézbesíthesse (vendor event_id-dedup véd).
   RETRY_PERSIST_FAILED = 'TRK-900-007',
+  // ELVÁRT platform, de a site-configból hiányzik a blokkja (lomtalan Meta,
+  // 2026-07-15). NEM vendor-hiba és nem is szándékos kihagyás: konfigurációs
+  // blokk, ami magától SOHA nem javul meg. Ezért retryable — DLQ-rekord készül
+  // az eredeti payloaddal —, de hosszú backoff-fal, hogy a config helyreállítása
+  // előtt ne égesse el a retry-keretet. E kód nélkül a skip csendes adatvesztés.
+  PLATFORM_NOT_CONFIGURED = 'TRK-900-008',
 
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
@@ -243,6 +249,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'DLQ record JSON is malformed',
   [TrackingErrorCode.RETRY_PERSIST_FAILED]:
     'Platform call failed AND the retry record could not be stored anywhere (Queue + R2) — event left undispatched; recovery needs a MANUAL resend (the caller already got its response, no automatic retry is coming)',
+  [TrackingErrorCode.PLATFORM_NOT_CONFIGURED]:
+    'An EXPECTED platform has no config block for this site — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the config is restored',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
     'Vendor delivery failure rate exceeded threshold (reconciliation)',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
@@ -287,6 +295,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'critical',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'critical',
   [TrackingErrorCode.RETRY_PERSIST_FAILED]: 'critical',
+  [TrackingErrorCode.PLATFORM_NOT_CONFIGURED]: 'critical',
   [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]: 'critical',
   [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'critical',
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'critical',

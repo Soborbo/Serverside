@@ -1,4 +1,5 @@
 import type { SiteConfig } from './config';
+import type { SkipReason } from './skip-reason';
 import type { HashedUserData } from './hash';
 import { logStructured, EVENT_NAME_MAP } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
@@ -44,6 +45,8 @@ export interface MetaCAPIResult {
   // ként könyveli, NEM 'accepted'-ként — accepted CSAK valós vendor HTTP-válasz
   // mellett íródhat (lásd lib/ledger.ts normalizeDelivery).
   skipped?: boolean;
+  // Miért maradt ki — lásd lib/skip-reason.ts. A fan-out ez alapján dönt DLQ-ról.
+  skip_reason?: SkipReason;
 }
 
 function classifyMetaError(
@@ -68,13 +71,15 @@ export async function sendToMetaCAPI(
   const startedAt = Date.now();
 
   // Nincs `meta` blokk (a site be van kötve, de a CAPI access token még nincs
-  // kiállítva) → tiszta skip. NEM hiba: se hívás, se DLQ, se riasztás. A hívók is
-  // őrzik, ez a második védvonal (lásd config.ts `meta?`). A `skipped: true`
-  // KÖTELEZŐ: enélkül a ledger 'accepted'-et írna http_status nélkül — a lomtalan
-  // 2026-07-14-i esetben pont így nézett ki egészségesnek egy soha-nem-élt Meta-láb.
+  // kiállítva) → skip `not_configured` okkal. Hogy ez ártalmatlan kihagyás-e vagy
+  // adatvesztő konfigurációs blokk, azt NEM itt döntjük el: az `expected_platforms`
+  // site-policy, amit a fan-out ismer (lásd routes/conversion.ts handleResult).
+  // A `skipped: true` KÖTELEZŐ: enélkül a ledger 'accepted'-et írna http_status
+  // nélkül — a lomtalan 2026-07-14-i esetben pont így nézett ki egészségesnek egy
+  // soha-nem-élt Meta-láb.
   const meta = siteConfig.meta;
   if (!meta) {
-    return { success: true, skipped: true };
+    return { success: true, skipped: true, skip_reason: 'not_configured' };
   }
 
   const url = `https://graph.facebook.com/${META_API_VERSION}/${meta.pixel_id}/events`;

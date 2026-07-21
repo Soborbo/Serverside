@@ -62,6 +62,28 @@ export interface SiteConfig {
   // az onboarding generate-site.mjs token-generálását.
   crm_token_sha256?: string;
 
+  // A site-tól ELVÁRT platform-lábak — a füstteszt sikerkritériuma (daily-digest).
+  // Létezésének oka: a smoke korábban CSAK a `rejected` Meta-lábra riasztott, a
+  // `skipped`-et OK-nak vette („szándékosan meta-nélküli site"). Emiatt amikor a
+  // lomtalan `meta` blokkja 2026-07-15-én KIESETT a KV-ből, a fan-out némán
+  // skip-re váltott, a napi füstteszt pedig ÖT NAPON ÁT zöld maradt. Egy hiányzó
+  // config és egy szándékos kihagyás a delivery-sorból nézve azonos — ezért az
+  // elvárást KÜLÖN, explicit módon kell rögzíteni, nem a config meglétéből
+  // levezetni (a levezetés pont a törlést nem venné észre).
+  //
+  //   smoke:   a napi synthetic lead körében accepted-nek KELL lennie.
+  //   offline: a CRM lifecycle-ág (lead-status → Google Ads) elvárt platformjai.
+  //            SZÁNDÉKOSAN nem a böngésző-smoke ellenőrzi — annak külön
+  //            hitelesített offline synthetic teszt / OAuth health check kell.
+  //
+  // Hiányzó blokk → a digest a MEGFIGYELT előzményre esik vissza (ami korábban
+  // accepted volt, annak accepted-nek kell maradnia), tehát a regresszió akkor
+  // is kiderül, ha ide még nem került be semmi.
+  expected_platforms?: {
+    smoke?: string[];
+    offline?: string[];
+  };
+
   // Napi cross-platform reconciliation (lib/cross-check.ts): a ledger event-
   // count-jait veti össze a GA4 Data API és a Google Ads API aznapi számaival.
   // Hiányzó blokk → a site kimarad a cross-checkből (a ledger-belső recon fut
@@ -241,4 +263,24 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
     });
     return null;
   }
+}
+
+/**
+ * Elvárt-e ez a platform a site-on (a böngésző-ingress fan-outja szempontjából)?
+ *
+ * Forrás: `expected_platforms.smoke` — ugyanaz a lista, amit a napi digest
+ * smoke-őre használ. SZÁNDÉKOSAN nem az `offline` lista: az a CRM lifecycle-ág
+ * (lead-status → Google Ads) elvárásait rögzíti, ami nem ezen az úton fut.
+ *
+ * FONTOS, hogy ez NE a config meglétéből legyen levezetve: pont a config
+ * eltűnését (lomtalan Meta, 2026-07-15) kell észrevennie. Egy „van config →
+ * elvárt" szabály a törlés pillanatában maga is eltűnne.
+ *
+ * Hiányzó `expected_platforms` blokk → `false`, azaz a config-hiányos skip
+ * terminális marad. Ez tudatos fail-safe: az elvárást explicit módon kell
+ * felvenni (B-2), különben minden be nem kötött platform DLQ-rekordot gyártana
+ * minden eventre, minden site-on.
+ */
+export function isExpectedPlatform(siteConfig: SiteConfig, platform: string): boolean {
+  return siteConfig.expected_platforms?.smoke?.includes(platform) === true;
 }

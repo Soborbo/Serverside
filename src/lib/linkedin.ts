@@ -1,4 +1,5 @@
 import type { SiteConfig } from './config';
+import type { SkipReason } from './skip-reason';
 import type { HashedUserData } from './hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
@@ -41,6 +42,8 @@ export interface LinkedInResult {
   error_code?: TrackingErrorCode;
   status?: number;
   skipped?: boolean;
+  // Miért maradt ki — lásd lib/skip-reason.ts. A fan-out ez alapján dönt DLQ-ról.
+  skip_reason?: SkipReason;
 }
 
 export async function sendToLinkedIn(
@@ -51,7 +54,7 @@ export async function sendToLinkedIn(
   const cfg = siteConfig.linkedin;
   const conversionUrn = cfg?.conversion_rules?.[payload.event_name];
   if (!cfg || !cfg.access_token || !conversionUrn) {
-    return { success: true, skipped: true }; // nem konfigurált erre az eventre → no-op skip
+    return { success: true, skipped: true, skip_reason: 'not_configured' };
   }
 
   const userIds: Record<string, string>[] = [];
