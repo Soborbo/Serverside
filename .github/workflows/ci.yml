@@ -37,5 +37,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # A vendored src/events.json nem sodródhat el a deklarált hash-tol. Kulon
+      # lepes (nem csak a vitesten belul), hogy a bukas oka egy pillantasra lathato.
+      - name: Contract sync-guard
+        run: npm run check:contract
+
       - name: Test
         run: npm test
