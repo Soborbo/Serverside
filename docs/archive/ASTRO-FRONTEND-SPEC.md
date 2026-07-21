@@ -1,3 +1,14 @@
+> ---
+> **status: archived** · **do_not_use_for_implementation: true**
+> superseded_by: a `soborbo-tracking` package (Soborbo/claudeskills, `soborbo-tracking/` —
+> `lib/` + `components/`, v5.x), + README.md / CLAUDE.md / docs/HANDOVER-run6.md.
+>
+> Ez egy Sprint-9 kori kliens-oldali (frontend) tracking-spec, ami a TÖRÖLT `client-lib/`
+> köré épült, és részben már megdőlt premisszákat tartalmaz (pl. Turnstile-token — a
+> gateway-ből KIKERÜLT). A kanonikus Astro kliens-lib mostantól a fenti package. NE
+> implementálj ez alapján.
+> ---
+
 # Astro Frontend Tracking Spec — 17 event teljes implementáció
 
 **Cél:** Painless és minden Soborbo Astro site kliens-oldali tracking-je. **Ez a spec a Worker-rel együtt használandó** (lásd Sprint 9), de önállóan is alkalmazható kliensoldali stack-ként.

@@ -13,8 +13,11 @@ a lépéseket. **Ne improvizáld a config-formátumot — mindig a scriptet futt
 ## Háttér
 - Worker tenant-kulcs = a hostname, ahová a POST megy (`getSiteConfig(url.hostname)`).
 - SITE_CONFIG KV namespace id: `edd34e28eee847c09c26f9d9e3ea04ab`.
-- A client-lib (`client-lib/worker-tracking.ts`) mindent automatikusan küld
-  (consent CookieYes-ból, attribúció URL+cookie-ból). A site-on alig van egyedi kód.
+- A kliens-tracking lib a **`soborbo-tracking` package** (Soborbo/claudeskills,
+  `soborbo-tracking/` — `lib/` + `components/`, v5.x; telepítés az `INSTALL.md` szerint).
+  Mindent automatikusan küld (consent CookieYes-ból, attribúció URL+cookie-ból) — a site-on
+  alig van egyedi kód. A régi `client-lib/worker-tracking.ts` TÖRÖLVE (lásd `client-lib/README.md`);
+  ne abból másolj. (A backend event-szerződés kanonikus otthona külön: Serverside `src/events.json`.)
 
 ## Lépések
 

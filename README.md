@@ -66,7 +66,7 @@ Kizárólag a hitelesített szerver-ingressen, per-request `test_event_code`-dal
 │   ├── routes/                # conversion, lead-status, admin, health, oauth
 │   ├── lib/                   # meta, datamanager, hash, ledger, deadletter, origin, …
 │   └── scheduled/             # retry, daily-digest, slo-check, reconciliation, retention
-├── client-lib/                # Böngésző-oldali sendToWorker/trackConversion helper
+├── client-lib/                # DEPRECATED pointer → a kliens-lib a soborbo-tracking package (claudeskills)
 ├── tests/                     # vitest (npm test)
 ├── migrations/                # D1 ledger séma
 ├── scripts/                   # site onboarding (generate-site.mjs), bootstrap
