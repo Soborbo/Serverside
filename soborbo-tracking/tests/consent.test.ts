@@ -31,4 +31,21 @@ describe('consent gating (CookieYes)', () => {
     // import.meta.env.DEV igaz vitest alatt → dev fallback enged
     expect(typeof hasMarketingConsent()).toBe('boolean');
   });
+
+  // Contract lock: CookieYes exposes the ads category as `advertisement`, NOT
+  // `marketing`. This bypasses the helper and pins the raw wire key so the
+  // 2026-07 silent-death regression (reading `.marketing` → always undefined)
+  // cannot come back green.
+  it('reads the real CookieYes `advertisement` key, not `marketing`', () => {
+    (window as unknown as { getCkyConsent: () => unknown }).getCkyConsent = () => ({
+      categories: { necessary: true, functional: true, analytics: false, performance: false, advertisement: true },
+    });
+    expect(hasMarketingConsent()).toBe(true);
+
+    // A payload that only has the (non-existent) `marketing` key must NOT grant.
+    (window as unknown as { getCkyConsent: () => unknown }).getCkyConsent = () => ({
+      categories: { necessary: true, functional: true, analytics: false, performance: false, marketing: true },
+    });
+    expect(hasMarketingConsent()).toBe(false);
+  });
 });

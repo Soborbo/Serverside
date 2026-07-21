@@ -52,13 +52,15 @@ head_sampling_rate = 1.0
 # szándékosan KV-ben (OAUTH_TOKENS) maradnak, NEM Secrets Store-ban.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── H1: Cloudflare Queues alapú DLQ retry ───────────────────────────────────
-# A kód guardolt: amíg ezek kommentben vannak (nincs DLQ binding), az
-# újrapróbálkozás az R2-fallbackre + óránkénti cronra esik vissza. Élesítés:
-#   1) wrangler queues create event-gateway-dlq
-#   2) wrangler queues create event-gateway-dlq-dead
-#   3) vedd ki a kommentből az alábbi 3 blokkot + redeploy
-#   4) (opcionális) a lenti [triggers] cron DLQ-sora elhagyható Queues-módban
+# ── H1: Cloudflare Queues alapú DLQ retry — ÉLES ────────────────────────────
+# A két queue LÉTEZIK a fiókon: event-gateway-dlq + event-gateway-dlq-dead
+# (létrehozva 2026-07-15; ellenőrizve `wrangler queues list`, 2026-07-21), és az
+# alábbi producer/consumer blokkok ÉLNEK (NINCSENEK kommentben — a korábbi „vedd ki
+# a kommentből" megjegyzés elavult volt). A DLQ-retry elsődlegesen a Queues-on megy.
+# A kód guardolt marad: env.DLQ hiányában R2-fallback + óránkénti cron (graceful),
+# de production-ban a Queues az aktív út. A lenti [triggers] cron DLQ-sora
+# szándékosan megmarad az R2 dead-letter archívum (blocked_configuration + terminális
+# rekordok) órás retry-jához, amit a Queues nem fed le.
 #
 [[queues.producers]]
 binding = "DLQ"

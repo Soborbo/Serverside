@@ -49,7 +49,7 @@ export async function handleAdmin(
       if (!success) {
         logStructured({
           level: 'warn',
-          error_code: TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED,
+          error_code: TrackingErrorCode.ADMIN_UNAUTHORIZED,
           message: 'Admin API rate limited',
           hostname,
           path: url.pathname
@@ -64,7 +64,7 @@ export async function handleAdmin(
   if (!authenticateAdmin(request, env)) {
     logStructured({
       level: 'warn',
-      error_code: TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED,
+      error_code: TrackingErrorCode.ADMIN_UNAUTHORIZED,
       message: 'Admin API request failed authentication',
       hostname,
       path: url.pathname
@@ -353,8 +353,11 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
       : `measurement_id=${present(siteConfig.ga4.measurement_id)}, api_secret=${present(siteConfig.ga4.api_secret)}`
   );
 
-  // Google Ads (opcionális — customer_id nélkül a gads no-op)
-  if (siteConfig.gads.customer_id) {
+  // Google Ads (opcionális — customer_id nélkül a gads no-op). A `gads` blokk maga
+  // is hiányozhat egy kézzel írt/migrációs configból (a KV JSON vakon SiteConfig-ra
+  // castolódik); optional chaining nélkül ez TypeError→500-at adna pont az onboarding-
+  // health-checkben, ami az ilyen hiányos site-okat hivatott diagnosztizálni.
+  if (siteConfig.gads?.customer_id) {
     const actions = siteConfig.gads.conversion_actions;
     add(
       'gads_conversion_actions',

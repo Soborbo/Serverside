@@ -172,6 +172,12 @@ function readStoredAttribution(): AttributionParams {
 }
 
 function writeStoredAttribution(a: AttributionParams): void {
+  // GDPR: attribúció (gclid/fbclid/UTM/landing/referrer) localStorage-be írása
+  // marketing-storage — consent nélkül TILOS. A `collectAttribution` publikus
+  // export, közvetlen hívása enélkül consent nélkül perzisztálna (a persistence.ts
+  // minden írása is így gate-el). A READ/in-memory használat gate nélkül mehet; itt
+  // csak a PERSIST lépést zárjuk.
+  if (!hasMarketingConsent()) return;
   try {
     localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify(a));
   } catch {

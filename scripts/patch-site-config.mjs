@@ -13,6 +13,7 @@
  * `null` értékkel a mező TÖRLŐDIK (így vehető ki a test_event_code).
  */
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const [hostname, patchRaw] = process.argv.slice(2);
 if (!hostname || !patchRaw) {
@@ -20,8 +21,16 @@ if (!hostname || !patchRaw) {
   process.exit(1);
 }
 
+// Shell NÉLKÜL, a wrangler JS-belépőjét közvetlenül a futó Node-dal hívjuk (mint a
+// recover-blocked-events.ts). shell:true mellett a win32 cmd.exe NEM unescape-eli a
+// `\"`-t, így a JSON backslash-manglolva, ÉRVÉNYTELENÜL kerülne a KV-be → a worker
+// config-parse elhasal (404/500 a tenantnak, §14/§17-osztályú néma korrupció). Node 24
+// a `.cmd`-t shell nélkül elutasítja, ezért a wrangler.js-t közvetlenül hívjuk.
+const WRANGLER_BIN = fileURLToPath(
+  new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url)
+);
 const wrangler = (args) =>
-  execFileSync('npx', ['wrangler', ...args], { encoding: 'utf8', shell: true });
+  execFileSync(process.execPath, [WRANGLER_BIN, ...args], { encoding: 'utf8' });
 
 const current = JSON.parse(
   wrangler(['kv', 'key', 'get', '--binding', 'SITE_CONFIG', '--remote', hostname])
@@ -51,7 +60,9 @@ wrangler([
   'SITE_CONFIG',
   '--remote',
   hostname,
-  JSON.stringify(JSON.stringify(merged))
+  // SINGLE stringify: a KV-érték a JSON-string. Shell nélkül (fent) nincs
+  // re-parse, ezért NEM kell (és nem is szabad) duplán stringify-olni.
+  JSON.stringify(merged)
 ]);
 
 // Csak nem-titkos mezőket írunk ki.

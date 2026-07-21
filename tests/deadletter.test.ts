@@ -237,6 +237,36 @@ describe('archiveExpiredRecord — dead-archívumba mozgatás', () => {
     expect(deletes).toEqual(['painless/meta/2026-06-01/old.json']);
   });
 
+  it('blocked_configuration lejárt rekord a DEAD prefixre kerül (zombi-hurok regresszió)', async () => {
+    // A retry_count-ot a REKORDRA érvényes plafonra (blocked → 28) kell emelni, NEM
+    // a fix MAX_RETRIES-re (3). Enélkül a writeDeadLetter prefix-döntése (3>=28 →
+    // hamis) a rekordot VISSZA a pending-prefixre írná → örök órás pending↔archive
+    // hurok, a rekord sosem érné el a dead-archívumot (a retention sosem purge-ölné).
+    const puts: string[] = [];
+    const deletes: string[] = [];
+    const env = {
+      DEAD_LETTER: {
+        put: async (k: string) => { puts.push(k); },
+        delete: async (k: string) => { deletes.push(k); }
+      }
+    } as unknown as Env;
+    const record: DeadLetterRecord = {
+      platform: 'meta',
+      site_id: 'lomtalan',
+      hostname: 'lomtalan.hu',
+      event_payload: { event_id: 'e-blk' },
+      failure_reason: 'config missing',
+      blocked_configuration: true,
+      retry_count: 0,
+      first_failed_at: '2026-06-01T00:00:00Z',
+      last_attempted_at: '2026-06-01T00:00:00Z'
+    };
+    const ok = await archiveExpiredRecord(env, 'lomtalan/meta/2026-06-01/old.json', record);
+    expect(ok).toBe(true);
+    expect(puts[0]).toMatch(/^lomtalan\/meta\/dead\//); // DEAD, nem pending
+    expect(deletes).toEqual(['lomtalan/meta/2026-06-01/old.json']);
+  });
+
   it('ha az archív-írás elbukik, az eredeti kulcs MEGMARAD', async () => {
     const deletes: string[] = [];
     const env = {

@@ -181,6 +181,9 @@ export default {
           continue;
         }
         if (result.skipped) logSkippedRetry(record);
+        // Valódi vendor-bukás → 'rejected' delivery a ledgerbe (a skip NEM az). Enélkül
+        // a reconciliation vendor-hibarátája pont kiesés alatt mér alul (K2 / #17).
+        else await recordRetryDelivery(env, record, result);
         // attempts a Queues által számolt kézbesítési kísérlet (1-től).
         if (msg.attempts > MAX_RETRIES) {
           // Kimerült retry → R2 'dead' archívum (SLO-check / daily-digest látja).
@@ -209,6 +212,15 @@ export default {
           error: err instanceof Error ? err.message : String(err)
         });
         if (msg.attempts > MAX_RETRIES) {
+          // Terminális bukás a throw-ágon → 'rejected' delivery a ledgerbe (best-effort),
+          // mint a nem-throw path (#17). Enélkül a véglegesen elbukott kézbesítés
+          // nyomtalan marad a deliveries-ben, és a reconciliation vendor-hibarátája
+          // pont a legváratlanabb hibáknál mér alul.
+          await recordRetryDelivery(env, record, {
+            success: false,
+            error_code: TrackingErrorCode.CRON_RETRY_FAILED,
+            error: err instanceof Error ? err.message : String(err)
+          }).catch(() => {});
           // Throw + kimerülés: a korábbi puszta ack az eventet nyomtalanul
           // elnyelte. Dead-archívumba írjuk, hogy az SLO/digest/admin lássa.
           const archived = await writeDeadLetter(env, {
