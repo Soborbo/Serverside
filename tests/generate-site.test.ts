@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,21 +49,19 @@ function runGen(config: Record<string, unknown>, extraArgs: string[] = []): GenR
   const inputPath = join(workdir, `${id}.json`);
   const outDir = join(workdir, id);
   writeFileSync(inputPath, JSON.stringify(config));
-  try {
-    const stdout = execFileSync(
-      process.execPath,
-      [SCRIPT, '--input', inputPath, '--out', outDir, ...extraArgs],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-    );
-    return { status: 0, stdout, stderr: '', out: outDir };
-  } catch (e: any) {
-    return {
-      status: e.status ?? 1,
-      stdout: e.stdout?.toString() ?? '',
-      stderr: e.stderr?.toString() ?? '',
-      out: outDir
-    };
-  }
+  // spawnSync (nem execFileSync): a stderr-t SIKERES futásnál is elkapjuk — a
+  // generátor a token-üzenetet (GENERÁLVA) exit 0-nál is stderr-re írja.
+  const r = spawnSync(
+    process.execPath,
+    [SCRIPT, '--input', inputPath, '--out', outDir, ...extraArgs],
+    { encoding: 'utf8' }
+  );
+  return {
+    status: r.status ?? 1,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+    out: outDir
+  };
 }
 
 const baseConfig = (): Record<string, any> => ({
@@ -73,7 +71,11 @@ const baseConfig = (): Record<string, any> => ({
   currency: 'HUF',
   require_consent: true,
   meta: { pixel_id: '123456', access_token: 'TESTTOKEN' },
-  gads: { customer_id: null, login_customer_id: null }
+  gads: { customer_id: null, login_customer_id: null },
+  // Determinisztikus token — így ezek a tesztek a token-rotációs guardtól
+  // FÜGGETLENÜL futnak (a guardnak külön blokkja van lentebb). Valós onboardingnál
+  // a crm_token gyakran hiányzik → generálódik, de akkor --new-site/--rotate-token kell.
+  crm_token: 'fixed-deterministic-test-crm-token-32chars'
 });
 
 describe('generate-site.mjs — Run 6 onboarding invariánsok', () => {
@@ -135,5 +137,46 @@ describe('generate-site.mjs — Run 6 onboarding invariánsok', () => {
     const r = runGen(cfg);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('conversion_actions');
+  });
+});
+
+describe('generate-site.mjs — token-rotációs guard (F2-1)', () => {
+  // A guard NÉLKÜL egy sima újrafuttatás (crm_token nélkül) új random tokent gyártana,
+  // ami felülírná a KV-ben élő tokent → a site backendje 401-et kapna a /lead-status-on.
+  const noToken = (): Record<string, any> => {
+    const c = baseConfig();
+    delete c.crm_token;
+    return c;
+  };
+
+  it('crm_token nélkül, flag nélkül → MEGTAGADJA (exit 1)', () => {
+    const r = runGen(noToken());
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--new-site');
+    expect(r.stderr).toContain('--rotate-token');
+  });
+
+  it('crm_token nélkül + --new-site → exit 0, token GENERÁLVA', () => {
+    const r = runGen(noToken(), ['--new-site']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('GENERÁLVA');
+    const sc = JSON.parse(readFileSync(join(r.out, 'site-config.json'), 'utf8'));
+    expect(sc.crm_token_sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('crm_token nélkül + --rotate-token → exit 0 (szándékos rotáció)', () => {
+    const r = runGen(noToken(), ['--rotate-token']);
+    expect(r.status).toBe(0);
+  });
+
+  it('crm_token az inputban → exit 0 flag NÉLKÜL, és determinisztikus (reuse)', () => {
+    const a = runGen(baseConfig()); // baseConfig már ad crm_token-t
+    const b = runGen(baseConfig());
+    expect(a.status).toBe(0);
+    const scA = JSON.parse(readFileSync(join(a.out, 'site-config.json'), 'utf8'));
+    const scB = JSON.parse(readFileSync(join(b.out, 'site-config.json'), 'utf8'));
+    // Ugyanaz az input crm_token → ugyanaz a hash (nem generálódik új).
+    expect(scA.crm_token_sha256).toBe(scB.crm_token_sha256);
+    expect(a.stderr).not.toContain('GENERÁLVA');
   });
 });

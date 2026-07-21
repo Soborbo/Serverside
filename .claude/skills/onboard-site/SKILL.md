@@ -46,8 +46,15 @@ Kérdezd meg a hostname-eket (apex + www) és a site_id-t, majd:
 Írd ki egy temp fájlba (NE a repóba a secretekkel), majd:
 
 ```bash
-node scripts/generate-site.mjs --input /tmp/<site>.json --out /tmp/<site>-out
+# ÚJ site bekötése → --new-site (a token-rotációs guard ezt kéri, ha nincs crm_token az inputban):
+node scripts/generate-site.mjs --input /tmp/<site>.json --out /tmp/<site>-out --new-site
 ```
+
+> **Token-rotációs guard:** ha az input nem ad `crm_token`-t, a generátor új tokent gyártana.
+> Új site-nál ez rendben → `--new-site`. **Meglévő** site-on egy sima újrafuttatás felülírná a
+> KV-ben élő tokent (a site backendje 401-et kapna a `/lead-status`-on) — ezért ott vagy add meg
+> a meglévő tokent `crm_token`-ként (reuse), vagy szándékos rotációhoz `--rotate-token` (és utána
+> deployold újra a CRM-et az új tokennel).
 
 Az input alakja (lásd a validátort a scriptben):
 ```json

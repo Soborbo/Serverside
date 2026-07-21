@@ -8,11 +8,17 @@
  * hívja, miután az MCP-connectorokból összegyűjtötte az ID-ket.
  *
  * Használat:
- *   node scripts/generate-site.mjs --input site.json [--out dir/] [--kv-namespace-id ID]
- *   cat site.json | node scripts/generate-site.mjs
+ *   node scripts/generate-site.mjs --input site.json --new-site [--out dir/] [--kv-namespace-id ID]
+ *   node scripts/generate-site.mjs --input site.json --rotate-token   # meglévő site tokenrotáció
+ *   cat site.json | node scripts/generate-site.mjs --new-site
+ *
+ * Token-rotációs guard: ha az input NEM ad `crm_token`-t, a generátor új random
+ * tokent gyártana — ami felülírná a KV-ben élő tokent. Ezért ilyenkor EXPLICIT
+ * szándék kell: `--new-site` (első onboarding) vagy `--rotate-token` (szándékos
+ * rotáció). A meglévő token újrahasználásához add meg `crm_token`-ként az inputban.
  *
  * Nincs külső függőség (csak Node built-in). Determinisztikus: ugyanaz az input
- * ugyanazt a kimenetet adja.
+ * ugyanazt a kimenetet adja (a generált token kivételével).
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -49,12 +55,21 @@ const ALLOWED_COUNTRIES = new Set(['GB', 'HU', 'EU', 'US', 'DE', 'FR', 'IT', 'ES
 const EEA_COUNTRIES = new Set(['HU', 'EU', 'DE', 'FR', 'IT', 'ES']);
 
 function parseArgs(args) {
-  const out = { input: null, out: null, kvNamespaceId: DEFAULT_SITE_CONFIG_NS, allowTestEventCode: false };
+  const out = {
+    input: null,
+    out: null,
+    kvNamespaceId: DEFAULT_SITE_CONFIG_NS,
+    allowTestEventCode: false,
+    newSite: false,
+    rotateToken: false,
+  };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--input') out.input = args[++i];
     else if (args[i] === '--out') out.out = args[++i];
     else if (args[i] === '--kv-namespace-id') out.kvNamespaceId = args[++i];
     else if (args[i] === '--allow-test-event-code') out.allowTestEventCode = true;
+    else if (args[i] === '--new-site') out.newSite = true;
+    else if (args[i] === '--rotate-token') out.rotateToken = true;
   }
   return out;
 }
@@ -301,6 +316,26 @@ function main() {
   const siteConfig = toSiteConfig(cfg);
   // Per-site CRM token: a hash a KV-be (SiteConfig), a plaintext a CRM-deploynak.
   const crm = resolveCrmToken(cfg);
+
+  // Token-rotációs guard: ha a generátor ÚJ random tokent gyártana (nincs `crm_token`
+  // az inputban), az felülírná a KV-ben élő `crm_token_sha256`-ot — a site backendje
+  // a RÉGI tokennel 401-et kapna a /lead-status-on (néma offline-loop-szakadás).
+  // A generátor SZÁNDÉKOSAN tiszta (nem néz KV-t), ezért nem tudja, létezik-e a site;
+  // helyette EXPLICIT szándékot kér. Három út:
+  //   --new-site       első onboarding — új token OK
+  //   --rotate-token   szándékos rotáció meglévő site-on — új token OK (a CRM-et is újradeployolod)
+  //   crm_token az inputban → a meglévőt hash-eljük, nincs szükség flagre
+  if (crm.generated && !args.newSite && !args.rotateToken) {
+    console.error(
+      '❌ Új per-site CRM token generálódna, de nincs megadva a szándék.\n' +
+        '   Ha ez ELSŐ onboarding:            add hozzá a --new-site flaget.\n' +
+        '   Ha SZÁNDÉKOS rotáció (meglévő site): add hozzá a --rotate-token flaget\n' +
+        '                                       (és utána deployold újra a CRM-et az új tokennel).\n' +
+        '   Ha a MEGLÉVŐ tokent akarod újrahasználni: tedd be `crm_token`-ként az inputba.\n' +
+        '   (E guard nélkül egy sima újrafuttatás némán elrontaná a live site auth-ját.)'
+    );
+    exit(1);
+  }
   siteConfig.crm_token_sha256 = crm.hash;
 
   const json = JSON.stringify(siteConfig, null, 2);
