@@ -274,12 +274,12 @@ zone_name = "skinlabhungary.hu"
 # pattern = "www.szelloztessokosan.hu/api/event/*"
 # zone_name = "szelloztessokosan.hu"
 #
-# [[routes]]
-# pattern = "olcsokontenerhaz.hu/api/event/*"
-# zone_name = "olcsokontenerhaz.hu"
-# [[routes]]
-# pattern = "www.olcsokontenerhaz.hu/api/event/*"
-# zone_name = "olcsokontenerhaz.hu"
+[[routes]]
+pattern = "olcsokontenerhaz.hu/api/event/*"
+zone_name = "olcsokontenerhaz.hu"
+[[routes]]
+pattern = "www.olcsokontenerhaz.hu/api/event/*"
+zone_name = "olcsokontenerhaz.hu"
 #
 # Hét 6-7: SkinLab + Life Story Video
 # [[routes]]
