@@ -4,9 +4,11 @@
 `scripts/`, `migrations/`, CI, wrangler-config, docs) + a Fázis-0 munkacsomag
 (`FAZIS-0-MUNKACSOMAG.md`) terv-konformancia. HEAD: `5b91b0e`.
 
-**Módszer:** 4 párhuzamos, egymástól független kód-olvasó audit (core libek; route/ingress;
-scheduled/DLQ/scriptek; kliens-package + contract-sync), a CRITICAL/HIGH találatok kézi
-újra-ellenőrzésével. Gépi ellenőrzések: root 491/491 teszt zöld, soborbo-tracking 112/112
+**Módszer:** KÉT audit-kör. 1. kör: 4 párhuzamos, független kód-olvasó audit (core libek;
+route/ingress; scheduled/DLQ/scriptek; kliens-package + contract-sync). 2. kör (az 1. körben
+csak érintőlegesen fedett területekre): kliens-komponensek + `server/backend/` + GTM-container
+tag-szinten; maradék src-modulok + keresztirányú sweep; és a TESZTSUITE-ok hamis-zöld auditja.
+A CRITICAL/HIGH találatok kézzel újra-ellenőrizve. Gépi ellenőrzések: root 491/491 teszt zöld, soborbo-tracking 112/112
 zöld, mindkét typecheck tiszta, `check:events` + `check:contract` OK. **Minden lenti hiba
 logikai/spec-szintű — a tesztek nem fogják meg őket** (több esetben épp a teszt-stub a hibás).
 
@@ -355,6 +357,247 @@ NINCS kész / sérült:
 - C1-et a CookieYes hivatalos dokumentációja ellen is ellenőriztük; a package saját
   cookie-parsere (helyes kulcs) belső bizonyíték.
 - C1, H1, H3, H4, H5, H6, M2, M3, M5 kézzel, a forrásban újra-ellenőrizve a szintézis előtt.
+
+---
+
+# MÁSODIK KÖR (2. kör) — komponensek, backend-dispatch, maradék src, tesztsuite
+
+A 2. kör azonosítói `K2-` prefixszel. A kézi spot-check-kel megerősítettek: K2-H1, K2-H3,
+K2-H4, K2-H5, K2-H6 (meta.test.ts), K2-M1 (nincs AbortSignal a gateway-dispatchben).
+
+## 2. kör — HIGH
+
+### K2-H1 · A RevealContact a CÉG SAJÁT email/telefon értékét küldi be a látogató `user_data`-jaként
+
+- **Hely:** `soborbo-tracking/components/RevealContact.astro:44-45` —
+  `trackEmailConversion({ email: value })` / `trackPhoneConversion({ phone: value })`, ahol a
+  `value` a site felfedett kontakt-címe (a komponens `value` propja, pl. `hello@example.com`).
+- **Hiba:** igazolt lánc: `trackClickConversion(..., params:{email})` → `sendToWorker`
+  `user_data.email` → a gateway `em`-mé hash-eli. MINDEN felfedő látogató a cég saját
+  email/telefon hash-ével, azonos identitással megy a Metának — az EMQ-t aktívan rontja, és a
+  Meta különböző látogatókat egy szintetikus profilba olvaszthat. Kontraszt: a Tracking.astro
+  tel:/mailto: auto-bind helyesen PII NÉLKÜL hívja ugyanezeket.
+- **Fix:** a `{ email: value }` / `{ phone: value }` argumentumok törlése a RevealContactban.
+
+### K2-H2 · GTM-container: nincs consent-update (újra-tüzelő) trigger — a "2 másodpercnél később elfogadó" látogató teljes böngésző ad-lába elveszik
+
+- **Hely:** `soborbo-tracking/gtm/gen-container.mjs:141-149, 201-213` (+ a generált
+  container.json); `components/Tracking.astro:33` (`wait_for_update: 2000`).
+- **Hiba:** a base tagek (Google Tag, Meta Pixel Base) csak All Pages triggeren futnak
+  consent-gate mögött; a GTM NEM tüzeli újra a consent-blokkolt taget későbbi grant után —
+  a 2s-os wait_for_update ablakon túl elfogadó first-visit usernél a Pixel Base sosem fut,
+  az `fbq` definiálatlan marad → a konverziós Custom HTML tag `fbq('track',…)` hívása
+  ReferenceError → a böngésző-Pixel event elveszik, és a CAPI-legnek nincs dedup-párja.
+  Nincs `cookieyes_consent_update` custom-event trigger és History Change trigger sem a
+  containerben. Pont a legjobban attribuálható szegmens esik ki (ad → banner-elfogadás →
+  konverzió ugyanazon a pageview-n).
+- **Fix:** consent-update trigger (CookieYes dataLayer consent-update eventje) a Base/Google
+  Tag tüzelési triggerei közé.
+
+### K2-H3 · A callback-flow leadenként KÉT Meta Leadet könyvel — a "shared event_id" a szállított komponensekkel megvalósíthatatlan
+
+- **Hely:** `soborbo-tracking/components/CallbackButton.astro:25` (a `trackCallbackConversion()`
+  visszaadott eventId-t eldobja) + `gtm/gen-container.mjs:215-223` (a `Meta Pixel - Lead` tag a
+  T_CALLBACK triggeren, azaz a CTA-KLIKKEN tüzel, event_id A).
+- **Hiba:** a callback később valódi form-POST lesz, a backend `callback_request_submitted`-et
+  dispatchel a CAPI-ra a form hidden-field event_id-jával (B). A≠B → Meta leadenként 2 Leadet
+  könyvel (3-at, ha a form TrackedForm és a saját push-a is Leadet tüzel). Ugyanaz a hibaosztály,
+  mint a HANDOVER-run6 Beautyflow Lead↔Contact dedup-rése.
+- **Fix:** VAGY a Pixel Lead ne a CTA-klikken tüzeljön (csak a form push-án), VAGY a
+  CallbackButton írja be az eventId-jét a cél-form `event_id` hidden mezőjébe.
+
+### K2-H4 · A digest "nulla konverzió" riasztását a napi smoke-lead örökre elnémítja — hamis zöld pont a megcélzott incidens-osztály fölött
+
+- **Hely:** `src/scheduled/daily-digest.ts:34-38` — a `collectAcceptedCounts` query-jében
+  NINCS smoke-kizárás (szemben a `cross-check.ts:396`-tal, ami `lead_id NOT LIKE 'smoke-%'`-t
+  szűr).
+- **Hiba:** minden SMOKE_SITES-beli site (az összes éles site) naponta kap egy szintetikus
+  eventet a teljes szerver-láncon → `counts.has(siteId)` mindig true → a "ZERO accepted
+  conversions" figyelmeztetés (a 06-28→07-13-as néma kiesés őre) SOHA nem tüzelhet, akkor sem,
+  ha a valódi kliens-dispatch teljesen meghal.
+- **Fix:** `AND (lead_id IS NULL OR (lead_id NOT LIKE 'smoke-%' AND lead_id NOT LIKE
+  'dm-validate%'))` a count-querybe (vagy event_id-alapú szűrés).
+
+### K2-H5 · Nincs riasztás-throttling/dedup sehol — kritikus riasztás leadenként/30 percenként a végtelenségig
+
+- **Hely:** `src/lib/notify.ts:153-177` (nincs cooldown/dedup-kulcs/KV-state);
+  `src/routes/conversion.ts:757-765, 802-809` (per-konverzió per-platform sendAlert);
+  `src/scheduled/slo-check.ts:141-175` (deadCount>0 → 30 percenként újra-email; a dead
+  rekordot a retention csak ~90 nap után törli → egyetlen dead rekord ≈ 4300 ismételt email).
+- **Hiba:** egy lejárt Meta-token vagy hiányzó config forgalmas site-on MINDEN beérkező
+  leadnél email+Twilio SMS-t küld a javításig; a riasztás-fáradtság garantálja, hogy a
+  KÖVETKEZŐ valódi kritikus jelzés elveszik + Twilio-költség.
+- **Fix:** KV-alapú cooldown `(error_code, site_id)` kulcson (1-6h TTL) a `sendAlert`-ben;
+  a slo-checkben "korábban jelentett darabszám" marker.
+
+### K2-H6 · A tesztsuite több helyen a HIBÁS viselkedést betonozza be — a javítások teszt-bukást fognak okozni, ez várt
+
+- `tests/meta.test.ts:141-157` — "includes test_event_code when present in config": a
+  CLAUDE.md §17-tiltott KV-fallbacket (1. kör H1) ASSERTÁLJA. A H1-javítással együtt ezt a
+  tesztet az ellenkezőjére kell fordítani.
+- `tests/prehashed-user-data.test.ts:142-145` — "ignores unknown keys (forward-compat)": a
+  néma unknown-key-eldobást (1. kör H3) áldja meg, a függvény saját doc-commentje ("never a
+  silent pass-through") ellenében.
+- `tests/lead-status-consent.test.ts:81-104, 159-184` — az `ad_personalization` consent-
+  fabrikálást (1. kör H4) pinneli; a receipt-stub alakja ki sem tudja fejezni a capture-kori
+  ad_personalization=DENIED-et.
+- `tests/false-success-and-dispatch.test.ts:202`, `tests/server-ingress.test.ts:147,262,322` —
+  a szerver-úti csupasz 204-et (1. kör L7 / §12-eltérés) kontraktusként kódolják.
+- **Fix-elv:** ezek NEM megőrzendő tesztek — a kapcsolódó prod-javítással együtt kell őket
+  az elvárt (spec-helyes) viselkedésre átírni.
+
+### K2-H7 · A CookieYes-stub robbanási sugara: ~5 kliens-tesztfájl hamis-zöld, és a suite belső inkonzisztenciája árulkodó
+
+- **Hely:** `soborbo-tracking/tests/helpers.ts:3-11` (a C1-es rossz `marketing` alak);
+  hamis-zölddé tett fájlok: `index.test.ts` (~25 consent-gatelt flow), `events.test.ts`,
+  `flow.test.ts`, `persistence.test.ts:74-79`, és áttételesen `gateway.test.ts:45-55` (a
+  cookie-hiányos→JS-API fallback "gclid-megőrzést" bizonyít, ami élesben mindig strip).
+  Közben a `gateway-contract.test.ts` a VALÓDI cookie-alakot (`advertisement`) használja —
+  egy suite-on belül két ellentmondó CMP-modell.
+- **Fix:** a C1-javítás részeként a helper a valódi CookieYes-alakot emittálja, és a
+  `consent.test.ts` kapjon no-CMP+prod → deny-all ágat (ma az `isDevMode()` vitest alatt
+  mindig true, így a fail-closed ág tesztelhetetlen).
+
+### K2-H8 · Nulla tesztlefedettség a pénz-kritikus rétegeken
+
+- `soborbo-tracking/server/backend/gateway-dispatch.ts` (310 sor, az ÖSSZES
+  `server_ingress_only` money-konverzió egyetlen dispatch-útja): EGYETLEN teszt sem importálja.
+  A fejlécében felsorolt 5 "silent money bug" kontraktust semmi nem kényszeríti ki.
+- `src/worker.ts:170-230` queue() consumer: nulla teszt (attempts-indexelés, archive-then-ack
+  sorrend, poison-message út, ack-elnyomás R2-hiba esetén).
+- Az 1. kör hibáinak egyike sem volt teszt által megfogható: blocked-config expiry-archive
+  (H5), lead-status hiányzó gads-blokk (M3), prehashed rossz-kulcs route-szinten (H3),
+  CORS preflight site-configgal (M2), digest többsoros delivery (L10), retention↔7napos
+  DLQ-ablak együttműködés. **Szisztematikus minta:** a lomtalan-incidens tanulságai KIZÁRÓLAG
+  a böngésző-fan-out lábon lettek letesztelve; az offline CRM-leg, a queue-consumer, a
+  scheduled/R2-réteg, a CORS-réteg és a site-backend dispatcher vagy teszteletlen, vagy a
+  hibás viselkedést pinneli.
+
+## 2. kör — MEDIUM
+
+### Gateway / src
+
+- **K2-M1** · `soborbo-tracking/server/backend/gateway-dispatch.ts:127-131,279-307`: nincs
+  request-timeout (se AbortSignal) — a retry-ciklus a user lead-POST-jában awaitelődik; egy
+  beteg gateway 3 lógó fetch + 1,6s sleep erejéig a formot beadó usert várakoztatja. Fix:
+  `signal: AbortSignal.timeout(~3000)` per kísérlet.
+- **K2-M2** · `gateway-dispatch.ts:160`: `decodeURIComponent` malformed cookie-értéken
+  (pl. `%`-ra végződő) URIError-t dob — a hívók a lead-route argumentum-listájában hívják
+  inline → a TRACKING miatt 500-azik maga a lead-POST (a modul saját szabálya ellen). Fix:
+  try/catch, fallback a nyers értékre.
+- **K2-M3** · `soborbo-tracking/components/TrackedForm.astro:122-129,152-168`: nincs valódi
+  double-submit védelem — a 600ms-os `waitForTracking` ablakban a második klikk natívan
+  submittol, majd a pending handler MÉG EGYSZER `requestSubmit()`-el → két CRM-lead két külön
+  lead_id-vel (az offline Google-loop később duplán számolhat); a submit gomb sosem disabled;
+  az `isSubmitting` flag sosem resetel. Fix: submitter disable + flag-reset.
+- **K2-M4** · `gtm/gen-container.mjs:22,242-243` → container.json: a BOOLEAN paraméterek JSON
+  boolean-ként (nem `"true"` stringként) mennek — a valódi GTM-exportok mindig stringet
+  használnak; import-elutasítás vagy néma paraméter-eldobás kockázata (Conversion Linker, EC
+  enablement). Az awct EC-kulcsok (`enableUserProvidedData`/`userProvidedData`) nem egyeznek
+  a valódi awct-exportok Enhanced Conversions szótárával — ha a GTM az ismeretlen kulcsot
+  eldobja, az EC némán KI. A `gtm-container.test.ts` ebből semmit nem ellenőriz. Fix: egy
+  valódi GTM-exporttal byte-szinten összefésülni.
+- **K2-M5** · `soborbo-tracking/lib/events.ts:64-71` + `gen-container.mjs:215-223,234-246`:
+  a `trackCalculatorComplete` milestone-push event_id/value nélkül megy, de a GTM-trigger csak
+  event-névre illeszt → a `Meta Pixel - Lead` `{eventID:'undefined'}` literált, az awct
+  `orderId:"undefined"`-et kap. Ha egy site a lib-komment áldott opcióját követve EZT drótozza
+  konverziónak, minden böngésző-Lead `undefined` eventID-n osztozik → a Meta KÜLÖNBÖZŐ userek
+  Leadjeit dedupolja össze, a Google orderId-dedupja konverziókat olvaszt össze. Fix:
+  event_id+value út a trackCalculatorComplete-nek VAGY a milestone átnevezése.
+- **K2-M6** · `gen-container.mjs:84-85,234-246`: EGYETLEN közös Google Ads conversion label a
+  quote + callback + phone-click hármasra — telefonklikk ugyanazt az Ads-actiont könyveli, mint
+  a beadott árajánlat; a site-inputs (`trapezlemezes.json`) 4 külön action-ID-t sorol fel. Fix:
+  eventtípusonként külön label-konstans + awct tag.
+- **K2-M7** · `src/worker.ts:170-230` + `src/scheduled/retry.ts:152-165`: a queue-consumer
+  BUKOTT retry-ja nem ír `rejected` delivery-sort (`recordRetryDelivery` csak sikerkor hívódik)
+  → a reconciliation vendor_failure_rate-je pont kiesés alatt mér alul (5 bukásból 1 látszik).
+  Fix: bukott/kimerült retry is kerüljön a ledgerbe `origin='retry'`-val.
+- **K2-M8** · `src/lib/emq.ts:165-181`: a coverage-drop proxy az ÖSSZES events_raw sor fölött
+  számol, a strukturálisan em/ph-mentes klikk-eventeket is beleértve → egy klikk-kampány hamis
+  EMQ_COVERAGE_DROP riasztást szül, egy alacsony volumenű form-em-törés pedig elbújhat. Fix: a
+  query szűkítése konverzió-típusú (vagy ad_allowed=1) eventekre.
+
+### Tesztsuite (a K2-H6/H7/H8-on túl)
+
+- **K2-M9** · `tests/daily-digest.test.ts:139-150`: a D1-stub site/platformonként mindig
+  PONTOSAN egy delivery-sort ad → az 1. kör L10 (no-ORDER-BY last-write-wins) rendezési hibája
+  strukturálisan tesztelhetetlen; a stub SQL-substring-dispatchel és a `LIKE 'smoke-%'`
+  predikátumot sosem futtatja.
+- **K2-M10** · CORS/preflight: nulla teszt (`corsHeaders`/`resolveAllowedOrigin`/OPTIONS), és
+  az `origin.test.ts:59-69` (per-site allowed_origins az ingressen) hamis magabiztosságot ad
+  egy olyan knobról, aminek a preflight-lába törött (1. kör M2).
+- **K2-M11** · `src/scheduled/retention.ts` (cursor-loop, uploaded-Date szemantika,
+  dead-only kapu) és a `listPendingRetries` R2-lapozása teszteletlen — minden R2-list stub
+  egyoldalas, nem-truncated választ ad.
+- **K2-M12** · A conversion-tesztek env-jéből az `INGEST_LIMITER` hiányzik (csak admin.test
+  stubolja) → a limiter-hívások teljes törlése is zöld maradna; az 1. kör M8 útjai
+  teszteletlenek.
+- **K2-M13** · `tests/meta-parity.test.ts` tautologikus: az elvárást ugyanabból az
+  events.json-ból generálja, amiből a kód — a valódi kockázatot (elgépelt Meta standard
+  event-név az events.json-ban) semmi nem validálja a Meta tényleges szótára ellen.
+
+## 2. kör — LOW
+
+- **K2-L1** · `notify.ts:30-33`: RFC 2047 sértés — egyetlen, korlátlan hosszú encoded-word a
+  subjectben (75 char a plafon); hosszú magyar/emoji-s subjectet downstream MTA-k
+  torzíthatnak. Fix: chunkolás.
+- **K2-L2** · `worker.ts:133-153`: nem illeszkedő cron-string néma no-op — wrangler.toml
+  trigger-átírás worker.ts nélkül = az adott alrendszer (pl. DLQ-retry) hang nélkül kikapcsol.
+  Fix: záró else + error log.
+- **K2-L3** · Index-hiányok: `consent_receipts.lead_id` (a forró `/lead-status` út
+  full-scanel receipt-miss esetén), `deliveries.lead_id` (getLeadTrail), és a napi cronok
+  csupasz timestamp-range szűrései a (site_id,ts) kompozitokkal nem kiszolgálhatók. Jelen
+  volumenen elfogadható; skálázás előtt pótolni.
+- **K2-L4** · `scheduled/retention.ts:84`: a dead-rekord kora az `obj.uploaded`-ból számolódik,
+  amit az archiválás resetel → a day-0 hiba payloadja (nyers event_payload + hashed_user_data,
+  PII at rest) ~97 napig él 90 helyett. GDPR data-minimization drift; javítani vagy
+  dokumentálni.
+- **K2-L5** · `slo-check.ts:10-13` duplikálja az `isDeadKey`-t import helyett —
+  kulcsformátum-változásnál a pending/dead számok szétcsúsznak.
+- **K2-L6** · `error-codes.ts:1-17` fejléc-taxonómia: a 960-as sáv és az alfa-sávok
+  (TRK-EVT/GA4/META/PROV/CFG) hiányoznak a fájl SAJÁT fejlécéből (a docs/error-codes.md
+  driftjén felül).
+- **K2-L7** · `metrics.ts`: három különböző blob-séma egy AE-datasetben, csak index-értékkel
+  megkülönböztetve — blob-pozíciós lekérdezés csendben kever. (Az írások helyesen
+  nem-blokkolók.)
+- **K2-L8** · `gateway-dispatch.ts:292-301`: a nem-listázott 4xx-ek (405/408/413/415/422/429)
+  a retry-ciklusba esnek — 413/415/422 retry-ból sosem javul (~1,6s felesleges latencia).
+- **K2-L9** · `gateway-dispatch.ts:212-224`: pozitív `value` currency nélkül némán elvész
+  (nincs log) — a szerver-leg ROAS-érték csendes vesztése.
+- **K2-L10** · `TrackedForm.astro:151` + `lib/index.ts:141-142,285-299`: a gclid/fbclid hidden
+  mezők consent-blokkolt esetben IS kitöltődnek (a `trackLeadSubmit` a consent-check ELŐTT
+  olvassa őket) → a klikk-ID-k nem-consentelt usernél is a form-POST-tal a CRM/Sheets felé
+  utaznak. A vendor-küldést a gateway fail-close-olja, de az ID-k site-oldalt tárolódnak.
+- **K2-L11** · Site-oldali durabilitás: a dispatch-kimerülés csak logol (backend/README
+  szerint) — a gateway DLQ-ja csak az odáig eljutott eventeket fedi; gateway-kiesésnél a
+  form-konverziók szerver-lába végleg elvész. Dokumentáltan vállalt (smoke/digest észleli),
+  de ez detektálás, nem recovery.
+- **K2-L12** · `monitoring/watchdog.ts:64-99`: a watchdog SAJÁT hibája néma (waitUntil-ben
+  rejectel, se alert, se heartbeat) — a védőháló észrevétlenül rohadhat; a `KEY_EVENTS`-beli
+  `primary_conversion` nem létezik az events.json-ban.
+- **K2-L13** · `server/backend/smoke.ts:32`: a `REPLACE_ME_SITE_ID` placeholder őrizetlenül
+  dispatchelődik, ha nem írják át.
+- **K2-L14** · Container-név "canonical (v5)" vs package v6 — kozmetikai, de import közben
+  zavaró.
+- **K2-L15** · Tautologikus tesztek: `consent.test.ts:29-33` (`typeof === 'boolean'` bármire
+  átmegy), `persistence.test.ts:134-137` (`toContain(getDevice())` nem tud bukni).
+- **K2-L16** · A D1-fake-ek SQL-substringre dispatchelnek és scriptelt sorokat adnak — a
+  `checkIdempotency` RETURNING/upsert-konfliktus szemantikája sosem fut valódi SQLite ellen;
+  nincs integrációs szint (miniflare/wrangler D1) a kompenzálásra.
+
+## 2. kör — tisztának igazolt
+
+`admin-ui.ts` (textContent-only render, CSP), OAuth-route-hármas (a már ismert két LOW-n túl),
+`debug-ga4.ts` (mindig /debug/mp/collect, prod-eventet nem tud küldeni), `health.ts`,
+`provenance.ts`, `attribution.ts`, `skip-reason.ts`; emq százalék-matek és cross-check/recon
+query-alakok, dátum-injection guardok; retention SQL parametrizált; queue() per-message
+try/catch (poison-message nem mérgezi a batch-et — de teszteletlen, lásd K2-H8);
+PhoneLink/TrackingNoscript/examples/site-inputs/smoke-test.sh/SETUP-SERVER.md/
+gen-event-aliases.mjs; gateway-dispatch mag-kontraktjai (4xx nem-retriable magja, azonos body
+retry-n át, header/útvonal-egyezés a worker-rel, cookie-parser helyes `advertisement` kulcsa,
+per-request test_event_code, value:0 nem küldhető); a kliens-suite kontraktus-erős darabjai
+(`gateway-contract.test.ts`, forwarder-tesztek, hash-tesztek, `skip-classification.test.ts` a
+böngésző-lábra, `worker-error-status.test.ts`); a teszt-idő-kezelés tiszta (nincs rothadó dátum).
 
 ## Tisztának igazolt területek (nem kell hozzányúlni)
 
