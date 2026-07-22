@@ -157,6 +157,7 @@ export enum TrackingErrorCode {
   EMQ_BELOW_THRESHOLD = 'TRK-950-007',
   EMQ_QUERY_FAILED = 'TRK-950-008',
   EMQ_COVERAGE_DROP = 'TRK-950-009',
+  SITE_CONFIG_DRIFT = 'TRK-950-010',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -287,6 +288,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Meta Dataset Quality API query failed — daily digest falls back to the ledger match-key coverage proxy',
   [TrackingErrorCode.EMQ_COVERAGE_DROP]:
     'Match-key (em/ph/fbc/fbp) 24h coverage dropped significantly vs the 7-day average — likely broken identifier forwarding',
+  [TrackingErrorCode.SITE_CONFIG_DRIFT]:
+    'A live KV site-config diverged from the committed site-manifest (config vanished or changed) — the money-path source-of-truth and production disagree',
   [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]:
     "Invariant violation: a delivery would have been recorded 'accepted' without a vendor HTTP status — recorded as 'skipped' instead",
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
@@ -385,6 +388,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // úgyis a proxy-metrikára esik vissza, az őrzés nem szűnik meg.
   [TrackingErrorCode.EMQ_QUERY_FAILED]: 'info',
   [TrackingErrorCode.EMQ_COVERAGE_DROP]: 'warning',
+  [TrackingErrorCode.SITE_CONFIG_DRIFT]: 'critical',
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RETENTION_R2_FAILED]: 'warning',
 

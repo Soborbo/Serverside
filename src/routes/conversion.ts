@@ -878,12 +878,24 @@ function fanOut(
       // Normalizált vendor-kézbesítés a ledgerbe (#9). A 'skipped' státusz a vendor-
       // eredmény `skipped` flagjéből jön (consent-tiltás VAGY nem konfigurált
       // platform) — a három állapot (accepted/skipped/rejected) így megkülönböztetett.
-      const deliveryRecords: DeliveryRecord[] = [
-        normalizeDelivery('meta', metaResult),
-        normalizeDelivery('tiktok', tiktokResult),
-        normalizeDelivery('linkedin', linkedinResult),
-        normalizeDelivery('msads', msadsResult)
-      ];
+      //
+      // F4-2 · Scaffold-platform zajcsökkentés: egy `not_expected` skip (a platform
+      // NINCS konfigurálva ÉS nem is elvárt ezen a site-on — pl. TikTok/LinkedIn/
+      // MsAds egy csak-Meta site-on) NE írjon ledger-sort. Enélkül minden esemény
+      // 3–4 értelmetlen 'skipped' sort hagyott, ami elfedte a valódi kézbesítéseket
+      // a delivery-nézetben. MEGMARAD viszont: a `consent_denied` (GDPR-audit nyom) és
+      // a `not_configured` (ELVÁRT platform hiányzó configgal → riasztás + DLQ) sor —
+      // azok nem zaj. A Meta valós site-on mindig elvárt (`expected_platforms.smoke`),
+      // így sosem esik ki; csak a be nem kötött scaffold-lábak tűnnek el.
+      const isNotExpectedSkip = (r: (typeof results)[number]): boolean =>
+        r.status === 'fulfilled' &&
+        r.value.skipped === true &&
+        r.value.skip_reason === 'not_expected';
+      const deliveryRecords: DeliveryRecord[] = [];
+      if (!isNotExpectedSkip(metaResult)) deliveryRecords.push(normalizeDelivery('meta', metaResult));
+      if (!isNotExpectedSkip(tiktokResult)) deliveryRecords.push(normalizeDelivery('tiktok', tiktokResult));
+      if (!isNotExpectedSkip(linkedinResult)) deliveryRecords.push(normalizeDelivery('linkedin', linkedinResult));
+      if (!isNotExpectedSkip(msadsResult)) deliveryRecords.push(normalizeDelivery('msads', msadsResult));
 
       // Külön settled a dlqWrites-ra: CSAK ezek eredménye táplálja a
       // retryPersistFailed döntést — egy alert- vagy ledger-írás hibája nem
