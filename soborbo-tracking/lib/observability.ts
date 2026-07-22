@@ -103,8 +103,8 @@ export function clearDiagnostics(): void {
 export const PII_DATALAYER_KEYS: ReadonlySet<string> = new Set([
   'email', 'phone', 'phone_number', 'user_provided_data', 'user_data',
   'first_name', 'last_name', 'name', 'street', 'city', 'postal_code', 'postcode',
-  // Meta Advanced Matching short codes
-  'em', 'ph', 'fn', 'ln',
+  // Meta Advanced Matching short codes (a hash-elt user_data mezőnevei is)
+  'em', 'ph', 'fn', 'ln', 'ct', 'zp', 'st', 'country', 'external_id',
 ]);
 
 /** Delete any PII-shaped keys from `data` IN PLACE; return the names removed. */

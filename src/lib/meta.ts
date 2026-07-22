@@ -23,8 +23,9 @@ export interface MetaCAPIPayload {
   // §3 — automatikus lead-útvonal (cold|post_quote|from_quote_email). A Meta
   // custom_data-ba kerül; nem PII. Ingress-validált (lib/provenance.ts).
   lead_provenance?: string;
-  // Per-request Test-stream override. Csak a hitelesített szerver-ingress tölti ki
-  // (routes/conversion.ts); ELŐBBRE való a KV `meta.test_event_code`-nál.
+  // Per-request Test-stream override — az EGYETLEN elfogadott forrás (§17). Csak a
+  // hitelesített szerver-ingress tölti ki (routes/conversion.ts); a böngésző-ág
+  // eldobja. A KV `meta.test_event_code`-ot SOHA nem használjuk (detektáljuk+riasztunk).
   test_event_code?: string;
 }
 
@@ -128,10 +129,21 @@ export async function sendToMetaCAPI(
     body.data_processing_options_state = 0;
   }
 
-  // A per-request kód ELŐBBRE való a KV-confignál: így egy szintetikus proof-event
-  // determinisztikusan a Test stream-be megy, anélkül hogy az élő site-configot
-  // (és vele a valódi leadek útját) módosítanánk. Lásd types.ts test_event_code.
-  const testEventCode = payload.test_event_code || meta.test_event_code;
+  // §17: a test_event_code KIZÁRÓLAG per-request jöhet (hitelesített szerver-ingress),
+  // SOHA a KV-configból. A site-config edge-cache-elt (cacheTtl=300s), így egy bent
+  // felejtett KV-kód a cache-ablakban VALÓDI konverziókat terelne a Meta Test
+  // streambe (két éles leak történt már így). Ha egy KV-config mégis hordoz ilyet,
+  // NEM használjuk, és hangosan riasztunk — a config-ból ki kell venni.
+  if (meta.test_event_code) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.META_KV_TEST_EVENT_CODE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.META_KV_TEST_EVENT_CODE],
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name
+    });
+  }
+  const testEventCode = payload.test_event_code;
   if (testEventCode) {
     body.test_event_code = testEventCode;
   }
@@ -217,7 +229,12 @@ export async function sendToMetaCAPI(
     return {
       success: false,
       error_code: errorCode,
-      error: responseBody.error?.message || `HTTP ${response.status}`,
+      // §13: a Meta a beküldött értékeket (email/telefon) VISSZHANGOZHATJA a hiba-
+      // üzenetben. A returned `error` a ledger vendor_message-be és a DLQ
+      // failure_reason-be perzisztálódik — ezért itt is sanitizáljuk, nem csak a logban.
+      error: responseBody.error?.message
+        ? sanitizeErrorMessage(responseBody.error.message)
+        : `HTTP ${response.status}`,
       status: response.status,
       fbtrace_id: responseBody.fbtrace_id
     };
@@ -241,7 +258,7 @@ export async function sendToMetaCAPI(
     return {
       success: false,
       error_code: errorCode,
-      error: isTimeout ? 'timeout' : errMsg
+      error: isTimeout ? 'timeout' : sanitizeErrorMessage(errMsg)
     };
   }
 }

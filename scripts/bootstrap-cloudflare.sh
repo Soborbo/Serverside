@@ -5,8 +5,9 @@
 # eddig kézi toml-szerkesztést igényelt (lásd DEPLOY.md, deploy-audit).
 #
 # Létrehozza (ha még nincs): 2 KV namespace (SITE_CONFIG, OAUTH_TOKENS),
-# 1 R2 bucket (soborbo-tracking-dlq), 1 D1 DB (event-gateway-ledger), majd
-# alkalmazza a migrations/0001_ledger.sql sémát és beírja az ID-kat a wrangler.toml-ba.
+# 1 R2 bucket (soborbo-tracking-dlq-eu, EU-jurisdikció — GDPR P0), 1 D1 DB
+# (event-gateway-ledger), majd alkalmazza a migrations/0001_ledger.sql sémát és
+# beírja az ID-kat a wrangler.toml-ba.
 #
 # Idempotens: meglévő erőforrást nem hoz létre újra (név alapján). Csak a
 # wrangler.toml ID-ket frissíti.
@@ -33,7 +34,11 @@ done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOML="$ROOT/wrangler.toml"
-R2_BUCKET="soborbo-tracking-dlq"
+# A DLQ nyers event-payloadot (email/telefon/név/cím) tárol retry-hez, ezért
+# EU-jurisdikciós bucket (GDPR). A név ÉS a --jurisdiction eu flag MINDKETTŐ kell:
+# a flag nélküli r2-parancsok a DEFAULT jurisdikciós namespace-t nézik → "not found".
+R2_BUCKET="soborbo-tracking-dlq-eu"
+R2_JURISDICTION="eu"
 D1_NAME="event-gateway-ledger"
 
 command -v wrangler >/dev/null 2>&1 || { echo "Hiba: wrangler nincs telepítve." >&2; exit 1; }
@@ -44,11 +49,27 @@ run() { if [ "$DRY_RUN" = 1 ]; then echo "DRY: $*"; else eval "$@"; fi; }
 # `database_id = "..."` (D1) értéket; létező erőforrásnál a 'list'-ből.
 extract_id() { grep -oE '[0-9a-f]{32}|[0-9a-f-]{36}' | head -n1; }
 
-patch_toml() { # $1=marker regex előtag, $2=új id
+patch_toml() { # $1=marker regex előtag, $2=új id — CSAK egyedi kulcsokhoz (database_id)!
   local key="$1" id="$2"
   if [ "$DRY_RUN" = 1 ]; then echo "DRY: patch $key -> $id"; return; fi
-  # Az adott binding blokkjában cseréli az id sort (GNU sed).
-  sed -i -E "s|^(\\s*${key}\\s*=\\s*\")[^\"]*(\")|\\1${id}\\2|" "$TOML"
+  # Az adott kulcs ELSŐ előfordulását cseréli. FIGYELEM: ez minden egyező sort
+  # átírna, ezért CSAK olyan kulcsra használható, amiből egy van (database_id).
+  # A `id` kulcs KÉT [[kv_namespaces]] blokkban is szerepel → arra patch_kv_id kell.
+  sed -i -E "0,/^(\\s*${key}\\s*=\\s*\")[^\"]*(\")/s||\\1${id}\\2|" "$TOML"
+}
+
+patch_kv_id() { # $1=binding neve (SITE_CONFIG|OAUTH_TOKENS), $2=új id
+  # A `binding = "<név>"` markert követő ELSŐ `id = "..."` sort cseréli — így a
+  # két KV-blokk id-je NEM keveredik. A régi patch_toml minden `id =` sort átírt,
+  # ezért a SITE_CONFIG patch felülírta az OAUTH_TOKENS id-t is (a token-tár a rossz
+  # namespace-re mutatott, az OAuth némán elromlott).
+  local binding="$1" id="$2"
+  if [ "$DRY_RUN" = 1 ]; then echo "DRY: patch KV $binding id -> $id"; return; fi
+  awk -v b="$binding" -v newid="$id" '
+    $0 ~ "binding[[:space:]]*=[[:space:]]*\"" b "\"" { inblock = 1 }
+    inblock && /^[[:space:]]*id[[:space:]]*=/ { sub(/"[^"]*"/, "\"" newid "\""); inblock = 0 }
+    { print }
+  ' "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
 }
 
 echo "== KV namespaces =="
@@ -63,15 +84,16 @@ for binding in SITE_CONFIG OAUTH_TOKENS; do
       echo "  $binding létrehozva: $id"
     fi
   fi
-  [ "$binding" = "SITE_CONFIG" ] && patch_toml "id" "$id" && SITE_ID_DONE=1 || true
+  # MINDKÉT KV-id a SAJÁT blokkjába (block-scoped) — különben az OAUTH_TOKENS id
+  # a SITE_CONFIG-éra íródna, és a token-tár a rossz namespace-re mutatna.
+  patch_kv_id "$binding" "$id"
 done
-echo "  (megj.: ha mindkét KV id-t patchelni kell, a wrangler.toml-ban a két [[kv_namespaces]] blokk sorrendje SITE_CONFIG majd OAUTH_TOKENS — ellenőrizd a patch-et)"
 
-echo "== R2 bucket =="
-if wrangler r2 bucket list 2>/dev/null | grep -q "$R2_BUCKET"; then
-  echo "  $R2_BUCKET már létezik"
+echo "== R2 bucket (EU jurisdiction) =="
+if wrangler r2 bucket list --jurisdiction "$R2_JURISDICTION" 2>/dev/null | grep -q "$R2_BUCKET"; then
+  echo "  $R2_BUCKET már létezik (jurisdiction=$R2_JURISDICTION)"
 else
-  run "wrangler r2 bucket create \"$R2_BUCKET\""
+  run "wrangler r2 bucket create \"$R2_BUCKET\" --jurisdiction \"$R2_JURISDICTION\""
 fi
 
 echo "== D1 database =="

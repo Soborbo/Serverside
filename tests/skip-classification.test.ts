@@ -24,10 +24,13 @@ import { TrackingErrorCode } from '../src/lib/error-codes';
  * utólag már csak a CRM-ből lehet visszanyerni.
  *
  * A helyes viselkedés három ágra válik (lásd lib/skip-reason.ts):
- *   consent_denied → terminális, nincs DLQ, dispatched OK
- *   not_expected   → terminális, nincs DLQ, dispatched OK
+ *   consent_denied → terminális, nincs DLQ, ledger-sor MARAD (GDPR-audit), dispatched OK
+ *   not_expected   → terminális, nincs DLQ, ledger-sor SINCS (F4-2 zajcsökkentés), dispatched OK
  *   not_configured ELVÁRT platformon → ledger-hibakód + DLQ-rekord + CRITICAL,
  *                    és dispatched CSAK sikeres DLQ-perzisztálás után
+ *
+ * F4-2: a `not_expected` (be nem kötött, nem elvárt scaffold-platform) mostantól NEM
+ * ír delivery-sort — enélkül minden esemény 3–4 értelmetlen 'skipped' sort hagyott.
  */
 
 const HOST = 'lomtalan-skip.example.com';
@@ -225,7 +228,7 @@ describe('Skip-osztályozás — terminális ágak (nincs DLQ, dispatched mehet)
     expect(dispatchedUpdates.length).toBeGreaterThan(0);
   });
 
-  it('2. consent OK + Meta NEM elvárt + nincs config → not-expected skip, NINCS DLQ, dispatched', async () => {
+  it('2. consent OK + Meta NEM elvárt + nincs config → not-expected skip, NINCS DLQ, NINCS ledger-sor, dispatched', async () => {
     installFetch();
     const { ledger, deliveries, dispatchedUpdates } = makeLedger();
     const { env, deadRecords } = makeEnv({
@@ -238,17 +241,25 @@ describe('Skip-osztályozás — terminális ágak (nincs DLQ, dispatched mehet)
     await handleConversion(leadRequest(true), env, ctx);
     await Promise.allSettled(tasks);
 
-    expect(metaRow(deliveries)?.status).toBe('skipped');
-    expect(metaRow(deliveries)?.error_code).toBeNull();
+    // F4-2: a Meta not_expected → NEM ír ledger-sort (zajcsökkentés).
+    expect(metaRow(deliveries)).toBeUndefined();
     // A Meta nem elvárt → nincs róla retry-rekord. (A TikTok VISZONT elvárt ebben
     // a configban és szintén nincs bekötve, ezért ő jogosan kap egyet — pont ez
     // mutatja, hogy a döntés platformonként, az expected listából születik.)
     expect(deadRecords.filter((r) => r.platform === 'meta')).toHaveLength(0);
     expect(notConfiguredAlerts().filter((c) => (c[2] as any)?.platform === 'meta')).toHaveLength(0);
+    // A TikTok elvárt + hiányzó config → not_configured: ledger-sor MARAD + DLQ + alert.
+    expect(deliveries.find((d) => d.platform === 'tiktok')?.status).toBe('skipped');
+    expect(deliveries.find((d) => d.platform === 'tiktok')?.error_code).toBe(
+      TrackingErrorCode.PLATFORM_NOT_CONFIGURED
+    );
+    expect(deadRecords.filter((r) => r.platform === 'tiktok')).toHaveLength(1);
+    // A LinkedIn/MsAds nem elvártak → nincs soruk.
+    expect(deliveries.filter((d) => d.platform === 'linkedin' || d.platform === 'msads')).toHaveLength(0);
     expect(dispatchedUpdates.length).toBeGreaterThan(0);
   });
 
-  it('2b. hiányzó expected_platforms blokk → fail-safe: nincs DLQ-áradat', async () => {
+  it('2b. hiányzó expected_platforms blokk → fail-safe: nincs DLQ-áradat, nincs zaj-sor', async () => {
     installFetch();
     const { ledger, deliveries } = makeLedger();
     const { env, deadRecords } = makeEnv({
@@ -260,8 +271,28 @@ describe('Skip-osztályozás — terminális ágak (nincs DLQ, dispatched mehet)
     await handleConversion(leadRequest(true), env, ctx);
     await Promise.allSettled(tasks);
 
-    expect(metaRow(deliveries)?.status).toBe('skipped');
+    // Semmi nem elvárt + semmi nincs bekötve → minden láb not_expected → 0 ledger-sor,
+    // 0 DLQ (fail-safe: egy sosem-bekötött platform nem hiba, nem gyárt zajt).
+    expect(deliveries).toHaveLength(0);
     expect(deadRecords).toHaveLength(0);
+  });
+
+  it('F4-2. csak-Meta site (Meta elvárt+konfigurált): a scaffold-lábak NEM írnak zaj-sort', async () => {
+    installFetch(200);
+    const { ledger, deliveries } = makeLedger();
+    const { env } = makeEnv({
+      siteConfig: await config({ withMeta: true, expectedSmoke: ['meta'] }),
+      ledger
+    });
+    const { ctx, tasks } = collectingCtx();
+
+    await handleConversion(leadRequest(true), env, ctx);
+    await Promise.allSettled(tasks);
+
+    // KIZÁRÓLAG a Meta ír sort (elvárt + konfigurált + accepted); a tiktok/linkedin/
+    // msads not_expected → egyetlen 'skipped' zaj-sor sem. Ez az F4-2 lényege.
+    expect(deliveries.map((d) => d.platform)).toEqual(['meta']);
+    expect(metaRow(deliveries)?.status).toBe('accepted');
   });
 });
 

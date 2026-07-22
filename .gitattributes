@@ -1,0 +1,10 @@
+# A Fázis 4+5 site-manifest tooling KÖTELEZŐEN LF marad. A generátor .mjs-t a
+# vitest natív ESM-importon keresztül tölti, és egy friss autocrlf=true
+# (Windows) checkout CRLF-re konvertálná — ilyenkor a suite "SyntaxError:
+# Invalid or unexpected token"-nel elhal. LF-re rögzítve minden checkout (CI,
+# friss clone, más gép) determinisztikusan a zöld állapotot kapja.
+scripts/gen-site-manifest.mjs   text eol=lf
+src/lib/site-manifest.ts        text eol=lf
+src/site-manifest.json          text eol=lf
+tests/site-manifest.test.ts     text eol=lf
+tests/e2e-critical-paths.test.ts text eol=lf

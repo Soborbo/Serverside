@@ -138,22 +138,37 @@ describe('sendToMetaCAPI — request structure (CLAUDE.md rule 2)', () => {
     expect(body.data[0].event_id).toBe('plain-event-id-123');
   });
 
-  it('includes test_event_code when present in config', async () => {
+  // §17: a KV `meta.test_event_code` SOHA nem érvényesülhet (edge-cache-ablakban
+  // valódi konverziókat terelne a Meta Test streambe — két éles leak történt így).
+  // A per-request payload code az EGYETLEN elfogadott forrás.
+  it('IGNORES a KV meta.test_event_code-ot (§17), csak a per-request kódot használja', async () => {
     const cfg = {
       ...baseSiteConfig,
-      meta: { ...baseSiteConfig.meta, test_event_code: 'TEST_PAINLESS' }
+      meta: { ...baseSiteConfig.meta, test_event_code: 'TEST_KV_LANDMINE' }
     };
+    // (a) KV kód jelen, per-request NINCS → a body NEM tartalmazhat test_event_code-ot.
+    await sendToMetaCAPI(
+      cfg,
+      { event_name: 'callback_conversion', event_id: 'evt-x', event_time: Math.floor(Date.now() / 1000) },
+      {}
+    );
+    const kvOnlyBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(kvOnlyBody).not.toHaveProperty('test_event_code');
+
+    // (b) per-request kód jelen (KV is jelen) → a body a PER-REQUEST kódot viszi.
+    fetchMock.mockClear();
     await sendToMetaCAPI(
       cfg,
       {
         event_name: 'callback_conversion',
-        event_id: 'evt-x',
-        event_time: Math.floor(Date.now() / 1000)
+        event_id: 'evt-y',
+        event_time: Math.floor(Date.now() / 1000),
+        test_event_code: 'TEST_PER_REQUEST'
       },
       {}
     );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.test_event_code).toBe('TEST_PAINLESS');
+    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(reqBody.test_event_code).toBe('TEST_PER_REQUEST');
   });
 
   it('omits test_event_code when not in config (production flow)', async () => {

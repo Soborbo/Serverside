@@ -30,7 +30,11 @@ const SITE_CONFIG_JSON = {
   }
 };
 
-function makeEnv(receiptRow?: { ad_allowed: number; ad_user_data: string | null }): Env {
+function makeEnv(receiptRow?: {
+  ad_allowed: number;
+  ad_user_data: string | null;
+  ad_personalization?: string | null;
+}): Env {
   return {
     ADMIN_API_TOKEN: 'admin-token',
     GADS_OAUTH_CLIENT_ID: 'c',
@@ -170,7 +174,9 @@ describe('handleLeadStatus — receipt-precedencia a CRM ad_allowed felett', () 
         ad_allowed: false,
         user_data: { email: 'jane@example.com' }
       }),
-      makeEnv({ ad_allowed: 1, ad_user_data: 'GRANTED' }),
+      // Valósághű CookieYes-receipt: az `advertisement` egységként adja mindkét
+      // jelet, ezért ad_user_data ÉS ad_personalization is GRANTED.
+      makeEnv({ ad_allowed: 1, ad_user_data: 'GRANTED', ad_personalization: 'GRANTED' }),
       makeCtx()
     );
 
@@ -181,6 +187,32 @@ describe('handleLeadStatus — receipt-precedencia a CRM ad_allowed felett', () 
       adUserData: 'CONSENT_GRANTED',
       adPersonalization: 'CONSENT_GRANTED'
     });
+  });
+
+  // Regresszió-őr (#7): az ad_personalization KÜLÖN jel — NEM vezethető le az
+  // ad_user_data-ból. Ha a user a data-használatot engedte, de a személyre szabást
+  // NEM (receipt: ad_user_data=GRANTED, ad_personalization=DENIED), akkor a Google
+  // felé CSAK adUserData=GRANTED mehet; adPersonalization NEM fabrikálható GRANTED-re.
+  it('ad_personalization=DENIED a receiptben → NEM megy hamis GRANTED a Google-nek', async () => {
+    let captured: any = null;
+    vi.stubGlobal('fetch', async (_u: string, init: any) => {
+      captured = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ requestId: 'r' }) } as any;
+    });
+
+    const res = await handleLeadStatus(
+      makeRequest({
+        lead_id: 'lead-12345678',
+        status: 'lead_qualified',
+        user_data: { email: 'jane@example.com' }
+      }),
+      makeEnv({ ad_allowed: 1, ad_user_data: 'GRANTED', ad_personalization: 'DENIED' }),
+      makeCtx()
+    );
+
+    expect(res.status).toBe(200);
+    expect(captured).not.toBeNull();
+    expect(captured.events[0].consent).toEqual({ adUserData: 'CONSENT_GRANTED' });
   });
 
   it('explicit DENIED receipt + CRM ad_allowed=true → nincs Google-hívás', async () => {

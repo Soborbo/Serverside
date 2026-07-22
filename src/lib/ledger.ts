@@ -4,6 +4,7 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import type { ConsentState } from './consent';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
+import { sanitizeErrorMessage } from './log-sanitize';
 
 /**
  * D1 ledger — append-only bizonyíték a beérkező konverziókról, a vendor-
@@ -103,7 +104,10 @@ export function normalizeDelivery(
     return {
       platform,
       status: 'rejected',
-      vendor_message: truncate(String(settled.reason), 500)
+      // §13: a vendor a beküldött PII-t visszhangozhatja — a ledger SOHA nem tárolhat
+      // user_data-t. sanitizeErrorMessage a perzisztencia-határon strippel (email/
+      // telefon/hash → placeholder), nem csak truncál.
+      vendor_message: sanitizeErrorMessage(String(settled.reason))
     };
   }
   const v = settled.value;
@@ -133,7 +137,7 @@ export function normalizeDelivery(
     status: 'rejected',
     http_status: v.status,
     error_code: v.error_code,
-    vendor_message: truncate(v.partial_failure_error || v.error, 500)
+    vendor_message: sanitizeErrorMessage(v.partial_failure_error || v.error)
   };
 }
 
@@ -166,10 +170,6 @@ export function isValidLeadId(v: unknown): v is string {
   return typeof v === 'string' && v.length >= 8 && v.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(v);
 }
 
-function truncate(s: string | undefined, max: number): string | undefined {
-  if (!s) return undefined;
-  return s.length > max ? s.slice(0, max) : s;
-}
 
 // ── D1 műveletek (mind hibatűrő, no-op ha nincs binding) ─────────────────────
 
@@ -507,6 +507,14 @@ export interface LeadConsentRecord {
    * ad_allowed=1-e a require_consent=false defaultból is jöhet, az NEM consent.
    */
   ad_user_data: string | null;
+  /**
+   * A capture-kori EXPLICIT ad_personalization jel ('GRANTED' | 'DENIED' |
+   * 'UNSPECIFIED'), vagy null. KÜLÖN jel az ad_user_data-tól — az offline upload
+   * ezt önállóan jelenti a Google-nek, NEM vezeti le az ad_user_data-ból (különben
+   * hamis ad_personalization=GRANTED menne olyan usernek, aki csak a data-
+   * használatot engedte, a személyre szabást nem).
+   */
+  ad_personalization: string | null;
 }
 
 /**
@@ -522,14 +530,18 @@ export async function getLatestConsentForLead(
   if (!env.LEDGER) return null;
   try {
     const row = await env.LEDGER.prepare(
-      `SELECT ad_allowed, ad_user_data FROM consent_receipts
+      `SELECT ad_allowed, ad_user_data, ad_personalization FROM consent_receipts
        WHERE site_id = ? AND lead_id = ?
        ORDER BY received_at DESC LIMIT 1`
     )
       .bind(siteId, leadId)
-      .first<{ ad_allowed: number; ad_user_data: string | null }>();
+      .first<{ ad_allowed: number; ad_user_data: string | null; ad_personalization: string | null }>();
     if (!row) return null;
-    return { ad_allowed: row.ad_allowed === 1, ad_user_data: row.ad_user_data ?? null };
+    return {
+      ad_allowed: row.ad_allowed === 1,
+      ad_user_data: row.ad_user_data ?? null,
+      ad_personalization: row.ad_personalization ?? null
+    };
   } catch (err) {
     ledgerError('getLatestConsentForLead', err, { site_id: siteId });
     return null;

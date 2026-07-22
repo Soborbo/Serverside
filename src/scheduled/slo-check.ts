@@ -1,5 +1,5 @@
 import type { Env } from '../env';
-import { sendAdminEmail, sendCriticalSMS, sendAlert } from '../lib/notify';
+import { sendAdminEmail, sendCriticalSMS, sendAlert, throttleOncePer } from '../lib/notify';
 import { countSiteConfigs } from '../lib/config';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import { logStructured } from '../types';
@@ -138,31 +138,40 @@ export async function handleSloCheck(env: Env): Promise<void> {
 
   const truncNote = truncated ? ` (≥${MAX_PAGES * PAGE_LIMIT} — list truncated)` : '';
 
+  // A throttle a 30 perces cron ismétlődő ÁRADATÁT vágja: azonos állapotra ne
+  // menjen leadenkénti/félóránkénti email+SMS (K2-H5). A SZINTET előbb döntjük el,
+  // csak UTÁNA throttle-özünk — egy elnyomott 'critical' NEM eshet vissza
+  // 'elevated'-re (az az else-ág, ami különben megszólalna). Ablakok: a tartós,
+  // alacsony sürgősségű dead-records ritkábban emlékeztet, a critical óránként.
   if (pendingCount > 500 || truncated) {
-    await sendCriticalSMS(env, `DLQ critical: ${pendingCount}${truncNote} pending events`);
-    await sendAdminEmail(
-      env,
-      `DLQ Critical: ${pendingCount}${truncNote} events`,
-      `
+    if (await throttleOncePer(env, 'slo-dlq-critical', 3600)) {
+      await sendCriticalSMS(env, `DLQ critical: ${pendingCount}${truncNote} pending events`);
+      await sendAdminEmail(
+        env,
+        `DLQ Critical: ${pendingCount}${truncNote} events`,
+        `
         <h2>DLQ Critical</h2>
         <p>Pending DLQ records: ${pendingCount}${truncNote}</p>
         <p>Suggests platform-wide failures. Investigate immediately.</p>
       `,
-      'critical'
-    );
+        'critical'
+      );
+    }
   } else if (pendingCount > 100) {
-    await sendAdminEmail(
-      env,
-      `DLQ Elevated: ${pendingCount} events`,
-      `
+    if (await throttleOncePer(env, 'slo-dlq-elevated', 3 * 3600)) {
+      await sendAdminEmail(
+        env,
+        `DLQ Elevated: ${pendingCount} events`,
+        `
         <p>Pending DLQ: ${pendingCount} (warning >100)</p>
         <p>Cron retry should clear in 1-2 hours.</p>
       `,
-      'warning'
-    );
+        'warning'
+      );
+    }
   }
 
-  if (deadCount > 0) {
+  if (deadCount > 0 && (await throttleOncePer(env, 'slo-dead-records', 6 * 3600))) {
     await sendAdminEmail(
       env,
       `Dead records: ${deadCount}`,

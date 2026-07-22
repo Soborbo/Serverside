@@ -63,6 +63,10 @@ export enum TrackingErrorCode {
   // A `user_data_hashed` bármely mezője nem 64-hosszú lowercase hex → 400, NEM néma
   // átengedés (a CRM-nek a hibát tudnia kell, hogy javíthasson/retry-olhasson).
   INVALID_PREHASHED_USER_DATA = 'TRK-400-019',
+  // Admin API (/api/event/admin/*) auth/rate-limit elutasítás. KÜLÖN a lead-status
+  // kódtól: egy admin-token brute-force NE a /lead-status alrendszer alatt jelenjen
+  // meg a logokban/riasztásokban (rossz attribúció elrejtené a támadást).
+  ADMIN_UNAUTHORIZED = 'TRK-400-020',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -80,6 +84,10 @@ export enum TrackingErrorCode {
   META_RATE_LIMITED = 'TRK-600-006',
   META_INVALID_USER_DATA = 'TRK-600-007',
   META_EVENTS_RECEIVED_ZERO = 'TRK-600-008',
+  // §17: KV site-config carries meta.test_event_code — detected at send time and
+  // IGNORED (never applied to the request). Loud alert so the KV landmine gets
+  // removed before the edge-cache window routes real conversions to the Test stream.
+  META_KV_TEST_EVENT_CODE = 'TRK-600-009',
 
   GA4_API_TIMEOUT = 'TRK-700-001',
   GA4_API_NETWORK_ERROR = 'TRK-700-002',
@@ -149,6 +157,7 @@ export enum TrackingErrorCode {
   EMQ_BELOW_THRESHOLD = 'TRK-950-007',
   EMQ_QUERY_FAILED = 'TRK-950-008',
   EMQ_COVERAGE_DROP = 'TRK-950-009',
+  SITE_CONFIG_DRIFT = 'TRK-950-010',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -182,6 +191,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'Turnstile validation API returned non-2xx',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'Lead-status payload missing or invalid fields',
   [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'Lead-status request failed admin authentication',
+  [TrackingErrorCode.ADMIN_UNAUTHORIZED]: 'Admin API request failed authentication or was rate-limited',
   [TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED]:
     'Token-less low-risk event accepted in degraded mode (Turnstile unavailable client-side)',
   [TrackingErrorCode.DEGRADED_RATE_LIMITED]: 'Token-less degraded event dropped by the degraded-mode rate limiter',
@@ -222,6 +232,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.META_INVALID_USER_DATA]:
     'Meta rejected user_data format (hash or normalization)',
   [TrackingErrorCode.META_EVENTS_RECEIVED_ZERO]: 'Meta returned 200 OK but events_received: 0',
+  [TrackingErrorCode.META_KV_TEST_EVENT_CODE]: 'KV site-config carries meta.test_event_code — ignored per CLAUDE.md §17; remove it from KV',
   [TrackingErrorCode.GA4_API_TIMEOUT]: 'GA4 Measurement Protocol call exceeded 5s timeout',
   [TrackingErrorCode.GA4_API_NETWORK_ERROR]: 'Network error reaching GA4 Measurement Protocol',
   [TrackingErrorCode.GA4_VALIDATION_FAILURE]: 'GA4 debug endpoint returned validation messages',
@@ -277,6 +288,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Meta Dataset Quality API query failed — daily digest falls back to the ledger match-key coverage proxy',
   [TrackingErrorCode.EMQ_COVERAGE_DROP]:
     'Match-key (em/ph/fbc/fbp) 24h coverage dropped significantly vs the 7-day average — likely broken identifier forwarding',
+  [TrackingErrorCode.SITE_CONFIG_DRIFT]:
+    'A live KV site-config diverged from the committed site-manifest (config vanished or changed) — the money-path source-of-truth and production disagree',
   [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]:
     "Invariant violation: a delivery would have been recorded 'accepted' without a vendor HTTP status — recorded as 'skipped' instead",
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'Ledger retention D1 delete query failed',
@@ -338,6 +351,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.NO_SITE_CONFIG]: 'warning',
   [TrackingErrorCode.MISSING_CONVERSION_ACTION]: 'warning',
   [TrackingErrorCode.META_EVENTS_RECEIVED_ZERO]: 'warning',
+  [TrackingErrorCode.META_KV_TEST_EVENT_CODE]: 'warning',
   [TrackingErrorCode.META_INVALID_USER_DATA]: 'warning',
   [TrackingErrorCode.KV_READ_FAILED]: 'warning',
   [TrackingErrorCode.KV_WRITE_FAILED]: 'warning',
@@ -361,6 +375,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'warning',
   [TrackingErrorCode.LEDGER_WRITE_FAILED]: 'warning',
   [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'warning',
+  [TrackingErrorCode.ADMIN_UNAUTHORIZED]: 'warning',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]: 'warning',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]: 'warning',
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
@@ -373,6 +388,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // úgyis a proxy-metrikára esik vissza, az őrzés nem szűnik meg.
   [TrackingErrorCode.EMQ_QUERY_FAILED]: 'info',
   [TrackingErrorCode.EMQ_COVERAGE_DROP]: 'warning',
+  [TrackingErrorCode.SITE_CONFIG_DRIFT]: 'critical',
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RETENTION_R2_FAILED]: 'warning',
 

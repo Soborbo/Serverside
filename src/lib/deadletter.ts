@@ -279,9 +279,15 @@ export async function archiveExpiredRecord(
   key: string,
   record: DeadLetterRecord
 ): Promise<boolean> {
+  // A retry_count-ot a REKORDRA érvényes plafonra emeljük, NEM a fix MAX_RETRIES-re.
+  // Egy blocked_configuration rekordnál maxRetriesFor = 28; ha itt csak 3-ra emelnénk,
+  // a writeDeadLetter prefix-döntése (`retry_count >= maxRetriesFor`) 3>=28 → hamis
+  // lenne, és a rekord VISSZA a pending-prefixre kerülne. A cron a következő órában
+  // újra lejártként látná → örök pending↔archive hurok, a rekord sosem érné el a
+  // 'dead' archívumot (a retention csak azt purge-öli).
   const wrote = await writeDeadLetter(env, {
     ...record,
-    retry_count: Math.max(record.retry_count, MAX_RETRIES),
+    retry_count: Math.max(record.retry_count, maxRetriesFor(record)),
     failure_reason: `${record.failure_reason} [expired: retry window elapsed]`,
     last_attempted_at: new Date().toISOString()
   });

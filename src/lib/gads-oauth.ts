@@ -37,12 +37,19 @@ export async function exchangeCodeForTokens(
   formData.set('redirect_uri', redirectUri);
   formData.set('grant_type', 'authorization_code');
 
+  // Timeout, mint a refreshAccessToken-nél: egy beragadt Google oauth2/token
+  // endpoint enélkül a Worker globális invocation-limitjéig blokkolná az admin
+  // OAuth-complete kérést, timeout-hibakód nélkül.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GOOGLE_OAUTH_TIMEOUT_MS);
   try {
     const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString()
+      body: formData.toString(),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
 
     const data = (await response.json()) as RefreshTokenExchangeResponse;
     if (!response.ok || data.error) {
