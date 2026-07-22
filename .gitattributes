@@ -8,3 +8,8 @@ src/lib/site-manifest.ts        text eol=lf
 src/site-manifest.json          text eol=lf
 tests/site-manifest.test.ts     text eol=lf
 tests/e2e-critical-paths.test.ts text eol=lf
+# F4-1(b) version-drift tooling — a check-version-drift.mjs-t a vitest natívan
+# importálja; CRLF-en „SyntaxError"-rel elhalna (lásd a fenti indoklást).
+scripts/check-version-drift.mjs text eol=lf
+scripts/stamp-build-info.mjs    text eol=lf
+tests/version-drift.test.ts     text eol=lf
