@@ -8,7 +8,11 @@ vi.mock('../src/lib/notify', () => ({
   escapeHtml: (s: string) => s
 }));
 
-import { collectAcceptedCounts } from '../src/scheduled/daily-digest';
+import {
+  collectAcceptedCounts,
+  collectLifecycleFreshness,
+  collectManifestDrift
+} from '../src/scheduled/daily-digest';
 
 /**
  * Zero-accepted riasztás (2026-07-13 incidens után): a digest a konfigurált
@@ -90,6 +94,112 @@ describe('collectAcceptedCounts', () => {
     const { counts, zeroSites } = await collectAcceptedCounts(env);
     expect(counts.size).toBe(0);
     expect(zeroSites).toEqual([]);
+  });
+});
+
+/**
+ * F4-3 · Kalibrált lifecycle-jelzés. A CRM offline-loop (deliveries.origin='offline')
+ * frissességét CSAK informatívan jelentjük — sose riasztásként, mert ezen a
+ * volumenen a ritka lifecycle-esemény legitim. A collector null-t ad, ha még nincs
+ * ilyen esemény, és hibatűrő (query-hiba → null, nem buktatja a digestet).
+ */
+function makeLifecycleLedger(
+  row: { site_id: string; event_name: string; created_at: string } | null | Error
+) {
+  return {
+    prepare: () => ({
+      first: async () => {
+        if (row instanceof Error) throw row;
+        return row;
+      }
+    })
+  };
+}
+
+describe('collectLifecycleFreshness (F4-3)', () => {
+  it('missing LEDGER → null, no crash', async () => {
+    const r = await collectLifecycleFreshness({} as any);
+    expect(r.lastEventAt).toBeNull();
+    expect(r.daysSince).toBeNull();
+  });
+
+  it('no offline lifecycle deliveries yet → null (informational, not an alert)', async () => {
+    const env = { LEDGER: makeLifecycleLedger(null) } as any;
+    const r = await collectLifecycleFreshness(env);
+    expect(r.lastEventAt).toBeNull();
+    expect(r.daysSince).toBeNull();
+  });
+
+  it('reports the most recent offline lifecycle event + whole days since', async () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const env = {
+      LEDGER: makeLifecycleLedger({
+        site_id: 'painless',
+        event_name: 'lead_qualified',
+        created_at: threeDaysAgo
+      })
+    } as any;
+    const r = await collectLifecycleFreshness(env);
+    expect(r.lastSiteId).toBe('painless');
+    expect(r.lastEventName).toBe('lead_qualified');
+    expect(r.daysSince).toBe(3);
+  });
+
+  it('ledger query failure → null (never crashes the digest)', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const env = { LEDGER: makeLifecycleLedger(new Error('D1 down')) } as any;
+    const r = await collectLifecycleFreshness(env);
+    consoleSpy.mockRestore();
+    expect(r.lastEventAt).toBeNull();
+    expect(r.daysSince).toBeNull();
+  });
+});
+
+/**
+ * F4-1 · A KV↔manifest drift-check glue-je (a fingerprint/diff mag a
+ * site-manifest.test.ts-ben van egységtesztelve). Itt a KV-list→fingerprint→diff
+ * összekötést + a defenzív ágakat őrizzük a napi digest szintjén.
+ */
+function makeSiteConfigListKV(store: Record<string, unknown>) {
+  return {
+    list: async () => ({
+      keys: Object.keys(store).map((name) => ({ name })),
+      list_complete: true
+    }),
+    get: async (name: string) => store[name] ?? null
+  };
+}
+
+describe('collectManifestDrift (F4-1)', () => {
+  it('missing SITE_CONFIG → [] (no crash, no false alarm)', async () => {
+    expect(await collectManifestDrift({} as any)).toEqual([]);
+  });
+
+  it('üres LIVE KV → a manifest MINDEN site-ja "missing" (a source-of-truth él, a prod eltűnt)', async () => {
+    const env = { SITE_CONFIG: makeSiteConfigListKV({}) } as any;
+    const drift = await collectManifestDrift(env);
+    expect(drift.length).toBeGreaterThan(0);
+    expect(drift.every((d) => d.kind === 'missing')).toBe(true);
+  });
+
+  it('a manifestben nem szereplő élő config → unmanifested (a többi manifest-host missing)', async () => {
+    const env = {
+      SITE_CONFIG: makeSiteConfigListKV({
+        'brand-new-site.example.com': { site_id: 'brand-new', country_code: 'HU', currency: 'HUF' }
+      })
+    } as any;
+    const drift = await collectManifestDrift(env);
+    expect(drift).toContainEqual({ hostname: 'brand-new-site.example.com', kind: 'unmanifested' });
+    // A committed manifest hostjai (nincsenek a live KV-ben) → missing.
+    expect(drift.some((d) => d.kind === 'missing')).toBe(true);
+  });
+
+  it('KV-hiba → [] (a digestet nem buktatja)', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const env = { SITE_CONFIG: { list: async () => { throw new Error('KV down'); } } } as any;
+    const drift = await collectManifestDrift(env);
+    consoleSpy.mockRestore();
+    expect(drift).toEqual([]);
   });
 });
 

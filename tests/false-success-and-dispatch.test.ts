@@ -34,6 +34,11 @@ async function lomtalanShapeConfig(withMeta = false) {
     site_id: 'lomtalan-shape',
     country_code: 'HU',
     currency: 'HUF',
+    // A valós lomtalan Meta-ELVÁRT site volt: a config-nélküli skip ezért
+    // `not_configured` (ledger-sor + DLQ + riasztás), NEM `not_expected`. A
+    // védőháló az expected_platforms-ból születik, nem a config meglétéből
+    // (PR #36) — enélkül az F4-2 zajszűrő not_expected-nek látná és sort sem írna.
+    expected_platforms: { smoke: ['meta'] },
     ...(withMeta ? { meta: { pixel_id: '123', access_token: 'TOKEN' } } : {}),
     gads: { customer_id: null, login_customer_id: null },
     crm_token_sha256: await sha256Hex(SITE_TOKEN)
