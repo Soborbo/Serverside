@@ -10,6 +10,7 @@ vi.mock('../lib/gateway', () => ({
 import {
   trackLeadSubmit, trackContactSubmit, trackServerEvent,
   trackPhoneConversion, trackCallbackConversion, trackEmailConversion, trackWhatsappConversion,
+  attachEventIdToForm,
 } from '../lib/index';
 import { sendToWorker } from '../lib/gateway';
 import { setCkyConsent, resetAll, lastEvent, getDataLayer } from './helpers';
@@ -156,5 +157,48 @@ describe('click conversions — channels per the ingress contract', () => {
     expect(trackPhoneConversion()).toBeNull();
     expect(mockSend).not.toHaveBeenCalled();
     expect(getDataLayer()).toHaveLength(0);
+  });
+});
+
+// K2-H3 / §16 — a callback CTA böngésző-Pixel-lába és a backend CAPI-lába UGYANAZT
+// az event_id-t kell viselje, különben a Meta két külön Lead-nek számolja (dupla).
+// A CallbackButton eddig ELDOBTA a trackCallbackConversion() event_id-jét; most a
+// backend POST-olta formba írja (attachEventIdToForm), így a szerver-leg újrahasználja.
+describe('attachEventIdToForm — shared event_id threading (K2-H3)', () => {
+  it('a callback dataLayer-leg event_id-je bekerül a form rejtett event_id mezőjébe (UGYANAZ)', () => {
+    const form = document.createElement('form');
+    document.body.appendChild(form);
+
+    const eventId = trackCallbackConversion();
+    expect(eventId).toBeTruthy();
+    // A böngésző-Pixel-leg (dataLayer) EZT az id-t használta.
+    expect(lastEvent('callback_request_submitted')!.event_id).toBe(eventId);
+
+    // A backend POST-olta formba UGYANEZ kerül → a szerver CAPI-leg dedup-ol.
+    attachEventIdToForm(form, eventId!);
+    const hidden = form.querySelector<HTMLInputElement>('input[name="event_id"]');
+    expect(hidden?.value).toBe(eventId);
+
+    form.remove();
+  });
+
+  it('a callbacknek NINCS böngésző-gateway-lába (server-ingress-only) — a dedup a shared id-n áll', () => {
+    trackCallbackConversion();
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('meglévő event_id mezőt FELÜLÍR (nem duplikál inputot)', () => {
+    const form = document.createElement('form');
+    const pre = document.createElement('input');
+    pre.type = 'hidden'; pre.name = 'event_id'; pre.value = 'stale';
+    form.appendChild(pre);
+    document.body.appendChild(form);
+
+    attachEventIdToForm(form, 'fresh-id');
+    const inputs = form.querySelectorAll('input[name="event_id"]');
+    expect(inputs).toHaveLength(1);
+    expect((inputs[0] as HTMLInputElement).value).toBe('fresh-id');
+
+    form.remove();
   });
 });

@@ -7,22 +7,38 @@
  * event (Pixel/GA4 via GTM). If the callback CTA leads to a real form POST,
  * the site BACKEND dispatches the gateway conversion with the shared event_id
  * (see server/backend/gateway-dispatch.ts).
+ *
+ * Shared event_id (K2-H3, §16): pass `form` (a CSS selector for the callback
+ * form) and the button threads the SAME event_id it pushed to the browser Pixel
+ * leg into that form's hidden `event_id` field. The backend then reuses it for
+ * the CAPI leg → Meta Pixel↔CAPI dedup. Omit `form` for a bare CTA (dataLayer
+ * only, no backend leg) — behaviour is unchanged.
  */
-interface Props { class?: string; type?: 'button' | 'submit'; [key: string]: unknown; }
-const { class: cls, type = 'button', ...rest } = Astro.props;
+interface Props { class?: string; type?: 'button' | 'submit'; form?: string; [key: string]: unknown; }
+const { class: cls, type = 'button', form, ...rest } = Astro.props;
 ---
-<button type={type} class={cls} data-tracking-callback {...rest}>
+<button type={type} class={cls} data-tracking-callback data-callback-form={form} {...rest}>
   <slot>Request a callback</slot>
 </button>
 
 <script>
-  import { trackCallbackConversion } from '../lib';
+  import { trackCallbackConversion, attachEventIdToForm } from '../lib';
   function bind() {
     document.querySelectorAll<HTMLButtonElement>('[data-tracking-callback]').forEach(btn => {
       if (btn.dataset.trackBound) return;
       btn.dataset.trackBound = '1';
-      // dataLayer only — the gateway leg (if any) belongs to the form's backend.
-      btn.addEventListener('click', () => trackCallbackConversion());
+      btn.addEventListener('click', () => {
+        // Browser dataLayer leg (Pixel/GA4). The returned event_id is shared.
+        const eventId = trackCallbackConversion();
+        // If this CTA targets a form the backend will POST, thread the SAME id in
+        // so the server CAPI leg dedups with the browser Pixel Lead (§16). No
+        // form → dataLayer-only CTA, unchanged.
+        const sel = btn.dataset.callbackForm;
+        if (eventId && sel) {
+          const target = document.querySelector<HTMLFormElement>(sel);
+          if (target) attachEventIdToForm(target, eventId);
+        }
+      });
     });
   }
   document.addEventListener('astro:page-load', bind);
