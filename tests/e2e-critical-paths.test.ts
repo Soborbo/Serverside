@@ -72,6 +72,14 @@ function makeStatefulLedger() {
   const receipts: Receipt[] = [];
   const deliveries: Array<{ platform: string; status: string; origin?: string }> = [];
   const dispatched: string[] = [];
+  // Idempotency-tábla kulcsonként, ÁLLAPOTTARTÓAN — így a checkIdempotency
+  // INSERT…ON CONFLICT + a markDispatched UPDATE valódi replay-szemantikát ad:
+  // az 1. látás dispatched=0 (→ fan-out), a markDispatched 1-re állítja, a 2.
+  // látás dispatched=1-et lát (→ suppress). E5 #2/#4 ezen áll vagy bukik.
+  const idempotency = new Map<
+    string,
+    { seen_count: number; dispatched: number; do_not_replay: number; first_seen_at: string }
+  >();
 
   const ledger = {
     prepare(sql: string) {
@@ -84,7 +92,16 @@ function makeStatefulLedger() {
             args,
             async first() {
               if (sql.includes('INSERT INTO idempotency')) {
-                return { seen_count: 1, dispatched: 0, do_not_replay: 0, first_seen_at: new Date().toISOString() };
+                // A kulcs a bind első argja (checkIdempotency: key, siteId, …).
+                const key = String(args[0]);
+                const existing = idempotency.get(key);
+                if (!existing) {
+                  const row = { seen_count: 1, dispatched: 0, do_not_replay: 0, first_seen_at: new Date().toISOString() };
+                  idempotency.set(key, row);
+                  return { ...row };
+                }
+                existing.seen_count += 1; // ON CONFLICT DO UPDATE seen_count+1
+                return { ...existing };
               }
               if (/FROM consent_receipts/.test(sql)) {
                 // getLatestConsentForLead: WHERE site_id=? AND lead_id=? ORDER BY received_at DESC LIMIT 1
@@ -112,7 +129,12 @@ function makeStatefulLedger() {
                   received_at: String(args[10])
                 });
               }
-              if (sql.includes('UPDATE idempotency SET dispatched')) dispatched.push(sql);
+              if (sql.includes('UPDATE idempotency SET dispatched')) {
+                // markDispatched: a fan-out UTÁN dispatched=1 (kulcs = args[0]).
+                const row = idempotency.get(String(args[0]));
+                if (row) row.dispatched = 1;
+                dispatched.push(sql);
+              }
               return {};
             },
             async all() {
@@ -135,7 +157,7 @@ function makeStatefulLedger() {
       return [];
     }
   };
-  return { ledger, receipts, deliveries, dispatched };
+  return { ledger, receipts, deliveries, dispatched, idempotency };
 }
 
 function makeEnv(ledger: unknown): any {
@@ -315,5 +337,92 @@ describe('E2E #1 · teljes happy-path pénz-lánc (konverzió → receipt → li
         adPersonalization: 'CONSENT_GRANTED'
       });
     }
+  });
+});
+
+describe('E2E #2 · CRM-retry (elveszett első válasz) → a konverzió-idempotencia egyszer dispatch-el', () => {
+  it('ugyanaz az event_id kétszer (webhook-retry) → a Meta fan-out CSAK egyszer fut', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        calls.push(url);
+        if (url.includes('facebook.com')) {
+          return new Response(JSON.stringify({ events_received: 1 }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ requestId: 'r' }), { status: 200 });
+      })
+    );
+
+    const { ledger, deliveries, dispatched, idempotency } = makeStatefulLedger();
+    const env = makeEnv(ledger);
+
+    // 1) A CRM-webhook első tüzelése — fan-out fut, dispatched=1.
+    const c1 = collectingCtx();
+    const r1 = await handleConversion(conversionRequest(), env, c1.ctx, { serverOnly: true });
+    await Promise.allSettled(c1.tasks);
+    expect(r1.status).toBe(204);
+    expect(calls.filter((u) => u.includes('facebook.com')).length).toBe(1);
+
+    // 2) Az első válasz „elveszett" → a CRM UGYANAZT az event_id-t retry-olja. Az
+    //    idempotencia (dispatched=1) elnyomja: 204, DE nincs második Meta-hívás.
+    const c2 = collectingCtx();
+    const r2 = await handleConversion(conversionRequest(), env, c2.ctx, { serverOnly: true });
+    await Promise.allSettled(c2.tasks);
+    expect(r2.status).toBe(204);
+    expect(calls.filter((u) => u.includes('facebook.com')).length).toBe(1); // MÉG mindig 1
+
+    // A rekord: seen_count=2, dispatched=1 — egyetlen kulcson. markDispatched egyszer futott.
+    const row = [...idempotency.values()][0];
+    expect(row.seen_count).toBe(2);
+    expect(row.dispatched).toBe(1);
+    expect(dispatched.length).toBe(1);
+    // Egyetlen accepted Meta-delivery (a suppressed 2. nem ír újat).
+    expect(deliveries.filter((d) => d.platform === 'meta' && d.status === 'accepted').length).toBe(1);
+  });
+});
+
+describe('E2E #4 · duplikált lifecycle → determinisztikus transactionId (Google dedup → egyszer)', () => {
+  it('ugyanaz a lead_id+status kétszer → minden Data Manager upload UGYANAZT a transactionId-t viszi', async () => {
+    const dmBodies: any[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: any) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('facebook.com')) {
+          return new Response(JSON.stringify({ events_received: 1 }), { status: 200 });
+        }
+        dmBodies.push(init?.body ? JSON.parse(init.body) : null);
+        return new Response(JSON.stringify({ requestId: 'r' }), { status: 200 });
+      })
+    );
+
+    const { ledger } = makeStatefulLedger();
+    const env = makeEnv(ledger);
+
+    // Konverzió: a GRANTED consent-receipt írása (a lifecycle innen olvassa a consentet).
+    const conv = collectingCtx();
+    await handleConversion(conversionRequest(), env, conv.ctx, { serverOnly: true });
+    await Promise.allSettled(conv.tasks);
+
+    // Lifecycle KÉTSZER ugyanarra a lead_id+status-ra — duplikált CRM-esemény.
+    for (let i = 0; i < 2; i++) {
+      const life = collectingCtx();
+      const res = await handleLeadStatus(leadStatusRequest(), env, life.ctx);
+      await Promise.allSettled(life.tasks);
+      expect(res.status).toBe(200);
+    }
+
+    // A „once on platform" garancia a DETERMINISZTIKUS transactionId: bárhány upload
+    // megy is ki, mind ugyanazt az orderId-t viszi (sha256(lead_id_status)[:32]) →
+    // a Google server-side dedup egyszer számolja. Egy timestamp/random beszúrása az
+    // orderId-be CSENDBEN törné a dedupot — ezt fogja meg ez a teszt.
+    const dmUploads = dmBodies.filter(Boolean).filter((b) => b.events?.[0]?.transactionId);
+    expect(dmUploads.length).toBeGreaterThanOrEqual(1);
+    const txids = new Set(dmUploads.map((b) => b.events[0].transactionId));
+    expect(txids.size).toBe(1);
+    const expectedOrderId = (await sha256Hex(`${LEAD_ID}_lead_qualified`)).slice(0, 32);
+    expect([...txids][0]).toBe(expectedOrderId);
   });
 });
