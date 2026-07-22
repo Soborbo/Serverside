@@ -282,21 +282,43 @@ export function trackWhatsappConversion(params: { phone?: string } = {}): string
  * reuses it for the gateway dispatch (Pixel↔CAPI dedup) — if it goes missing,
  * Meta double-counts every lead.
  */
-export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitResult): void {
-  // Last-touch UTM/click context for the hidden form fields. getAttribution()
-  // returns first_/last_-prefixed keys (for the Sheets sink), NOT bare utm_*;
-  // getAllTrackingData() is the right source for raw utm_source/medium/... here.
-  const t = getAllTrackingData();
-  const fields: Record<string, string | null | undefined> = {
-    gclid: result.gclid, fbclid: result.fbclid, event_id: result.eventId,
-    utm_source: t.utm_source, utm_medium: t.utm_medium,
-    utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
-  };
+function writeHiddenFields(form: HTMLFormElement, fields: Record<string, string | null | undefined>): void {
   for (const [name, value] of Object.entries(fields)) {
     let input = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
     if (!input) { input = document.createElement('input'); input.type = 'hidden'; input.name = name; form.appendChild(input); }
     input.value = value || '';
   }
+}
+
+export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitResult): void {
+  // Last-touch UTM/click context for the hidden form fields. getAttribution()
+  // returns first_/last_-prefixed keys (for the Sheets sink), NOT bare utm_*;
+  // getAllTrackingData() is the right source for raw utm_source/medium/... here.
+  const t = getAllTrackingData();
+  writeHiddenFields(form, {
+    gclid: result.gclid, fbclid: result.fbclid, event_id: result.eventId,
+    utm_source: t.utm_source, utm_medium: t.utm_medium,
+    utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
+  });
+}
+
+/**
+ * Thread a SHARED `event_id` (+ current attribution) into a callback/CTA form's
+ * hidden fields, so the site backend's gateway CAPI leg REUSES it → Meta
+ * Pixel↔CAPI dedup (§16). This is the CTA-flow analogue of `populateHiddenFields`:
+ * the callback button pushes the browser dataLayer leg with `eventId`, and this
+ * writes the SAME id into the form the backend will POST. Without it the browser
+ * Pixel Lead (event_id=A) and the server CAPI Lead (event_id=B) do not dedup →
+ * duplicate Meta Leads (K2-H3). `gclid`/`fbclid` are read fresh (the CTA flow has
+ * no `LeadSubmitResult` to carry them).
+ */
+export function attachEventIdToForm(form: HTMLFormElement, eventId: string): void {
+  const t = getAllTrackingData();
+  writeHiddenFields(form, {
+    event_id: eventId, gclid: getGclid() || undefined, fbclid: getFbclid() || undefined,
+    utm_source: t.utm_source, utm_medium: t.utm_medium,
+    utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
+  });
 }
 
 // ── Sheets payload (optional CRM/Sheets sink) ────────────────────
