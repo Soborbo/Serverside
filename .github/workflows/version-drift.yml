@@ -1,0 +1,39 @@
+# F4-1(b) — deployolt-verzió ↔ git drift-őr.
+# Napi ellenőrzés: a LIVE Worker /api/event/version bélyege az origin/main őse-e?
+# Ha nem (unknown / dirty / nem-mergelt commit), a production olyan kódot futtat,
+# ami nincs rendesen a fő ágon — a Fázis-0 „forrás nincs gitben" hibaosztály.
+# Nincs Cloudflare API token: a commit a bélyegben utazik, egy publikus GET olvassa.
+name: version-drift
+
+on:
+  schedule:
+    # Napi 09:10 UTC — a napi deploy-ablak után, a 08:00-s digesttel egy időtájt.
+    - cron: '10 9 * * *'
+  workflow_dispatch:
+    inputs:
+      worker_url:
+        description: 'A deployolt Worker bázis-URL-je'
+        required: false
+        default: 'https://event-gateway.golaxo.workers.dev'
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: deployed version is on origin/main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Teljes history + explicit origin/main a merge-base ancestry-checkhez.
+          fetch-depth: 0
+      - name: Ensure origin/main ref
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check deployed-version drift
+        env:
+          WORKER_URL: ${{ github.event.inputs.worker_url || 'https://event-gateway.golaxo.workers.dev' }}
+        run: node scripts/check-version-drift.mjs "$WORKER_URL"

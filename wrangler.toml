@@ -19,6 +19,13 @@ account_id = "075668606da58c5b96a45a075f1ca99c"
 # enélkül a lenti [vars] blokk kizárólagos forrás lenne, és a deploy törölné őket.
 keep_vars = true
 
+# Deploy-idejű build-bélyeg (F4-1(b)). Wrangler ezt a bundle ELŐTT futtatja, így a
+# kiküldött artifact magába írja a git-commitot (src/build-info.ts), amit a
+# /api/event/version ad vissza. A commitolt placeholder 'unknown'; a napi
+# version-drift CI-job ebből detektálja a „forrás nincs gitben" driftet.
+[build]
+command = "node scripts/stamp-build-info.mjs"
+
 [vars]
 # Napi synthetic-lead füstteszt (site workerek 04:4x UTC cronjai) elvárt site-jai.
 # A daily digest (08:00) riaszt, ha bármelyiknek NINCS smoke- prefixű delivery-

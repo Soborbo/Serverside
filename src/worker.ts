@@ -4,6 +4,7 @@ import { handleLeadStatus } from './routes/lead-status';
 import { handleAdmin } from './routes/admin';
 import { handleAdminUI } from './routes/admin-ui';
 import { handleHealth } from './routes/health';
+import { handleVersion } from './routes/version';
 import { handleDebugGA4 } from './routes/debug-ga4';
 import { handleOAuthCallback } from './routes/oauth-callback';
 import { handleOAuthDebug } from './routes/oauth-debug';
@@ -36,6 +37,12 @@ export default {
     try {
       if (request.method === 'GET' && url.pathname === '/api/event/health') {
         return await handleHealth(request, env);
+      }
+
+      // Build-bélyeg (F4-1(b) drift-őr) — a deployolt commit publikus olvasása,
+      // hostname-config nélkül. Lásd routes/version.ts + scripts/check-version-drift.mjs.
+      if (request.method === 'GET' && url.pathname === '/api/event/version') {
+        return handleVersion();
       }
 
       if (request.method === 'GET' && url.pathname === '/api/event/debug-ga4') {
