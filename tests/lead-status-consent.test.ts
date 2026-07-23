@@ -212,7 +212,10 @@ describe('handleLeadStatus — receipt-precedencia a CRM ad_allowed felett', () 
 
     expect(res.status).toBe(200);
     expect(captured).not.toBeNull();
-    expect(captured.events[0].consent).toEqual({ adUserData: 'CONSENT_GRANTED' });
+    expect(captured.events[0].consent).toEqual({
+      adUserData: 'CONSENT_GRANTED',
+      adPersonalization: 'CONSENT_DENIED'
+    });
   });
 
   it('explicit DENIED receipt + CRM ad_allowed=true → nincs Google-hívás', async () => {

@@ -238,9 +238,25 @@ export async function listConfiguredSiteIds(env: Env): Promise<Set<string>> {
   return new Set(configs.map((c) => c.site_id));
 }
 
-export async function getSiteConfig(hostname: string, env: Env): Promise<SiteConfig | null> {
+/**
+ * Site-feloldás eredménye, ami SZÉTVÁLASZTJA a két, gyökeresen eltérő okot:
+ *
+ * - `config: null, unavailable: false` → tényleg nincs ilyen host (permanens → 404).
+ * - `config: null, unavailable: true`  → a KV-olvasás HIBÁZOTT (tranziens → 503).
+ *
+ * MIÉRT KELL: korábban mindkettő ugyanazt a `null`-t adta, így egy másodperces
+ * KV-blip ugyanúgy 404-et eredményezett, mint egy nem létező site. A CRM outbox a
+ * 404-et VÉGLEGESNEK osztályozza (failed_permanent) — vagyis a kiesés ablakában
+ * érkező valódi konverziók visszavonhatatlanul elvesztek volna, retry nélkül.
+ */
+export interface SiteConfigLookup {
+  config: SiteConfig | null;
+  unavailable: boolean;
+}
+
+export async function lookupSiteConfig(hostname: string, env: Env): Promise<SiteConfigLookup> {
   if (negativeCacheHit(hostname)) {
-    return null;
+    return { config: null, unavailable: false };
   }
 
   try {
@@ -250,9 +266,9 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
     });
     if (!raw) {
       negativeCachePut(hostname);
-      return null;
+      return { config: null, unavailable: false };
     }
-    return raw as SiteConfig;
+    return { config: raw as SiteConfig, unavailable: false };
   } catch (err) {
     logStructured({
       level: 'error',
@@ -261,8 +277,20 @@ export async function getSiteConfig(hostname: string, env: Env): Promise<SiteCon
       hostname,
       error: err instanceof Error ? err.message : String(err)
     });
-    return null;
+    // A KV-hibát SOHA nem tesszük a negatív cache-be: különben egy múló blip
+    // percekre „nincs ilyen site"-tá merevedne az összes további kérésre is.
+    return { config: null, unavailable: true };
   }
+}
+
+/**
+ * Kompatibilis alak azoknak a hívóknak, ahol a tranziens és a permanens hiány
+ * kimenete úgyis azonos (admin-felület, cron-segédek). A PÉNZ-UTAKON
+ * (`/conversion`, `/conversion-server`, `/lead-status`) használd helyette a
+ * `lookupSiteConfig`-ot, hogy a KV-hiba retry-olható 503-at kapjon.
+ */
+export async function getSiteConfig(hostname: string, env: Env): Promise<SiteConfig | null> {
+  return (await lookupSiteConfig(hostname, env)).config;
 }
 
 /**

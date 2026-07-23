@@ -113,6 +113,12 @@ export enum TrackingErrorCode {
   DATAMANAGER_RATE_LIMITED = 'TRK-840-005',
   DATAMANAGER_NOT_ALLOWLISTED = 'TRK-840-006',
   DATAMANAGER_NO_IDENTIFIERS = 'TRK-840-007',
+  // A DATAMANAGER_VALIDATE_ONLY kapcsoló BE volt kapcsolva: a Google csak
+  // validálta a payloadot, SEMMIT nem rögzített. Ez NEM kézbesítés — külön kód
+  // kell, mert enélkül a 200-as validate-válasz megkülönböztethetetlen a valós
+  // uploadtól (ledger 'accepted', uploaded_to_gads:true), és a rendszer csendben
+  // zöldet mutatna nulla rögzített konverzió fölött.
+  DATAMANAGER_VALIDATE_ONLY = 'TRK-840-008',
 
   MSADS_DISPATCH_FAILED = 'TRK-810-001',
   MSADS_API_TIMEOUT = 'TRK-810-002',
@@ -257,6 +263,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Data Manager event skipped: no user identifiers and no click ID (would be a permanent 400)',
   [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]:
     'Data Manager destination/feature not allowlisted for this account (e.g. multi-source / store sales)',
+  [TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY]:
+    'DATAMANAGER_VALIDATE_ONLY=1 — Google validated the payload but recorded NO conversion; not a real delivery',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'Microsoft Ads offline conversion upload failed',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'Microsoft Ads API call exceeded timeout',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'TikTok Events API call failed',
@@ -341,6 +349,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'warning',
   [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'warning',
   [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY]: 'warning',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'warning',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'warning',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'warning',

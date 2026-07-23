@@ -144,7 +144,7 @@ describe('server-to-server ingress — acceptance', () => {
     const res = await handleConversion(serverRequest({ token: SITE_TOKEN }), env, ctx);
     await Promise.all(tasks);
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     // Turnstile-t MEG SEM hívtuk — nincs mit ellenőrizni, és egy siteverify-
     // kimaradás nem dönthetné el a szerveroldali leadet.
     expect(calls.some((u) => u.includes('challenges.cloudflare.com'))).toBe(false);
@@ -259,7 +259,7 @@ describe('server-to-server ingress — the browser path no longer needs a token'
 
     const res = await handleConversion(serverRequest({ token: SITE_TOKEN }), env, ctx);
     await Promise.all(tasks);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
   });
 
@@ -319,7 +319,7 @@ describe('server-only route (WAF-exempt path) is not a back door', () => {
       { serverOnly: true }
     );
     await Promise.all(tasks);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
   });
 
   it('401s a token-less request EVEN FROM AN ALLOWED ORIGIN (no browser fallback)', async () => {
@@ -441,7 +441,7 @@ describe('invalid payload drop status — 400 for server callers, 204 for beacon
     expect(res.status).toBe(204);
   });
 
-  it('an INVALID lead_id is dropped but the conversion itself goes through (204 + Meta called)', async () => {
+  it('an INVALID lead_id is dropped but the conversion itself goes through (200 + Meta called)', async () => {
     const { calls, metaBodies } = installFetchSpy();
     const { env } = makeEnv(await makeSiteConfig());
     const { ctx, tasks } = collectingCtx();
@@ -463,7 +463,7 @@ describe('invalid payload drop status — 400 for server callers, 204 for beacon
       ctx
     );
     await Promise.all(tasks);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
     expect(metaBodies).toHaveLength(1);
   });

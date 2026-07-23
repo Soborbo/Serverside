@@ -214,8 +214,8 @@ describe('prehashed PII contract — route (server ingress)', () => {
     );
     await Promise.all(tB);
 
-    expect(resA.status).toBe(204);
-    expect(resB.status).toBe(204);
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
     const udA = spyA.metaBodies[0].data[0].user_data;
     const udB = spyB.metaBodies[0].data[0].user_data;
     expect(udB.em).toBe(udA.em);
@@ -264,7 +264,7 @@ describe('prehashed PII contract — route (server ingress)', () => {
       ctx
     );
     await Promise.all(tasks);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     expect(metaBodies[0].data[0].user_data.em).toBe(em);
   });
 });

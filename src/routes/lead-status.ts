@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
-import { getSiteConfig, isExpectedOfflinePlatform } from '../lib/config';
+import { lookupSiteConfig, isExpectedOfflinePlatform } from '../lib/config';
 import { authenticateLeadStatus } from '../lib/admin-auth';
 import {
   hashUserDataForGoogle,
@@ -138,8 +138,24 @@ export async function handleLeadStatus(
 
   // Site-feloldás ELŐSZÖR (hostname-alapú, CLAUDE.md 14.) — a per-site CRM-token
   // auth EHHEZ a site-hoz kötött. Ismeretlen host → 404, fallback nélkül.
-  const siteConfig = await getSiteConfig(hostname, env);
+  const { config: siteConfig, unavailable: siteConfigUnavailable } = await lookupSiteConfig(
+    hostname,
+    env
+  );
   if (!siteConfig) {
+    // Tranziens KV-hiba → 503 (retry-olható), NEM 404: a CRM outbox a 404-et
+    // failed_permanent-nek osztályozza, így egy KV-blip véglegesen elégetné a
+    // lifecycle-konverziót. A valóban ismeretlen host marad 404.
+    if (siteConfigUnavailable) {
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.KV_READ_FAILED,
+        message: 'Site config lookup failed (KV read error) — responding 503 so the CRM retries',
+        hostname,
+        duration_ms: Date.now() - startedAt
+      });
+      return json({ error: 'site_config_unavailable', retryable: true }, 503);
+    }
     return json({ error: 'not_configured' }, 404);
   }
 
@@ -265,6 +281,44 @@ export async function handleLeadStatus(
 
   let uploadedToGads = false;
   let gadsErrorCode: string | undefined;
+  let gadsRetryQueued = false;
+  let deliveryNotDurable = false;
+  let configurationBlocked = false;
+  let invalidIdentifiers = false;
+  // Sikerült-e a konfigurációs blokk retry-példányát tartósan letenni (R2 DLQ).
+  // Ettől függ, hogy a CRM 202-t (a gateway őrzi tovább) vagy 503-at (tartsd meg
+  // te) kap — lásd a záró státusz-leképezést.
+  let configBlockQueued = false;
+
+  // Consent Mode jelek a Data Manager eventre. EEA/DMA alatt a jelöletlen
+  // (unspecified) consentű eventet a Google csendben kizárhatja az ads-
+  // mérésből — ha van POZITÍV consent-evidenciánk (explicit GRANTED receipt a
+  // capture-ből, vagy a CRM ad_allowed=true jele), azt explicit
+  // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site jel
+  // nélküli receipttel) a mező kimarad — consentet nem találunk ki.
+  // ad_user_data és ad_personalization KÜLÖN Consent Mode jel — NEM egyenlők.
+  // Az ad_user_data-t a receipt/CRM evidencia adja; az ad_personalization-t NEM
+  // vezetjük le belőle (különben hamis GRANTED menne olyan usernek, aki csak a
+  // data-használatot engedte). Az ad_personalization csak SAJÁT bizonyítékra
+  // GRANTED: explicit receipt-jel, VAGY — granular receipt hiányában — a CRM
+  // ad_allowed=true (a CookieYes `advertisement` az ads-consentet egységként adja,
+  // ad_user_data + ad_personalization együtt). Explicit DENIED receiptet tisztelünk.
+  //
+  // A számítás a gads-ágak ELŐTT fut, mert a konfigurációs blokk DLQ-rekordjának
+  // ugyanezt a payloadot kell hordoznia — a replay később ugyanazzal a consent-
+  // jellel megy ki, mint amit most küldtünk volna.
+  const adUserDataGranted = receiptSignal === 'GRANTED' || body.ad_allowed === true;
+  const adPersonalizationSignal =
+    receiptAdPersonalization ??
+    (receiptSignal === null && body.ad_allowed === true ? 'GRANTED' : undefined);
+  const consentSignals: {
+    ad_user_data?: 'GRANTED' | 'DENIED';
+    ad_personalization?: 'GRANTED' | 'DENIED';
+  } = {};
+  if (adUserDataGranted) consentSignals.ad_user_data = 'GRANTED';
+  if (adPersonalizationSignal) {
+    consentSignals.ad_personalization = adPersonalizationSignal;
+  }
 
   if (consentBlocked) {
     logStructured({
@@ -286,26 +340,6 @@ export async function handleLeadStatus(
     const hashed =
       prehashedUserData ??
       (await hashUserDataForGoogle(body.user_data ?? {}, siteConfig.country_code as CountryCode));
-    // Consent Mode jelek a Data Manager eventre. EEA/DMA alatt a jelöletlen
-    // (unspecified) consentű eventet a Google csendben kizárhatja az ads-
-    // mérésből — ha van POZITÍV consent-evidenciánk (explicit GRANTED receipt a
-    // capture-ből, vagy a CRM ad_allowed=true jele), azt explicit
-    // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site jel
-    // nélküli receipttel) a mező kimarad — consentet nem találunk ki.
-    // ad_user_data és ad_personalization KÜLÖN Consent Mode jel — NEM egyenlők.
-    // Az ad_user_data-t a receipt/CRM evidencia adja; az ad_personalization-t NEM
-    // vezetjük le belőle (különben hamis GRANTED menne olyan usernek, aki csak a
-    // data-használatot engedte). Az ad_personalization csak SAJÁT bizonyítékra
-    // GRANTED: explicit receipt-jel, VAGY — granular receipt hiányában — a CRM
-    // ad_allowed=true (a CookieYes `advertisement` az ads-consentet egységként adja,
-    // ad_user_data + ad_personalization együtt). Explicit DENIED receiptet tisztelünk.
-    const adUserDataGranted = receiptSignal === 'GRANTED' || body.ad_allowed === true;
-    const adPersonalizationGranted =
-      receiptAdPersonalization === 'GRANTED' ||
-      (receiptAdPersonalization === null && receiptSignal === null && body.ad_allowed === true);
-    const consentSignals: { ad_user_data?: 'GRANTED'; ad_personalization?: 'GRANTED' } = {};
-    if (adUserDataGranted) consentSignals.ad_user_data = 'GRANTED';
-    if (adPersonalizationGranted) consentSignals.ad_personalization = 'GRANTED';
     const gadsPayload: GAdsPayload = {
       event_name: eventName,
       event_id: orderId,
@@ -324,6 +358,39 @@ export async function handleLeadStatus(
     // soha el nem indult hívásról, és a CRM/ledger sosem jelezné a hiányt.
     uploadedToGads = result.success && result.skipped !== true;
     gadsErrorCode = result.error_code;
+
+    // A Data Manager skip vendorhívás NÉLKÜLI kimenet. Consent-skip ide nem jut
+    // (azt a külső ág kezeli), ezért itt a skip vagy konfigurációs blokk, vagy
+    // hibásan azonosító nélküli lifecycle payload. Egyik sem kaphat csendes 200-at.
+    if (result.skipped === true) {
+      configurationBlocked =
+        result.error_code !== TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS;
+      invalidIdentifiers =
+        result.error_code === TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS;
+
+      // Konfigurációs blokk (hiányzó conversion action, validate-only kapcsoló):
+      // a vendorhívás el sem indult, és a config magától SOHA nem javul meg. A
+      // böngésző-fan-out ezt 7 napos ablakú `blocked_configuration` DLQ-rekorddal
+      // kezeli (deadletter.ts) — az OFFLINE lábon eddig nem volt ilyen, így a
+      // visszanyerés kizárólag a CRM ~2 órás retry-keretén múlt, ami egy napos
+      // config-kiesést nem él túl. Innentől a gateway is őrzi a példányt.
+      if (configurationBlocked) {
+        const blockedAtIso = new Date().toISOString();
+        configBlockQueued = await enqueueFailure(env, {
+          platform: 'gads',
+          site_id: siteConfig.site_id,
+          hostname,
+          lead_id: body.lead_id,
+          event_payload: gadsPayload as unknown as Record<string, unknown>,
+          hashed_user_data: hashed as unknown as Record<string, unknown>,
+          failure_reason: result.error_code ?? 'configuration_blocked',
+          blocked_configuration: true,
+          retry_count: 0,
+          first_failed_at: blockedAtIso,
+          last_attempted_at: blockedAtIso
+        }).catch(() => false);
+      }
+    }
 
     ctx.waitUntil(
       recordDeliveries(env, {
@@ -344,8 +411,7 @@ export async function handleLeadStatus(
       const nowIso = new Date().toISOString();
       const leadIdForDlq = body.lead_id;
       const statusForLog = body.status;
-      ctx.waitUntil(
-        enqueueFailure(env, {
+      const stored = await enqueueFailure(env, {
           platform: 'gads',
           site_id: siteConfig.site_id,
           hostname,
@@ -356,32 +422,30 @@ export async function handleLeadStatus(
           retry_count: 0,
           first_failed_at: nowIso,
           last_attempted_at: nowIso
-        }).then((stored): Promise<void> | void => {
-          // Hármas kiesés (Data Manager fail + Queue fail + R2 fail): a retry-
-          // példány SEHOL sincs, és a CRM már 200-at kapott (uploaded_to_gads:
-          // false), tehát nem fog retry-olni → a visszanyerés útja a CRITICAL
-          // riasztás nyomán kézi újraküldés a CRM-ből. Ugyanaz a védelem, mint a
-          // fan-out RETRY_PERSIST_FAILED őre (conversion.ts).
-          if (!stored) {
-            logStructured({
-              level: 'error',
-              error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
-              message: ERROR_DESCRIPTIONS[TrackingErrorCode.RETRY_PERSIST_FAILED],
-              site_id: siteConfig.site_id,
-              hostname,
-              event_name: eventName,
-              lead_status: statusForLog
-            });
-            return sendAlert(env, TrackingErrorCode.RETRY_PERSIST_FAILED, {
-              site_id: siteConfig.site_id,
-              hostname,
-              platform: 'gads',
-              event_name: eventName,
-              lead_status: statusForLog
-            }).catch(() => {});
-          }
-        })
-      );
+        }).catch(() => false);
+      gadsRetryQueued = stored;
+      deliveryNotDurable = !stored;
+      // Hármas kiesés (Data Manager fail + Queue fail + R2 fail): a retry-
+      // példány SEHOL sincs. A CRM ezért 503-at kap, és a saját outboxában tartja
+      // az eseményt; nincs többé „200 + uploaded_to_gads:false” hamis siker.
+      if (!stored) {
+        logStructured({
+          level: 'error',
+          error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
+          message: ERROR_DESCRIPTIONS[TrackingErrorCode.RETRY_PERSIST_FAILED],
+          site_id: siteConfig.site_id,
+          hostname,
+          event_name: eventName,
+          lead_status: statusForLog
+        });
+        await sendAlert(env, TrackingErrorCode.RETRY_PERSIST_FAILED, {
+          site_id: siteConfig.site_id,
+          hostname,
+          platform: 'gads',
+          event_name: eventName,
+          lead_status: statusForLog
+        }).catch(() => {});
+      }
     }
   } else {
     // NEM consent-tiltott, de nincs gads.customer_id → az offline gads-láb nincs
@@ -389,6 +453,8 @@ export async function handleLeadStatus(
     // PÉNZ-lábon jelentkező config-vesztés (lomtalan-osztály) → hangos riasztás +
     // 'skipped|not_configured' ledger-sor, NEM némaság. Ha nem várt, jogos no-op.
     if (isExpectedOfflinePlatform(siteConfig, 'gads')) {
+      configurationBlocked = true;
+      gadsErrorCode = TrackingErrorCode.PLATFORM_NOT_CONFIGURED;
       logStructured({
         level: 'error',
         error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
@@ -422,6 +488,37 @@ export async function handleLeadStatus(
           ]
         })
       );
+
+      // Ugyanaz a 7 napos `blocked_configuration` retry-példány, mint a hiányzó
+      // conversion action ágon: a site VÁRJA az offline gads-t, csak a config
+      // tűnt el (lomtalan-osztály). A payload a replay-hez teljes kell legyen,
+      // ezért a hash-t itt is kiszámoljuk (prehashed esetén nem hash-elünk újra).
+      const blockedAtIso = new Date().toISOString();
+      const blockedHashed =
+        prehashedUserData ??
+        (await hashUserDataForGoogle(body.user_data ?? {}, siteConfig.country_code as CountryCode));
+      configBlockQueued = await enqueueFailure(env, {
+        platform: 'gads',
+        site_id: siteConfig.site_id,
+        hostname,
+        lead_id: body.lead_id,
+        event_payload: {
+          event_name: eventName,
+          event_id: orderId,
+          event_time: eventTimeSec,
+          value: body.value,
+          currency: body.currency ?? siteConfig.currency,
+          postal_code: body.user_data?.postal_code ?? undefined,
+          country: body.user_data?.country ?? undefined,
+          consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined
+        } as unknown as Record<string, unknown>,
+        hashed_user_data: blockedHashed as unknown as Record<string, unknown>,
+        failure_reason: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
+        blocked_configuration: true,
+        retry_count: 0,
+        first_failed_at: blockedAtIso,
+        last_attempted_at: blockedAtIso
+      }).catch(() => false);
     } else {
       logStructured({
         level: 'info',
@@ -460,6 +557,49 @@ export async function handleLeadStatus(
     consent_source: consentSource,
     duration_ms: Date.now() - startedAt
   });
+
+  if (deliveryNotDurable) {
+    return json(
+      { ok: false, error: 'delivery_not_durable', retryable: true, uploaded_to_gads: false },
+      503
+    );
+  }
+  if (configurationBlocked) {
+    // A konfigurációs hiba DETERMINISZTIKUS: a CRM újrapróbálkozása magától soha
+    // nem oldja meg — csak elégeti a ~2 órás retry-keretét, aztán failed_permanent
+    // lesz belőle, és a konverzió a config javítása után is elveszett marad.
+    // Ha a gateway tartósan letette a 7 napos replay-példányt, 202-t adunk („nálam
+    // van, ne pörögj rajta"); ha a letétel NEM sikerült, marad az 503, mert akkor a
+    // CRM outboxa az egyetlen őrző, és neki KELL megtartania.
+    if (configBlockQueued) {
+      return json(
+        {
+          ok: true,
+          queued_for_retry: true,
+          configuration_blocked: true,
+          uploaded_to_gads: false,
+          uploaded_to_ga4: false
+        },
+        202
+      );
+    }
+    return json(
+      { ok: false, error: 'gads_configuration_blocked', retryable: true, uploaded_to_gads: false },
+      503
+    );
+  }
+  if (invalidIdentifiers) {
+    return json(
+      { ok: false, error: 'no_match_identifiers', retryable: false, uploaded_to_gads: false },
+      422
+    );
+  }
+  if (gadsRetryQueued) {
+    return json(
+      { ok: true, queued_for_retry: true, uploaded_to_gads: false, uploaded_to_ga4: false },
+      202
+    );
+  }
 
   return json(
     {

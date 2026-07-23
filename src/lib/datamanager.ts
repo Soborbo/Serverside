@@ -74,7 +74,11 @@ export async function sendToDataManager(
   // uploadnak könyvelné (`uploaded_to_gads: true`) azt, ami el sem indult, és a
   // ledger 'accepted'-et írna vendor HTTP-státusz nélkül.
   if (!siteConfig.gads.customer_id) {
-    return { success: true, skipped: true };
+    return {
+      success: true,
+      skipped: true,
+      error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED
+    };
   }
 
   const conversionActionId = siteConfig.gads.conversion_actions?.[payload.event_name];
@@ -86,7 +90,11 @@ export async function sendToDataManager(
       site_id: siteConfig.site_id,
       event_name: payload.event_name
     });
-    return { success: true, skipped: true };
+    return {
+      success: true,
+      skipped: true,
+      error_code: TrackingErrorCode.MISSING_CONVERSION_ACTION
+    };
   }
 
   const accessToken = await getAccessToken(siteConfig.gads.customer_id, env);
@@ -154,7 +162,11 @@ export async function sendToDataManager(
       site_id: siteConfig.site_id,
       event_name: payload.event_name
     });
-    return { success: true, skipped: true };
+    return {
+      success: true,
+      skipped: true,
+      error_code: TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS
+    };
   }
 
   if (payload.consent) {
@@ -246,8 +258,11 @@ export async function sendToDataManager(
     }
 
     logStructured({
-      level: 'info',
-      message: 'Data Manager event ingested',
+      level: validateOnly ? 'warn' : 'info',
+      error_code: validateOnly ? TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY : undefined,
+      message: validateOnly
+        ? 'Data Manager event VALIDATED ONLY — nothing was recorded (DATAMANAGER_VALIDATE_ONLY=1)'
+        : 'Data Manager event ingested',
       site_id: siteConfig.site_id,
       event_name: payload.event_name,
       request_id: responseBody.requestId,
@@ -255,6 +270,18 @@ export async function sendToDataManager(
       validate_only: validateOnly,
       duration_ms: Date.now() - startedAt
     });
+    // Validate-only üzemmódban a Google SEMMIT nem rögzített. Ha ezt sikeres
+    // uploadnak könyvelnénk (`accepted` + uploaded_to_gads:true), a rendszer
+    // csendben zöldet mutatna nulla valós konverzió fölött — pontosan a
+    // §11-es „skip ≠ siker-kézbesítés" invariáns megsértése. Ezért `skipped`.
+    if (validateOnly) {
+      return {
+        success: true,
+        skipped: true,
+        error_code: TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY,
+        status: response.status
+      };
+    }
     return {
       success: true,
       conversions_processed: 1,
