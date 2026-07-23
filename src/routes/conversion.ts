@@ -8,7 +8,7 @@ import {
   type ConversionRequestPayload
 } from '../types';
 import { corsHeaders } from '../worker';
-import { getSiteConfig, isExpectedPlatform, type SiteConfig } from '../lib/config';
+import { lookupSiteConfig, isExpectedPlatform, type SiteConfig } from '../lib/config';
 import { checkOrigin } from '../lib/origin';
 import { authenticateServerIngress } from '../lib/admin-auth';
 import { hashUserData, mapPrehashedUserData, type CountryCode, type HashedUserData } from '../lib/hash';
@@ -269,8 +269,38 @@ export async function handleConversion(
     payload.lead_id = undefined;
   }
 
-  const siteConfig = await getSiteConfig(hostname, env);
+  const { config: siteConfig, unavailable: siteConfigUnavailable } = await lookupSiteConfig(
+    hostname,
+    env
+  );
   if (!siteConfig) {
+    // Tranziens KV-kiesés ≠ nem létező site. A hívók (CRM outbox, site-backend) a
+    // 404-et VÉGLEGESNEK osztályozzák, ezért egy pár másodperces KV-blip alatt
+    // érkező valódi konverziók retry nélkül vesztek volna el. 503 + Retry-After →
+    // a hívó újrapróbál, a vendor-dedup (event_id) pedig védi a duplikáció ellen.
+    if (siteConfigUnavailable) {
+      const kvDuration = Date.now() - startedAt;
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.KV_READ_FAILED,
+        message: 'Site config lookup failed (KV read error) — responding 503 so the caller retries',
+        hostname,
+        event_name: payload.event_name,
+        duration_ms: kvDuration
+      });
+      recordConversionMetric(env, {
+        hostname,
+        site_id: 'unknown',
+        event_name: payload.event_name,
+        accepted: false,
+        error_code: TrackingErrorCode.KV_READ_FAILED,
+        total_duration_ms: kvDuration
+      });
+      return new Response('Site config temporarily unavailable', {
+        status: 503,
+        headers: { ...cors, 'Retry-After': '60' }
+      });
+    }
     logStructured({
       level: 'warn',
       error_code: TrackingErrorCode.NO_SITE_CONFIG,
@@ -542,10 +572,16 @@ export async function handleConversion(
       seen_count: idem.seenCount,
       duration_ms: dupDuration
     });
+    if (serverIngress) {
+      return new Response(JSON.stringify({ ok: true, duplicate: true }), {
+        status: 200,
+        headers: { ...cors, 'Content-Type': 'application/json' }
+      });
+    }
     return new Response(null, { status: 204, headers: cors });
   }
 
-  fanOut(
+  const fanoutPromise = fanOut(
     payload,
     siteConfig,
     hashedUserData,
@@ -558,6 +594,45 @@ export async function handleConversion(
     env,
     ctx
   );
+
+  // A böngésző-beacon nem tud érdemben reagálni a vendor-eredményre, ezért ott
+  // a teljes fan-out waitUntil-ben marad és a válasz továbbra is azonnali 204.
+  // A hitelesített szerver-ingress viszont a CRM/outbox pénzútja: ott 2xx CSAK
+  // akkor mehet vissza, ha minden platform vagy kézbesített, vagy a sikertelen
+  // kézbesítés retry-rekordja bizonyítottan Queue/R2 tárba került.
+  let fanoutOutcome: FanOutOutcome | undefined;
+  if (serverIngress) {
+    fanoutOutcome = await fanoutPromise;
+    if (!fanoutOutcome.durable) {
+      const failedDuration = Date.now() - startedAt;
+      recordConversionMetric(env, {
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        accepted: false,
+        error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
+        total_duration_ms: failedDuration
+      });
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.RETRY_PERSIST_FAILED,
+        message: 'Server ingress rejected success response because delivery was not durable',
+        hostname,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        duration_ms: failedDuration
+      });
+      return new Response(
+        JSON.stringify({ ok: false, error: 'delivery_not_durable', retryable: true }),
+        {
+          status: 503,
+          headers: { ...cors, 'Content-Type': 'application/json', 'Retry-After': '60' }
+        }
+      );
+    }
+  } else {
+    ctx.waitUntil(fanoutPromise.then(() => undefined));
+  }
 
   const totalDuration = Date.now() - startedAt;
   recordConversionMetric(env, {
@@ -583,7 +658,19 @@ export async function handleConversion(
     duration_ms: totalDuration
   });
 
+  if (serverIngress) {
+    const queuedForRetry = (fanoutOutcome?.queuedFailures ?? 0) > 0;
+    return new Response(JSON.stringify({ ok: true, queued_for_retry: queuedForRetry }), {
+      status: queuedForRetry ? 202 : 200,
+      headers: { ...cors, 'Content-Type': 'application/json' }
+    });
+  }
   return new Response(null, { status: 204, headers: cors });
+}
+
+interface FanOutOutcome {
+  durable: boolean;
+  queuedFailures: number;
 }
 
 function fanOut(
@@ -598,7 +685,7 @@ function fanOut(
   leadId: string | undefined,
   env: Env,
   ctx: ExecutionContext
-): void {
+): Promise<FanOutOutcome> {
   try {
   const adAllowed = consentDecision.adAllowed;
 
@@ -916,11 +1003,10 @@ function fanOut(
       // Hármas kiesés őre: platform-hiba + a retry-rekord SEHOL nem landolt
       // (Queue send ÉS R2 write is elbukott). Ilyenkor NEM jelölünk dispatched-et
       // — a flag 0 marad, és TRK-900-007 CRITICAL riasztás megy. FONTOS őszintén:
-      // a hívó ekkorra már 204-et kapott (a fan-out a válasz UTÁN, waitUntil-ben
-      // fut), tehát automatikus kliens-retry NEM jön — a visszanyerés útja a
-      // riasztás nyomán kézi újraküldés (a dispatched=0 pont ezt hagyja nyitva;
-      // a vendorok event_id-vel dedup-olnak). Ha dispatched=1-et írnánk, még a
-      // kézi replay-t is elnyelné az idempotencia.
+      // Böngésző-beaconnél a hívó ekkor már 204-et kapott; ott a riasztás + kézi
+      // replay a visszanyerési út. Hitelesített szerver-ingressnél a route megvárja
+      // ezt az eredményt, 503-at ad, és a CRM/outbox automatikusan retryol. A
+      // dispatched=0 mindkét esetben nyitva hagyja ugyanazt az event_id-s replayt.
       const retryPersistFailed = dlqOutcomes.some(
         (o) => o.status === 'rejected' || o.value !== true
       );
@@ -957,10 +1043,31 @@ function fanOut(
         msads_success: msadsResult.status === 'fulfilled' && msadsResult.value.success,
         platforms_failed: dlqWrites.length
       });
+
+      return {
+        durable: !retryPersistFailed,
+        queuedFailures: dlqWrites.length
+      };
     }
   );
 
-  ctx.waitUntil(fanout);
+  return fanout.catch(async (fanoutErr): Promise<FanOutOutcome> => {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.FANOUT_SETUP_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.FANOUT_SETUP_FAILED],
+      site_id: siteConfig.site_id,
+      hostname,
+      event_name: payload.event_name,
+      error: fanoutErr instanceof Error ? fanoutErr.message : String(fanoutErr)
+    });
+    await sendAlert(env, TrackingErrorCode.FANOUT_SETUP_FAILED, {
+      site_id: siteConfig.site_id,
+      hostname,
+      event_name: payload.event_name
+    }).catch(() => {});
+    return { durable: false, queuedFailures: 0 };
+  });
   } catch (setupErr) {
     // A fan-out SZINKRON felépítése dobott (rendkívül ritka — pure payload-építés).
     // A platform-hívások amúgy is Promise.allSettled+DLQ mögött vannak; ide csak egy
@@ -982,5 +1089,6 @@ function fanOut(
         event_name: payload.event_name
       })
     );
+    return Promise.resolve({ durable: false, queuedFailures: 0 });
   }
 }

@@ -398,7 +398,7 @@ describe('Skip-osztályozás — ELVÁRT platform hiányzó configgal (retryable
     );
     await Promise.allSettled(second.tasks);
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     // A duplikátum nem fan-outol → nem gyárt újabb retry-rekordot. A retryt
     // egyedül a már eltárolt DLQ-példány birtokolja.
     expect(deadRecords).toHaveLength(1);

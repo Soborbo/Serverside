@@ -104,11 +104,20 @@ function makeStatefulLedger() {
                 return { ...existing };
               }
               if (/FROM consent_receipts/.test(sql)) {
-                // getLatestConsentForLead: WHERE site_id=? AND lead_id=? ORDER BY received_at DESC LIMIT 1
+                // getLatestConsentForLead:
+                //   ORDER BY (ad_user_data IS NOT NULL) DESC, received_at DESC LIMIT 1
+                // A jel-hordozó receipt megelőzi a puszta frissességet, hogy egy
+                // későbbi, jel nélküli szerver-receipt ne árnyékolhassa el a
+                // capture-kori valódi consent-evidenciát.
                 const [siteId, leadId] = args as [string, string];
                 const match = receipts
                   .filter((r) => r.site_id === siteId && r.lead_id === leadId)
-                  .sort((a, b) => b.received_at.localeCompare(a.received_at))[0];
+                  .sort((a, b) => {
+                    const aSignal = a.ad_user_data !== null ? 1 : 0;
+                    const bSignal = b.ad_user_data !== null ? 1 : 0;
+                    if (aSignal !== bSignal) return bSignal - aSignal;
+                    return b.received_at.localeCompare(a.received_at);
+                  })[0];
                 return match
                   ? { ad_allowed: match.ad_allowed, ad_user_data: match.ad_user_data, ad_personalization: match.ad_personalization }
                   : null;
@@ -264,7 +273,7 @@ describe('E2E #1 · teljes happy-path pénz-lánc (konverzió → receipt → li
     const convRes = await handleConversion(conversionRequest(), env, conv.ctx, { serverOnly: true });
     await Promise.allSettled(conv.tasks);
 
-    expect(convRes.status).toBe(204);
+    expect(convRes.status).toBe(200);
     expect(calls.some((u) => u.includes('facebook.com'))).toBe(true);
     expect(deliveries.find((d) => d.platform === 'meta')?.status).toBe('accepted');
     // A receipt a lead_id-hoz kötve, GRANTED jellel, ad_allowed=1.
@@ -338,6 +347,80 @@ describe('E2E #1 · teljes happy-path pénz-lánc (konverzió → receipt → li
       });
     }
   });
+
+  it('a jel nélküli recovery-receipt NEM árnyékolja el a capture-kori GRANTED consentet', async () => {
+    let dmBody: any = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: any) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('facebook.com')) {
+          return new Response(JSON.stringify({ events_received: 1 }), { status: 200 });
+        }
+        dmBody = init?.body ? JSON.parse(init.body) : null;
+        return new Response(JSON.stringify({ requestId: 'r-e2e' }), { status: 200 });
+      })
+    );
+
+    const { ledger, receipts } = makeStatefulLedger();
+    const env = makeEnv(ledger);
+
+    // 1) CAPTURE: a valódi böngésző-consent (GRANTED) receiptje a lead_id-ra.
+    const conv = collectingCtx();
+    await handleConversion(conversionRequest(), env, conv.ctx, { serverOnly: true });
+    await Promise.allSettled(conv.tasks);
+    expect(receipts.find((x) => x.lead_id === LEAD_ID)?.ad_user_data).toBe('GRANTED');
+
+    // 2) KÉSŐBB: a CRM recovery-legje ugyanarra a leadre, consent-blokk NÉLKÜL — a
+    //    javított CRM nem fabrikál Consent Mode jelet a newsletter-boolean-ből. Ez
+    //    jel nélküli (ad_user_data=NULL), de FRISSEBB receiptet ír.
+    const recoveryReq = new Request(`https://${HOST}/api/event/conversion-server`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': SITE_TOKEN,
+        'CF-Connecting-IP': '10.0.0.9'
+      },
+      body: JSON.stringify({
+        event_name: 'quote_calculator_submitted',
+        event_id: `${EVENT_ID}-recovery`,
+        event_time: Math.floor(Date.now() / 1000),
+        lead_id: LEAD_ID,
+        event_source_url: `https://${HOST}/arajanlat`,
+        user_data: { email: 'jane@example.com' }
+      })
+    });
+    const rec = collectingCtx();
+    await handleConversion(recoveryReq, env, rec.ctx, { serverOnly: true });
+    await Promise.allSettled(rec.tasks);
+
+    const leadReceipts = receipts.filter((x) => x.lead_id === LEAD_ID);
+    expect(leadReceipts.length).toBe(2);
+    expect(leadReceipts.some((x) => x.ad_user_data === null)).toBe(true);
+
+    // 3) LIFECYCLE a CRM newsletter-szemantikájú `ad_allowed:false`-ával. A
+    //    capture-kori GRANTED receiptnek KELL nyernie (jel-hordozó precedencia).
+    //    A fix nélkül a frissebb, jel nélküli recovery-receipt árnyékolt volna, a
+    //    precedencia a CRM false-ára esik vissza, és a lead offline Enhanced-
+    //    Conversion loopja csendben, VÉGLEG blokkolódik.
+    const lifeReq = new Request(`https://${HOST}/api/event/lead-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': SITE_TOKEN },
+      body: JSON.stringify({
+        lead_id: LEAD_ID,
+        status: 'lead_qualified',
+        ad_allowed: false,
+        user_data: { email: 'jane@example.com' }
+      })
+    });
+    const life = collectingCtx();
+    const lifeRes = await handleLeadStatus(lifeReq, env, life.ctx);
+    await Promise.allSettled(life.tasks);
+
+    expect(lifeRes.status).toBe(200);
+    expect(dmBody).not.toBeNull();
+    expect(dmBody.events[0].consent).toMatchObject({ adUserData: 'CONSENT_GRANTED' });
+  });
 });
 
 describe('E2E #2 · CRM-retry (elveszett első válasz) → a konverzió-idempotencia egyszer dispatch-el', () => {
@@ -362,15 +445,15 @@ describe('E2E #2 · CRM-retry (elveszett első válasz) → a konverzió-idempot
     const c1 = collectingCtx();
     const r1 = await handleConversion(conversionRequest(), env, c1.ctx, { serverOnly: true });
     await Promise.allSettled(c1.tasks);
-    expect(r1.status).toBe(204);
+    expect(r1.status).toBe(200);
     expect(calls.filter((u) => u.includes('facebook.com')).length).toBe(1);
 
     // 2) Az első válasz „elveszett" → a CRM UGYANAZT az event_id-t retry-olja. Az
-    //    idempotencia (dispatched=1) elnyomja: 204, DE nincs második Meta-hívás.
+    //    idempotencia (dispatched=1) elnyomja: 200 duplicate, DE nincs második Meta-hívás.
     const c2 = collectingCtx();
     const r2 = await handleConversion(conversionRequest(), env, c2.ctx, { serverOnly: true });
     await Promise.allSettled(c2.tasks);
-    expect(r2.status).toBe(204);
+    expect(r2.status).toBe(200);
     expect(calls.filter((u) => u.includes('facebook.com')).length).toBe(1); // MÉG mindig 1
 
     // A rekord: seen_count=2, dispatched=1 — egyetlen kulcson. markDispatched egyszer futott.

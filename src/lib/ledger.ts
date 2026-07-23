@@ -98,6 +98,15 @@ export function normalizeDelivery(
         error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED
       };
     }
+    // A vendor SAJÁT hibakódja is átjut, ha adott (a Data Manager offline lába
+    // `skip_reason` nélkül, csak `error_code`-dal jelez: PLATFORM_NOT_CONFIGURED /
+    // MISSING_CONVERSION_ACTION / DATAMANAGER_NO_IDENTIFIERS). Enélkül minden
+    // offline skip csupasz 'skipped' sorként landolt, megkülönböztethetetlenül a
+    // jogos consent-kihagyástól — pontosan az a vakfolt, ami a lomtalan Meta-
+    // kiesését elrejtette, csak az offline lábon.
+    if (settled.value.error_code) {
+      return { platform, status: 'skipped', error_code: settled.value.error_code };
+    }
     return { platform, status: 'skipped' };
   }
   if (settled.status === 'rejected') {
@@ -529,10 +538,23 @@ export async function getLatestConsentForLead(
 ): Promise<LeadConsentRecord | null> {
   if (!env.LEDGER) return null;
   try {
+    // A JEL-HORDOZÓ receipt megelőzi a puszta frissességet.
+    //
+    // MIÉRT: a capture-kori böngésző-receipt hordozza az egyetlen VALÓDI consent-
+    // evidenciát (a CMP jelét). A későbbi szerver-oldali kézbesítések (CRM-recovery,
+    // outbox-replay) viszont jel NÉLKÜL írnak receiptet — és sima `received_at DESC`
+    // mellett ezek elárnyékolták a valódi GRANTED-et, amitől a precedencia
+    // visszaesett a CRM newsletter-szemantikájú `ad_allowed`-jára, és a lead offline
+    // Enhanced-Conversion loopja csendben, VÉGLEG blokkolódott.
+    //
+    // Az `ad_user_data IS NOT NULL` 1/0-t ad, DESC-cel a jel-hordozó sorok kerülnek
+    // előre; azokon belül továbbra is a legfrissebb nyer (egy valódi későbbi
+    // visszavonás → DENIED tehát helyesen felülírja a korábbi GRANTED-et). Ha
+    // egyetlen receipt sem hordoz jelet, marad a régi „legfrissebb sor" viselkedés.
     const row = await env.LEDGER.prepare(
       `SELECT ad_allowed, ad_user_data, ad_personalization FROM consent_receipts
        WHERE site_id = ? AND lead_id = ?
-       ORDER BY received_at DESC LIMIT 1`
+       ORDER BY (ad_user_data IS NOT NULL) DESC, received_at DESC LIMIT 1`
     )
       .bind(siteId, leadId)
       .first<{ ad_allowed: number; ad_user_data: string | null; ad_personalization: string | null }>();

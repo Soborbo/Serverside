@@ -204,7 +204,9 @@ describe('Fix 1 — a kihagyott platform-küldés SOHA nem accepted', () => {
     const res = await handleConversion(serverLeadRequest(), env, ctx);
     await Promise.allSettled(tasks);
 
-    expect(res.status).toBe(204);
+    // Elvárt platform konfigurációs hiánya: a gateway tartós DLQ-példányt írt,
+    // ezért a szerver-hívó 202-t kap (nem hamis 204-et).
+    expect(res.status).toBe(202);
     // HTTP-hívás a Meta felé NEM történt.
     expect(calls.some((u) => u.includes('facebook.com'))).toBe(false);
 
@@ -258,8 +260,9 @@ describe('Fix 3 — hármas kiesés (Meta + Queue + R2) esetén dispatched marad
     const res = await handleConversion(serverLeadRequest(), env, ctx);
     await Promise.allSettled(tasks);
 
-    // A kliens felé továbbra sem szivárog hiba (a fan-out háttérben fut).
-    expect(res.status).toBe(204);
+    // Hitelesített szerver-hívó: vendor + Queue + R2 hármas kiesésnél retryolható
+    // 503 jár. A 204 kizárólag a böngésző-beacon szerződése.
+    expect(res.status).toBe(503);
     // A LÉNYEG: az event nincs dispatched-nek jelölve → egy retry újrakézbesíthet.
     expect(dispatchedUpdates).toHaveLength(0);
     // És kritikus riasztás ment róla.
