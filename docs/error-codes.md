@@ -240,8 +240,43 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 ## TRK-900-005 — Max retries exceeded
 
 **Severity**: Warning
-**Description**: A DLQ record 5+ retry-on hibázott.
-**Action**: Manuális vizsgálat — a payload corrupt, vagy az API permanenten elérhetetlen. Töröld vagy javítsd kézzel.
+**Description**: Egy DLQ-rekord kimerítette a retry-keretét (`MAX_RETRIES` = 3, konfigurációs blokknál `MAX_RETRIES_BLOCKED_CONFIG` = 28 / 7 nap), és a `dead` archívumba került. Ez egy SOHA le nem kézbesített konverzió. A `DEAD_RECORD_RETENTION_DAYS` (default 90 nap) lejártáig van meg — utána a retention véglegesen purge-öli.
+
+**Riasztás**: 30 percenkénti SLO-check → „Dead records: N" email (6 órás throttle-lal). A levél és a napi digest FELSOROLJA a rekordokat (site, platform, event, kor, utolsó hiba, R2-kulcs); ugyanez a Workers logban is megjelenik rekordonként egy `TRK-900-005` warn sorként, még akkor is, ha az email throttle-ba esett.
+
+**Action** — a rekord felderítése és újrafeldolgozása:
+
+```bash
+# 1) mi van a dead archívumban (PII-mentes összefoglalók + az R2-kulcs)
+curl -s -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  "https://<site-hostname>/api/event/admin/dlq/dead?max=100"
+
+# 2) egy rekord replay-e kulcs szerint
+curl -s -X POST -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" -d '{"key":"<key>"}' \
+  "https://<site-hostname>/api/event/admin/dlq/replay"
+
+# 3) vagy az egész dead archívum (opcionálisan site-ra szűrve)
+curl -s -X POST -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" -d '{"dead":true,"site_id":"<site>","max":100}' \
+  "https://<site-hostname>/api/event/admin/dlq/replay"
+
+# 4) eldobás (consent-visszavonás / szemét): a do_not_replay flaget is beírja
+curl -s -X POST -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" -d '{"key":"<key>","discard":true}' \
+  "https://<site-hostname>/api/event/admin/dlq/replay"
+```
+
+Kimenetel-kódok a replay-válaszban (`outcome`):
+
+| outcome | jelentés | mi történik a rekorddal |
+|---|---|---|
+| `replayed` | valódi vendor-kézbesítés (`accepted` ledger-sorral) | R2-objektum törölve |
+| `skipped` | a platform-config épp hiányzik → hívás NEM történt | **megmarad** (állítsd vissza a configot, majd replay újra) |
+| `suppressed` | az event `do_not_replay=1` (consent-visszavonás / korábbi discard) | **megmarad**, HTTP 409 |
+| `failed` | vendor-bukás | **megmarad** (újrapróbálható) |
+
+**Mielőtt replay-elsz**: nézd meg a `failure_reason`-t és a rekord korát (`age_days`). Ha a hiba permanens (corrupt payload, visszavont pixel), a replay ugyanúgy elbukik → `discard`. A vendor-elfogadási ablakok továbbra is érvényesek (Meta CAPI: 7 nap) — egy ennél régebbi rekordot az API elfogadhat, attribúció mégsem lesz.
 
 ## TRK-900-006 — DLQ corrupt record
 

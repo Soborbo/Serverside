@@ -113,7 +113,12 @@ const ADMIN_UI_HTML = `<!DOCTYPE html>
       <input id="dlq-site" placeholder="site_id (opcionális, bulk)" style="width:200px">
       <label class="mut">max</label>
       <input id="dlq-max" type="number" value="50" min="1" max="100" style="width:80px">
-      <button id="b-replay-bulk">Bulk replay</button>
+      <button id="b-replay-bulk">Bulk replay (pending)</button>
+      <button class="sec" id="b-replay-dead">Bulk replay (DEAD)</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="sec" id="b-dead-list">List dead records</button>
+      <span class="mut">a „Dead records: N" riasztás rekordjai — innen szerezhető meg az R2 key</span>
     </div>
     <div id="out-dlq"></div>
   </div>
@@ -267,11 +272,64 @@ const ADMIN_UI_HTML = `<!DOCTYPE html>
     if (!k) { var o = $('out-dlq'); clear(o); o.appendChild(el('p', 'err', 'key required')); return; }
     dlqPost({ key: k, discard: true }, $('out-dlq'));
   });
-  $('b-replay-bulk').addEventListener('click', function () {
+  function bulkPayload() {
     var payload = { max: parseInt($('dlq-max').value, 10) || 50 };
     var site = $('dlq-site').value.trim();
     if (site) payload.site_id = site;
+    return payload;
+  }
+  $('b-replay-bulk').addEventListener('click', function () {
+    dlqPost(bulkPayload(), $('out-dlq'));
+  });
+  // A dead archívum a NORMÁL bulk-replay elől rejtve van (listPendingRetries
+  // átugorja a dead kulcsokat) — ez az a gomb, ami eléri.
+  $('b-replay-dead').addEventListener('click', function () {
+    var payload = bulkPayload();
+    payload.dead = true;
     dlqPost(payload, $('out-dlq'));
+  });
+  // Dead-lista: enélkül a fenti „R2 key" mezőt nem lehetett kitölteni — a
+  // riasztás kézi újrafeldolgozásra utasított egy megtudhatatlan kulccsal.
+  $('b-dead-list').addEventListener('click', function () {
+    var out = $('out-dlq'); clear(out); out.appendChild(el('p', 'mut', 'Loading…'));
+    var q = '?max=' + (parseInt($('dlq-max').value, 10) || 50);
+    var site = $('dlq-site').value.trim();
+    if (site) q += '&site_id=' + encodeURIComponent(site);
+    api('/api/event/admin/dlq/dead' + q).then(function (res) {
+      clear(out);
+      if (res.status >= 400 || !res.body || !res.body.records) { errLine(out, res); return; }
+      if (!res.body.records.length) { out.appendChild(el('p', 'ok', 'No dead records.')); return; }
+      out.appendChild(el('p', 'warning', res.body.count + ' dead record(s)' + (res.body.truncated ? ' (truncated — raise max)' : '')));
+      var t = el('table');
+      var thead = el('tr');
+      ['Site', 'Platform', 'Event', 'Age', 'Tries', 'Last failure', ''].forEach(function (h) { thead.appendChild(el('th', '', h)); });
+      t.appendChild(thead);
+      res.body.records.forEach(function (r) {
+        var tr = el('tr');
+        tr.appendChild(el('td', '', r.site_id));
+        tr.appendChild(el('td', '', r.platform));
+        tr.appendChild(el('td', '', r.event_name + ' (' + r.event_id + ')'));
+        tr.appendChild(el('td', '', r.age_days + 'd'));
+        tr.appendChild(el('td', '', String(r.retry_count)));
+        tr.appendChild(el('td', 'mut', r.failure_reason));
+        var td = el('td');
+        var b = el('button', 'sec', 'Use key');
+        // Nem replay-elünk egy kattintásra: a kulcsot betöltjük a mezőbe, hogy
+        // a döntés (replay vs discard) tudatos maradjon.
+        b.addEventListener('click', function () {
+          $('dlq-key').value = r.key;
+          $('dlq-key').scrollIntoView({ block: 'center' });
+        });
+        td.appendChild(b);
+        tr.appendChild(td);
+        t.appendChild(tr);
+      });
+      out.appendChild(t);
+      if (res.body.corrupt_keys && res.body.corrupt_keys.length) {
+        out.appendChild(el('p', 'err', 'Unreadable (corrupt) objects: ' + res.body.corrupt_keys.length));
+        out.appendChild(pre(res.body.corrupt_keys));
+      }
+    });
   });
 })();
 </script>

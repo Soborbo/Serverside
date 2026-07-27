@@ -3,10 +3,12 @@ import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
 import { getSiteConfig } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
-import { getLeadTrail, isValidLeadId, markDoNotReplay } from '../lib/ledger';
+import { getLeadTrail, isValidLeadId, markDoNotReplay, isDoNotReplay } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
 import {
   listPendingRetries,
+  listDeadRecords,
+  summarizeDeadRecord,
   deleteDeadLetter,
   type DeadLetterRecord
 } from '../lib/deadletter';
@@ -22,7 +24,8 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
  * Útvonalak (mind /api/event/admin/* alatt — a meglévő zone-route lefedi):
  *   GET  /api/event/admin/reconciliation[?hours=24]
  *   GET  /api/event/admin/leads/:lead_id
- *   POST /api/event/admin/dlq/replay   { key? | site_id?, max?, discard? }
+ *   GET  /api/event/admin/dlq/dead     [?site_id=&max=100]
+ *   POST /api/event/admin/dlq/replay   { key? | site_id?, dead?, max?, discard? }
  *   GET  /api/event/admin/health-check
  *
  * Minden mutáló művelet (replay/discard) auditálható: a fan-out/retry a ledgerbe
@@ -79,6 +82,9 @@ export async function handleAdmin(
   }
   if (request.method === 'GET' && path.startsWith('leads/')) {
     return handleLeadTrail(env, hostname, decodeURIComponent(path.slice('leads/'.length)));
+  }
+  if (request.method === 'GET' && path === 'dlq/dead') {
+    return handleDlqDeadList(request, env);
   }
   if (request.method === 'POST' && path === 'dlq/replay') {
     return handleDlqReplay(request, env, ctx);
@@ -168,12 +174,102 @@ async function handleLeadTrail(env: Env, hostname: string, leadId: string): Prom
   return json({ site_id: siteConfig.site_id, lead_id: leadId, found, trail }, 200);
 }
 
+// ── GET /admin/dlq/dead ──────────────────────────────────────────────────────
+/**
+ * A dead-archívum tartalma — a retry-keretet kimerített, SOHA le nem kézbesített
+ * konverziók. Ez a végpont teszi a „Dead records: N" riasztást egyáltalán
+ * KÖVETHETŐVÉ: eddig a riasztás kézi újrafeldolgozásra utasított, miközben a
+ * single-replay pontos R2-kulcsot vár, a bulk-replay pedig szándékosan átugorja a
+ * dead kulcsokat — vagyis a kulcs sehonnan nem volt megtudható.
+ *
+ * A válasz PII-MENTES (summarizeDeadRecord): sem hash-elt user_data, sem nyers
+ * event_payload nem megy ki rajta.
+ */
+function parseBoundedInt(raw: string | null, def: number, min: number, max: number): number {
+  const n = raw !== null ? parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(n)) return def;
+  return Math.min(Math.max(n, min), max);
+}
+
+async function handleDlqDeadList(request: Request, env: Env): Promise<Response> {
+  const params = new URL(request.url).searchParams;
+  const max = parseBoundedInt(params.get('max'), 100, 1, 500);
+  const siteId = params.get('site_id');
+  // Segment-prefix (`site_id/`), NEM substring — különben a `site_id: "a"` minden
+  // `a`-val kezdődő tenant rekordját listázná (ugyanaz a szabály, mint a bulk replay-nél).
+  const sitePrefix = siteId ? `${siteId}/` : undefined;
+
+  let scan: Awaited<ReturnType<typeof listDeadRecords>>;
+  try {
+    scan = await listDeadRecords(env, sitePrefix, max);
+  } catch (err) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.DLQ_LIST_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.DLQ_LIST_FAILED],
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return json({ error: 'dlq_list_failed' }, 503);
+  }
+
+  const now = Date.now();
+  return json(
+    {
+      count: scan.dead.length,
+      truncated: scan.truncated,
+      corrupt_keys: scan.corrupt,
+      records: scan.dead.map(({ key, record }) => summarizeDeadRecord(key, record, now)),
+      hint: 'Reprocess: POST /api/event/admin/dlq/replay {"key":"<key>"} — or {"dead":true,"site_id":"…"} for all of them.'
+    },
+    200
+  );
+}
+
 // ── POST /admin/dlq/replay ───────────────────────────────────────────────────
 interface DlqReplayBody {
   key?: string;
   site_id?: string;
+  /** true → a DEAD archívumot replay-eli (alapból a pending rekordokat). */
+  dead?: boolean;
   max?: number;
   discard?: boolean;
+}
+
+/**
+ * Egy rekord újraküldése a közös szuppresszió-kapuval. A `do_not_replay` flag
+ * (consent-visszavonás / admin-discard) MINDEN replay-utat blokkol — enélkül a
+ * dead-bulk-replay pont azokat az eventeket támasztaná fel, amiket valaki
+ * szándékosan eltiltott. Siker esetén ledger-sor + az R2-objektum törlése.
+ *
+ * Visszatérés: `outcome` — 'replayed' | 'skipped' | 'suppressed' | 'failed'.
+ * A skip (épp hiányzó platform-config) NEM kézbesítés → a rekordot MEGTARTJUK.
+ */
+type ReplayOutcome = 'replayed' | 'skipped' | 'suppressed' | 'failed';
+
+async function replayOne(
+  env: Env,
+  key: string,
+  record: DeadLetterRecord
+): Promise<ReplayOutcome> {
+  const eventName = String(record.event_payload?.event_name ?? '');
+  const eventId = String(record.event_payload?.event_id ?? '');
+  if (await isDoNotReplay(env, record.site_id, eventName, eventId)) {
+    logStructured({
+      level: 'warn',
+      message: 'DLQ replay refused — event is flagged do_not_replay (consent withdrawal / discard)',
+      r2_key: key,
+      site_id: record.site_id,
+      platform: record.platform
+    });
+    return 'suppressed';
+  }
+  const result = await retrySingle(env, record);
+  if (!isRealRetrySuccess(result)) {
+    return result.skipped === true ? 'skipped' : 'failed';
+  }
+  await recordRetryDelivery(env, record, result);
+  await deleteDeadLetter(env, key);
+  return 'replayed';
 }
 
 async function handleDlqReplay(
@@ -227,15 +323,11 @@ async function handleDlqReplay(
     } catch {
       return json({ error: 'corrupt_record', key }, 422);
     }
-    const result = await retrySingle(env, record);
     // Skip-siker (épp hiányzó platform-config) NEM kézbesítés: a rekordot NEM
     // töröljük — különben a replay „sikere" az event egyetlen példányát
     // semmisítené meg, miközben vendor-hívás nem történt.
-    const ok = isRealRetrySuccess(result);
-    if (ok) {
-      await recordRetryDelivery(env, record, result);
-      await deleteDeadLetter(env, key);
-    }
+    const outcome = await replayOne(env, key, record);
+    const ok = outcome === 'replayed';
     logStructured({
       level: 'info',
       message: 'Admin DLQ single replay',
@@ -243,22 +335,36 @@ async function handleDlqReplay(
       platform: record.platform,
       site_id: record.site_id,
       success: ok,
-      skipped: result.skipped === true
+      outcome
     });
     return json(
-      { action: 'replay', key, replayed: ok ? 1 : 0, succeeded: ok, skipped: result.skipped === true },
-      200
+      {
+        action: 'replay',
+        key,
+        replayed: ok ? 1 : 0,
+        succeeded: ok,
+        outcome,
+        skipped: outcome === 'skipped'
+      },
+      // A szuppresszált replay NEM „siker" — a hívónak 409-et adunk, hogy egy
+      // szkript ne könyvelje el kézbesítésnek azt, ami szándékosan nem ment ki.
+      outcome === 'suppressed' ? 409 : 200
     );
   }
 
-  // Bulk replay (opcionálisan site_id prefixre szűrve).
+  // Bulk replay (opcionálisan site_id prefixre szűrve). `dead: true` → a
+  // dead-archívum, különben a még retry-olható pending rekordok.
   const max = Number.isFinite(body.max as number) ? Math.min(Math.max(body.max as number, 1), 100) : 50;
   // Segment-prefix (`site_id/`), NEM substring — különben a `site_id: "a"`
   // minden olyan tenant rekordját listázná, amelynek id-je `a`-val kezdődik.
   const sitePrefix = typeof body.site_id === 'string' && body.site_id ? `${body.site_id}/` : undefined;
-  let pending: { key: string; record: DeadLetterRecord }[];
+  const scope: 'dead' | 'pending' = body.dead === true ? 'dead' : 'pending';
+  let batch: { key: string; record: DeadLetterRecord }[];
   try {
-    ({ pending } = await listPendingRetries(env, sitePrefix, max));
+    batch =
+      scope === 'dead'
+        ? (await listDeadRecords(env, sitePrefix, max)).dead
+        : (await listPendingRetries(env, sitePrefix, max)).pending;
   } catch (err) {
     logStructured({
       level: 'error',
@@ -271,16 +377,15 @@ async function handleDlqReplay(
 
   let succeeded = 0;
   let failed = 0;
-  for (const { key, record } of pending) {
+  let skipped = 0;
+  let suppressed = 0;
+  for (const { key, record } of batch) {
     try {
-      const result = await retrySingle(env, record);
-      if (isRealRetrySuccess(result)) {
-        await recordRetryDelivery(env, record, result);
-        await deleteDeadLetter(env, key);
-        succeeded++;
-      } else {
-        failed++;
-      }
+      const outcome = await replayOne(env, key, record);
+      if (outcome === 'replayed') succeeded++;
+      else if (outcome === 'skipped') skipped++;
+      else if (outcome === 'suppressed') suppressed++;
+      else failed++;
     } catch {
       failed++;
     }
@@ -289,12 +394,18 @@ async function handleDlqReplay(
     level: 'info',
     message: 'Admin DLQ bulk replay',
     site_id: body.site_id,
-    attempted: pending.length,
+    scope,
+    attempted: batch.length,
     succeeded,
-    failed
+    failed,
+    skipped,
+    suppressed
   });
   void ctx;
-  return json({ action: 'replay', attempted: pending.length, succeeded, failed }, 200);
+  return json(
+    { action: 'replay', scope, attempted: batch.length, succeeded, failed, skipped, suppressed },
+    200
+  );
 }
 
 // ── GET /admin/health-check (onboarding validator #19) ───────────────────────

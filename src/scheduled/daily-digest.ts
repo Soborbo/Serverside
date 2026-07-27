@@ -1,5 +1,6 @@
 import type { Env } from '../env';
-import { sendAdminEmail } from '../lib/notify';
+import { sendAdminEmail, escapeHtml } from '../lib/notify';
+import { listDeadRecords, summarizeDeadRecord, type DeadRecordSummary } from '../lib/deadletter';
 import { countSiteConfigs, listConfiguredSiteIds, listMonitoredSiteConfigs } from '../lib/config';
 import {
   fetchDatasetEmq,
@@ -347,6 +348,40 @@ function renderManifestSection(drift: DriftEntry[]): string {
     </ul>`;
 }
 
+// ── Dead-record tennivalók ──────────────────────────────────────────────────
+
+/** Ennyi dead rekordot nevesítünk a digestben; a többit a `dlq/dead` végpont adja. */
+const DIGEST_DEAD_SAMPLE = 20;
+
+/**
+ * A dead rekordok PII-mentes felsorolása a tennivalókhoz — SITE/PLATFORM/EVENT és
+ * a replay-hez szükséges R2-kulcs. A puszta darabszám nem cselekvésre váltható:
+ * a `dlq/replay {key}` pontos kulcsot vár, amit eddig sehonnan nem lehetett
+ * megtudni (a bulk-replay a dead kulcsokat átugorja).
+ */
+export function renderDeadRecordList(records: DeadRecordSummary[], total: number): string {
+  if (records.length === 0) {
+    return `<p><em>Details unavailable — GET /api/event/admin/dlq/dead</em></p>`;
+  }
+  const items = records
+    .map(
+      (r) =>
+        `<li>${escapeHtml(r.site_id)}/${escapeHtml(r.platform)} — ` +
+        `${escapeHtml(r.event_name)} (${escapeHtml(r.event_id)}), ${r.age_days}d old, ` +
+        `${r.retry_count} tries, last: ${escapeHtml(r.failure_reason)}<br>` +
+        `<code>${escapeHtml(r.key)}</code></li>`
+    )
+    .join('\n      ');
+  const more =
+    total > records.length ? `<p><em>… and ${total - records.length} more.</em></p>` : '';
+  return `<ul>
+      ${items}
+    </ul>${more}
+    <p>Reprocess: <code>POST /api/event/admin/dlq/replay {"key":"…"}</code> — or
+       <code>{"dead":true,"max":100}</code> for the whole archive.
+       List them: <code>GET /api/event/admin/dlq/dead</code>.</p>`;
+}
+
 // ── Meta EMQ (Event Match Quality) szekció ───────────────────────────────────
 
 /** EMQ riasztási küszöb (0-10-es composite score). Meta ajánlás: a jó ≥ 7. */
@@ -490,6 +525,24 @@ export async function handleDailyDigest(env: Env): Promise<void> {
     });
   }
 
+  // A dead rekordok AZONOSÍTÓI a tennivalókhoz. A puszta darabszám nem
+  // cselekvésre váltható: a kézi replay pontos R2-kulcsot vár. Best-effort — a
+  // digest scan hibája nem foghatja meg az egész levelet.
+  let deadRecords: DeadRecordSummary[] = [];
+  if (totalDeadRecords > 0) {
+    try {
+      const { dead } = await listDeadRecords(env, undefined, DIGEST_DEAD_SAMPLE);
+      const now = Date.now();
+      deadRecords = dead.map(({ key, record }) => summarizeDeadRecord(key, record, now));
+    } catch (err) {
+      logStructured({
+        level: 'warn',
+        message: 'Daily digest: failed to read dead-record details',
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
+
   const html = `
     <h2>Soborbo Tracking — Daily Digest</h2>
     <p><strong>Snapshot:</strong> ${new Date().toISOString()} (a DLQ-számok a teljes bucket pillanatképe, nem 24h-s ablak)</p>
@@ -569,7 +622,8 @@ export async function handleDailyDigest(env: Env): Promise<void> {
     <h3>Action items</h3>
     ${
       totalDeadRecords > 0
-        ? `<p><strong>⚠️ ${totalDeadRecords} dead records require manual intervention.</strong></p>`
+        ? `<p><strong>⚠️ ${totalDeadRecords} dead records require manual intervention.</strong></p>
+    ${renderDeadRecordList(deadRecords, totalDeadRecords)}`
         : `<p>✓ No dead records.</p>`
     }
     ${totalDlqRecords > 50 ? `<p><strong>⚠️ DLQ pending records elevated.</strong></p>` : ''}

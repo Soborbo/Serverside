@@ -315,6 +315,39 @@ export async function markDoNotReplay(
   }
 }
 
+/**
+ * READ-ONLY szuppresszió-ellenőrzés a replay-utakhoz. A `checkIdempotency` NEM
+ * használható erre: az upsertel (seen_count++), tehát egy admin-lista vagy egy
+ * replay-kísérlet elmozdítaná az ingress-oldali idempotencia-állapotot.
+ *
+ * Hibakezelés SZÁNDÉKOSAN aszimmetrikus:
+ *  - nincs LEDGER binding → `false`: a do_not_replay fogalma sem létezik ilyen
+ *    deploymentben, a replay-nek működnie kell.
+ *  - lekérdezési HIBA → `true` (= tiltottnak vesszük): a flag consent-visszavonást
+ *    vagy policy-tiltást jelöl, és egy GDPR-tiltott eventet utólag feltölteni
+ *    súlyosabb hiba, mint egy konverziót elveszíteni. A replay bármikor
+ *    megismételhető, ha a D1 magához tér.
+ */
+export async function isDoNotReplay(
+  env: Env,
+  siteId: string,
+  eventName: string,
+  eventId: string
+): Promise<boolean> {
+  if (!env.LEDGER) return false;
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT do_not_replay FROM idempotency WHERE idempotency_key = ?`
+    )
+      .bind(buildIdempotencyKey(siteId, eventName, eventId))
+      .first<{ do_not_replay: number }>();
+    return (row?.do_not_replay ?? 0) === 1;
+  } catch (err) {
+    ledgerError('isDoNotReplay', err, { site_id: siteId, event_name: eventName });
+    return true; // fail-closed
+  }
+}
+
 export interface EventRawInput {
   event_id: string;
   lead_id?: string;

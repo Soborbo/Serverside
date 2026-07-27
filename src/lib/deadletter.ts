@@ -253,6 +253,129 @@ export async function listPendingRetries(
   return { pending: results, expired };
 }
 
+/**
+ * A dead-archívum (`{site}/{platform}/dead/...`) rekordjai — a retry-keretet
+ * kimerített, SOHA le nem kézbesített konverziók.
+ *
+ * Miért kell külön scan: a `listPendingRetries` szándékosan ÁTUGORJA a dead
+ * kulcsokat (`isDeadKey → continue`), tehát a bulk-replay útja nem éri el őket, a
+ * single-replay pedig pontos R2-kulcsot vár — amit eddig sehol nem lehetett
+ * megtudni. Az SLO-riasztás („Permanently lost unless manually reprocessed")
+ * ezért egy nem létező kézi útra mutatott: a rekord a retention purge-ig
+ * (DEAD_RECORD_RETENTION_DAYS, default 90 nap) ott ült elérhetetlenül, aztán
+ * tényleg elveszett.
+ */
+export interface DeadRecordScan {
+  dead: { key: string; record: DeadLetterRecord }[];
+  /** Sérült (nem JSON / olvashatatlan) dead-objektumok kulcsai — kézi vizsgálathoz. */
+  corrupt: string[];
+  /** true = a `maxResults` plafon vagy a lapozási limit vágta a listát. */
+  truncated: boolean;
+}
+
+export async function listDeadRecords(
+  env: Env,
+  sitePrefix?: string,
+  maxResults = 100
+): Promise<DeadRecordScan> {
+  const dead: { key: string; record: DeadLetterRecord }[] = [];
+  const corrupt: string[] = [];
+  let cursor: string | undefined = undefined;
+  let iterations = 0;
+  let truncated = false;
+  const MAX_ITERATIONS = 10;
+
+  while (iterations < MAX_ITERATIONS) {
+    const listResult: R2Objects = await env.DEAD_LETTER.list({
+      prefix: sitePrefix,
+      cursor,
+      limit: 1000
+    });
+
+    for (const obj of listResult.objects) {
+      if (!isDeadKey(obj.key)) continue;
+      if (dead.length >= maxResults) {
+        truncated = true;
+        break;
+      }
+      try {
+        const body = await env.DEAD_LETTER.get(obj.key);
+        if (!body) continue;
+        dead.push({ key: obj.key, record: (await body.json()) as DeadLetterRecord });
+      } catch (err) {
+        // A sérült rekordot NEM nyeljük el csendben: a kulcsot visszaadjuk, hogy
+        // az operátor tudjon róla. Enélkül a dead-szám (ami az objektumokat
+        // számolja) és a replay-lista (ami a beolvashatókat) némán elcsúszna.
+        corrupt.push(obj.key);
+        logStructured({
+          level: 'warn',
+          error_code: TrackingErrorCode.DLQ_CORRUPT_RECORD,
+          message: ERROR_DESCRIPTIONS[TrackingErrorCode.DLQ_CORRUPT_RECORD],
+          r2_key: obj.key,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+
+    if (dead.length >= maxResults) {
+      truncated = true;
+      break;
+    }
+    if (!listResult.truncated) break;
+    cursor = listResult.cursor;
+    iterations++;
+    if (iterations >= MAX_ITERATIONS) truncated = true;
+  }
+
+  return { dead, corrupt, truncated };
+}
+
+/**
+ * PII-MENTES összefoglaló egy dead-rekordról — ezt látja az admin API válasza, a
+ * riasztó email és a napi digest. A `hashed_user_data` és a nyers `event_payload`
+ * SOHA nem kerül bele (CLAUDE.md 13.: user_data-t hash után sem logolunk).
+ */
+export interface DeadRecordSummary {
+  key: string;
+  site_id: string;
+  platform: Platform;
+  event_id: string;
+  event_name: string;
+  lead_id?: string;
+  failure_reason: string;
+  blocked_configuration: boolean;
+  retry_count: number;
+  first_failed_at: string;
+  last_attempted_at: string;
+  /** Az EREDETI esemény kora napban — a vendor-elfogadási ablak megítéléséhez. */
+  age_days: number;
+}
+
+export function summarizeDeadRecord(
+  key: string,
+  record: DeadLetterRecord,
+  nowMs: number = Date.now()
+): DeadRecordSummary {
+  const firstFailedMs = Date.parse(record.first_failed_at);
+  return {
+    key,
+    site_id: record.site_id,
+    platform: record.platform,
+    event_id: String(record.event_payload?.event_id ?? ''),
+    event_name: String(record.event_payload?.event_name ?? ''),
+    lead_id: record.lead_id,
+    // A vendor-hibaüzenet nem PII, de hosszú lehet (HTML-hibaoldal) — vágjuk.
+    failure_reason: String(record.failure_reason ?? '').slice(0, 300),
+    blocked_configuration: record.blocked_configuration === true,
+    retry_count: record.retry_count,
+    first_failed_at: record.first_failed_at,
+    last_attempted_at: record.last_attempted_at,
+    age_days: Number.isFinite(firstFailedMs)
+      ? Number(((nowMs - firstFailedMs) / 86_400_000).toFixed(1))
+      : -1
+  };
+}
+
 export async function deleteDeadLetter(env: Env, key: string): Promise<boolean> {
   try {
     await env.DEAD_LETTER.delete(key);
