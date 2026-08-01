@@ -87,3 +87,30 @@ describe('sendToGA4MP — no PII (CLAUDE.md #9)', () => {
     expect(serialized).not.toContain('Jane');
   });
 });
+
+describe('sendToGA4MP — session-forrás védelem (Painless audit 2026-08, P0-A)', () => {
+  it('client_id nélkül SKIP-el — nem mint random fantom-usert', async () => {
+    const captured = stubFetchCapture();
+    const result = await sendToGA4MP(cfg, {
+      event_name: 'callback_conversion',
+      event_id: 'evt-5',
+      client_id: undefined
+    });
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(captured.body).toBeUndefined();
+  });
+
+  it('a `source` labelt `cta_context` néven küldi — a foglalt `source` kulcs sosem megy ki a konverziós eventen', async () => {
+    const captured = stubFetchCapture();
+    await sendToGA4MP(cfg, {
+      event_name: 'phone_conversion',
+      event_id: 'evt-6',
+      client_id: '123.456',
+      source: 'standalone'
+    });
+    const params = captured.body.events[0].params;
+    expect(params.cta_context).toBe('standalone');
+    expect(params.source).toBeUndefined();
+  });
+});

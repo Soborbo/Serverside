@@ -51,7 +51,23 @@ export async function sendToGA4MP(
   const endpoint = options.debug ? GA4_DEBUG_ENDPOINT : GA4_ENDPOINT;
   const url = `${endpoint}?measurement_id=${siteConfig.ga4.measurement_id}&api_secret=${siteConfig.ga4.api_secret}`;
 
-  const clientId = payload.client_id || generateFallbackClientId();
+  // client_id nélkül NINCS GA4-leg: a korábbi random fallback minden hitnek
+  // új GA4 "user"-t + fantom sessiont nyitott, amit a GA4 Unassigned /
+  // "(not set)" forrás alá könyvelt — attribúcióra használhatatlan, és a
+  // riportokat aktívan szennyezte (Painless audit 2026-08, P0-A: 10 fantom
+  // session vitte a key eventek 40%-át). A Meta/egyéb legek nem függenek
+  // ettől a return-től; a kimaradást strukturált log jelzi.
+  if (!payload.client_id) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.GA4_VALIDATION_FAILURE,
+      message: 'GA4 MP skipped — no client_id (a random fallback only mints phantom sessions)',
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name
+    });
+    return { success: true, skipped: true };
+  }
+  const clientId = payload.client_id;
 
   const params: Record<string, unknown> = {
     engagement_time_msec: 100,
@@ -65,7 +81,11 @@ export async function sendToGA4MP(
     params.value = payload.value;
     params.currency = payload.currency;
   }
-  if (payload.source) params.source = payload.source;
+  // `cta_context`, NEM `source`: a szó szerinti `source` event param a GA4
+  // foglalt manual-campaign kulcsa — un-stitchelt hiten SESSION-FORRÁSSÁ
+  // válik ("standalone / (not set)", "server / (not set)" sorok a
+  // sessionSourceMedium-ban; Painless audit 2026-08, P0-A).
+  if (payload.source) params.cta_context = payload.source;
   if (payload.service) params.service = payload.service;
   if (payload.page_location) params.page_location = payload.page_location;
 
@@ -198,10 +218,4 @@ export async function sendToGA4MP(
       error_code: errorCode
     };
   }
-}
-
-function generateFallbackClientId(): string {
-  const random = Math.floor(Math.random() * 9_000_000_000) + 1_000_000_000;
-  const seconds = Math.floor(Date.now() / 1000);
-  return `${random}.${seconds}`;
 }
