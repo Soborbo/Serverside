@@ -183,9 +183,12 @@ describe('sendToGA4MP — UTM forwarding', () => {
       }
     });
     const events = JSON.parse(fetchMock.mock.calls[0][1].body as string).events;
-    // konverziós event változatlan
+    // konverziós event: a label `cta_context` néven megy tovább — a szó
+    // szerinti `source` param a GA4 foglalt manual-campaign kulcsa, ami
+    // un-stitchelt hiten SESSION-FORRÁSSÁ válik (Painless audit 2026-08, P0-A).
     expect(events[0].name).toBe('contact_form_submit');
-    expect(events[0].params.source).toBe('contact_form');
+    expect(events[0].params.cta_context).toBe('contact_form');
+    expect(events[0].params).not.toHaveProperty('source');
     expect(events[0].params).not.toHaveProperty('medium');
     // külön campaign_details event a kampány-jelekkel
     const cd = events.find((e: { name: string }) => e.name === 'campaign_details');
