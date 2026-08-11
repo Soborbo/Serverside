@@ -112,6 +112,23 @@ export interface ConversionRequestPayload {
   // validált (lib/provenance.ts); érvénytelen → drop (TRK-PROV-001). Meta
   // custom_data paraméterként utazik (nem PII).
   lead_provenance?: string;
+  // ── E-kereskedelmi katalógus-mezők (webshop tenantok) ─────────────────────
+  // A Meta custom_data-ba mennek. Lead-gen site-okon egyszerűen hiányoznak.
+  // NEM PII. Érvénytelen forma → a route ELDOBJA a mezőt, az event megy tovább
+  // (ugyanaz a szabály, mint a lead_id-nál: egy katalógus-formahiba nem nyelheti
+  // el magát a purchase konverziót).
+  //
+  // A `contents` a Meta ajánlott formája (id + quantity + item_price); a
+  // `content_ids` a lapos fallback. Együtt is küldhetők — a Meta a `contents`-t
+  // részesíti előnyben. Az id-knak a katalógus `retailer_id`-jével KELL egyezniük,
+  // különben a dinamikus remarketing nem talál rá a termékre.
+  contents?: unknown;
+  content_ids?: unknown;
+  content_type?: unknown;
+  num_items?: unknown;
+  // A shop rendelésazonosítója — a Meta ezzel szűri a duplikált purchase-t a
+  // saját oldalán, és ez a join-kulcs a shop rendelés-riportjai felé.
+  order_id?: unknown;
 
   [key: string]: unknown;
 }

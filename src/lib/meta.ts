@@ -1,6 +1,7 @@
 import type { SiteConfig } from './config';
 import type { SkipReason } from './skip-reason';
 import type { HashedUserData } from './hash';
+import type { EcommerceParams } from './ecommerce';
 import { logStructured, EVENT_NAME_MAP } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import { sanitizeErrorMessage } from './log-sanitize';
@@ -23,6 +24,10 @@ export interface MetaCAPIPayload {
   // §3 — automatikus lead-útvonal (cold|post_quote|from_quote_email). A Meta
   // custom_data-ba kerül; nem PII. Ingress-validált (lib/provenance.ts).
   lead_provenance?: string;
+  // Webshop-tenantok katalógus-paraméterei (lib/ecommerce.ts). Lead-gen site-okon
+  // undefined. Nélkülük a purchase megérkezik, de nem köthető katalógus-tételhez,
+  // így a dinamikus remarketing és a termékszintű ROAS némán üres marad.
+  ecommerce?: EcommerceParams;
   // Per-request Test-stream override — az EGYETLEN elfogadott forrás (§17). Csak a
   // hitelesített szerver-ingress tölti ki (routes/conversion.ts); a böngésző-ág
   // eldobja. A KV `meta.test_event_code`-ot SOHA nem használjuk (detektáljuk+riasztunk).
@@ -101,6 +106,18 @@ export async function sendToMetaCAPI(
   // §3 lead_provenance — Meta custom_data paraméter (nem PII). Modell 2-ben a
   // Meta a fő on-site sink (a GA4/Google Ads on-site láb kikerült).
   if (payload.lead_provenance) custom_data.lead_provenance = payload.lead_provenance;
+  // Katalógus-paraméterek (webshop). Már ingress-validáltak (lib/ecommerce.ts):
+  // itt csak átemeljük őket, hogy egy formahibás mező ne itt, a vendor-hívás
+  // közepén bukjon el. A `contents` az ajánlott forma; a `content_ids` a lapos
+  // fallback — a Meta a `contents`-t részesíti előnyben, ha mindkettő jelen van.
+  const ecom = payload.ecommerce;
+  if (ecom) {
+    if (ecom.contents) custom_data.contents = ecom.contents;
+    if (ecom.content_ids) custom_data.content_ids = ecom.content_ids;
+    if (ecom.content_type) custom_data.content_type = ecom.content_type;
+    if (ecom.num_items !== undefined) custom_data.num_items = ecom.num_items;
+    if (ecom.order_id) custom_data.order_id = ecom.order_id;
+  }
 
   const event: Record<string, unknown> = {
     event_name: mapEventName(payload.event_name),
