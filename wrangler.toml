@@ -36,6 +36,14 @@ command = "node scripts/stamp-build-info.mjs"
 # írja le, nem a routing-ot.
 SMOKE_SITES = "painless,beautyflow,lomtalan,skinlab"
 
+# Google OAuth kliens (Soborbo Tracking Worker, Google Cloud Console). NEM titok
+# (public client identifier) — szándékosan ITT él, nem dashboard-only varként:
+# 2026-08-11-én kiderült, hogy a dashboardon kezelt példány egy korábbi deploynál
+# elveszett, és a beautyflow offline Google Ads lába hetekig némán bukott
+# TRK-800-001-gyel (a token-refresh client_id nélkül el sem indul). A [vars]-ból
+# minden deploy újra kikényszeríti. A párja (GADS_OAUTH_CLIENT_SECRET) secret marad.
+GADS_OAUTH_CLIENT_ID = "798228321713-2pji8f6c399520l0ifnfq9255c2a6kqs.apps.googleusercontent.com"
+
 [observability]
 enabled = true
 head_sampling_rate = 1.0
