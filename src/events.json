@@ -42,6 +42,34 @@
     "description": "Kapcsolatfelveteli urlap bekuldve"
   },
   {
+    "name": "training_signup_submitted",
+    "kind": "conversion",
+    "module": "leadgen",
+    "ga4_key_event": true,
+    "meta": "CompleteRegistration",
+    "channels": ["browser", "server"],
+    "server_ingress_only": true,
+    "provenance": true,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "Kepzesre/tanfolyamra jelentkezes bekuldve (sajat Meta esemeny: CompleteRegistration)"
+  },
+  {
+    "name": "consultation_request_submitted",
+    "kind": "conversion",
+    "module": "leadgen",
+    "ga4_key_event": true,
+    "meta": "Schedule",
+    "channels": ["browser", "server"],
+    "server_ingress_only": true,
+    "provenance": true,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "Konzultacio-keres bekuldve (tobblepeses varazslo) -> Meta Schedule"
+  },
+  {
     "name": "phone_number_clicked",
     "kind": "conversion",
     "module": "leadgen",
@@ -124,14 +152,14 @@
     "kind": "conversion",
     "module": "ecommerce",
     "ga4_key_event": true,
-    "meta": "Lead",
+    "meta": "Purchase",
     "channels": ["browser", "server"],
     "server_ingress_only": true,
     "provenance": false,
     "flow": "A",
     "legacy_ga4": null,
     "legacy_datalayer": null,
-    "description": "Lead-jellegu rendeles-keres bekuldve (ar valtozhat -> nem purchase)"
+    "description": "Rendeles bekuldve rogzitett kosarertekkel -> Meta Purchase (value-alapu optimalizalas). A fizetes utolag, atutalassal/utanvettel erkezik: a Meta NEM tud esemenyt visszavonni, ezert a be nem fizetett rendelesek bent maradnak. Ha a nemfizetesi arany erdemi lesz, a B-flow (kulon `purchase` a CRM-bol, visszadatumozva) a kiut."
   },
   {
     "name": "add_payment_info",

@@ -1,7 +1,7 @@
 import type { SiteConfig } from './config';
 import type { SkipReason } from './skip-reason';
 import type { HashedUserData } from './hash';
-import { logStructured, EVENT_NAME_MAP } from '../types';
+import { logStructured, EVENT_NAME_MAP, CONTENT_NAME_TAGGED_EVENTS } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import { sanitizeErrorMessage } from './log-sanitize';
 
@@ -101,6 +101,20 @@ export async function sendToMetaCAPI(
   // §3 lead_provenance — Meta custom_data paraméter (nem PII). Modell 2-ben a
   // Meta a fő on-site sink (a GA4/Google Ads on-site láb kikerült).
   if (payload.lead_provenance) custom_data.lead_provenance = payload.lead_provenance;
+
+  // A KANONIKUS belső eseménynév a Meta standard `content_name` paraméterében —
+  // ez teszi szétválaszthatóvá a közös Meta-vödörbe képződő leadgen-konverziókat
+  // (Contact = telefonkattintás VAGY kapcsolati űrlap). Lásd
+  // CONTENT_NAME_TAGGED_EVENTS: az ecommerce-eventek kimaradnak, ott a
+  // `content_name` a termék neve.
+  //
+  // A böngésző-lábnak UGYANEZT kell küldenie (GTM Meta tagek): dedupláláskor a
+  // Meta az ELŐSZÖR beérkezett eseményt tartja meg — ha csak a CAPI-láb vinné a
+  // content_name-et, a (rendszerint gyorsabb) Pixel-esemény nyerne, és a Custom
+  // Conversion szabály nem illeszkedne.
+  if (CONTENT_NAME_TAGGED_EVENTS.has(payload.event_name)) {
+    custom_data.content_name = payload.event_name;
+  }
 
   const event: Record<string, unknown> = {
     event_name: mapEventName(payload.event_name),

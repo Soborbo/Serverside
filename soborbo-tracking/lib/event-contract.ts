@@ -39,6 +39,8 @@ export const SERVER_INGRESS_ONLY_EVENTS: ReadonlySet<string> = new Set([
   'quote_calculator_submitted',
   'callback_request_submitted',
   'contact_form_submitted',
+  'training_signup_submitted',
+  'consultation_request_submitted',
   'order_request_submitted',
   'purchase',
 ]);

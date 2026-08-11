@@ -190,6 +190,26 @@ export const EVENT_NAME_MAP: Record<string, string> = (() => {
   return m;
 })();
 
+// Azok a kanonikus eventek, amelyek a saját nevüket a Meta `content_name`
+// standard paraméterébe is beírják (lib/meta.ts).
+//
+// MIÉRT: több leadgen-konverzió UGYANARRA a Meta standard eseményre képződik —
+// `phone_number_clicked` ÉS `contact_form_submitted` egyaránt `Contact`. Az
+// Events Managerben ezért megkülönböztethetetlenek, holott a szándékuk és az
+// értékük gyökeresen más. A Meta Custom Conversion KIZÁRÓLAG standard
+// paraméterre tud szűrni (egyedi custom_data kulcsra nem), így a `content_name`
+// az egyetlen vivő, amivel a két konverzió szétválasztható — anélkül, hogy a
+// globális Meta-térképet átírnánk (az mind az 5 site-ra hatna).
+//
+// Az ECOMMERCE-eventek SZÁNDÉKOSAN kimaradnak: ott a `content_name` a TERMÉK
+// neve (katalógus/Advantage+ egyeztetés), azt nem írhatjuk felül az esemény
+// nevével.
+export const CONTENT_NAME_TAGGED_EVENTS: ReadonlySet<string> = new Set<string>(
+  CANONICAL_EVENTS.filter((e) => e.module === 'leadgen' && e.kind === 'conversion').map(
+    (e) => e.name
+  )
+);
+
 // Meta CAPI event_id cap (CLAUDE.md #2/#16). A valós id egy 36 karakteres UUID.
 // (A derived ViewContent is a quote event_id-jét használja suffix nélkül — a Meta
 // az (event_name, event_id) PÁRON dedup-ol, így ez a böngésző-pixellel egyezik.)
