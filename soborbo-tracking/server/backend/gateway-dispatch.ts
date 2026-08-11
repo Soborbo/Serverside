@@ -125,6 +125,20 @@ export interface GatewayConversionInput {
   /** GA4 session_id from `_ga_<container>`; without it the MP hit is accepted
    * but lands outside the user's session in the reports. */
   ga4SessionId?: string;
+  /** Meta `_fbp` / `_fbc` browser cookies — see `readMetaCookies`. Only the site
+   * backend sees them (the gateway sits behind a service binding); without fbp
+   * the Meta match quality (EMQ) drops even when the email/phone hash is present. */
+  fbp?: string;
+  fbc?: string;
+  /** Ecommerce catalog params (webshop tenants) — validated gateway-side
+   * (Serverside lib/ecommerce.ts) and forwarded into Meta custom_data. The ids
+   * MUST match the catalog's retailer_id or dynamic remarketing finds nothing. */
+  contents?: Array<{ id: string; quantity?: number; item_price?: number }>;
+  contentIds?: string[];
+  contentType?: 'product' | 'product_group';
+  numItems?: number;
+  /** The shop's own order id — Meta-side purchase dedup + report join key. */
+  orderId?: string;
 }
 
 export interface GatewayResult {
@@ -251,6 +265,39 @@ export function readGa4IdsFromCookie(
   return { clientId, sessionId };
 }
 
+// Shape guards for the Meta browser cookies — the same regexes the browser lib
+// uses, so a truncated/mangled cookie is dropped instead of degrading the event.
+const FBP_RE = /^fb\.\d+\.\d+\.\d+$/;
+const FBC_RE = /^fb\.\d+\.\d+\.[A-Za-z0-9_-]+$/;
+
+/**
+ * Extract the Meta `_fbp` / `_fbc` cookies from the form POST's Cookie header.
+ *
+ * Same rationale as `readGa4IdsFromCookie`: the gateway never sees the browser's
+ * cookies, only the site backend does. `fbp` is the Meta browser id — without it
+ * the CAPI event still lands, but match quality (EMQ) drops even when the
+ * email/phone hash is present. `fbc` is the click id cookie; when absent the
+ * gateway can still derive it from a forwarded `fbclid` attribution param, so
+ * missing `_fbc` here is normal and fine.
+ */
+export function readMetaCookies(
+  cookieHeader: string | null | undefined,
+): { fbp?: string; fbc?: string } {
+  if (!cookieHeader) return {};
+  let fbp: string | undefined;
+  let fbc: string | undefined;
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const k = part.slice(0, eq).trim();
+    if (k !== '_fbp' && k !== '_fbc') continue;
+    const v = part.slice(eq + 1).trim();
+    if (k === '_fbp' && FBP_RE.test(v)) fbp = v;
+    if (k === '_fbc' && FBC_RE.test(v)) fbc = v;
+  }
+  return { fbp, fbc };
+}
+
 /**
  * Returns the Meta test-event code iff this lead is the designated synthetic one.
  * Keyed on the lead's address rather than a global "test mode" flag: a global flag
@@ -306,6 +353,16 @@ export function buildGatewayPayload(input: GatewayConversionInput): Record<strin
     // conversion, because the gateway has no other way to learn them.
     client_id: input.ga4ClientId,
     session_id: input.ga4SessionId,
+    // Meta browser ids (readMetaCookies) — EMQ; the gateway validates shape again.
+    fbp: input.fbp,
+    fbc: input.fbc,
+    // Ecommerce catalog params (webshop tenants) — gateway-validated, drop-not-
+    // reject: a malformed field loses the field, never the purchase.
+    contents: input.contents,
+    content_ids: input.contentIds,
+    content_type: input.contentType,
+    num_items: input.numItems,
+    order_id: input.orderId,
     // NOTE: no `turnstile_token`. There is no browser in this call path; the
     // per-site X-Admin-Token is what authorises us.
   });
