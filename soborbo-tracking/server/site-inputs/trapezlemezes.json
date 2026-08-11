@@ -1,5 +1,5 @@
 {
-  "_comment": "Generator input for the NOT-YET-WIRED trapezlemezes.hu. Fill the REPLACE_ME secret in a COPY outside git, then from the Serverside repo root: node scripts/generate-site.mjs --input /tmp/trapezlemezes.json --out /tmp/trapez-out --new-site",
+  "_comment": "Generator input for trapezlemezes.hu. SITE-SIDE WIRING IS DONE (shop repo branch feat/gateway-onboarding: GATEWAY service binding + gateway-dispatch in the 4 lead endpoints; deploy runbook: shop GATEWAY-ONBOARDING.md). Fill the REPLACE_ME secret in a COPY outside git, then from the Serverside repo root: node scripts/generate-site.mjs --input /tmp/trapezlemezes.json --out /tmp/trapez-out --new-site",
   "_comment_gads": "conversion_actions is EMPTY on purpose. Model 2: the gateway uploads Google Ads only OFFLINE (CRM lifecycle: lead_qualified, booking_confirmed, revenue_confirmed) — those actions do not exist yet in this Ads account and must be created first. The OLD on-site action IDs (quote_calculator_conversion 6926598604, callback_conversion 7176297115, contact_form_submit 7591648016, phone_conversion 6926366138) are browser-owned under Model 2 (AWCT) and must NOT be put here.",
   "site_id": "trapezlemezes",
   "hostnames": ["trapezlemezes.hu", "www.trapezlemezes.hu"],

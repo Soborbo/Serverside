@@ -24,6 +24,7 @@ import { sendToMsAds, type MsAdsPayload, type MsAdsResult } from '../lib/msads';
 import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
+import { parseEcommerce } from '../lib/ecommerce';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTerminalSkip } from '../lib/skip-reason';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS, ERROR_SEVERITY } from '../lib/error-codes';
@@ -267,6 +268,31 @@ export async function handleConversion(
       duration_ms: Date.now() - startedAt
     });
     payload.lead_id = undefined;
+  }
+
+  // GA4 stitching ids (`_ga` / `_ga_<container>` cookie, a site backendje olvassa —
+  // lásd soborbo-tracking readGa4IdsFromCookie). Ugyanaz a drop-nem-reject szabály:
+  // egy elrontott id az attribúciót viszi el, nem a konverziót. A gateway MP-lába
+  // Modell 2-ben nem tüzel (a böngésző birtokolja a GA4-et); ezek a mezők a
+  // ledger/diagnosztika és egy jövőbeli, KÜLÖN engedélyezett szerver-leg számára
+  // utaznak — validáltan, hogy ne szemét kerüljön be.
+  if (payload.client_id !== undefined && !/^\d+\.\d+$/.test(String(payload.client_id))) {
+    logStructured({
+      level: 'warn',
+      message: 'client_id dropped — not a GA4 <random>.<timestamp> pair',
+      hostname,
+      event_name: payload.event_name
+    });
+    payload.client_id = undefined;
+  }
+  if (payload.session_id !== undefined && !/^\d+$/.test(String(payload.session_id))) {
+    logStructured({
+      level: 'warn',
+      message: 'session_id dropped — not a GA4 numeric session id',
+      hostname,
+      event_name: payload.event_name
+    });
+    payload.session_id = undefined;
   }
 
   const { config: siteConfig, unavailable: siteConfigUnavailable } = await lookupSiteConfig(
@@ -724,6 +750,21 @@ function fanOut(
     })
   );
 
+  // Katalógus-paraméterek (webshop tenantok). Parse-olás, NEM elutasítás: egy
+  // formahibás `contents` a mezőt viszi el, nem a purchase-t. A kimaradás
+  // strukturált warn-log — enélkül a hiányzó katalógus-adat pontosan az a néma
+  // hiba lenne, ami ellen a modul készült.
+  const { params: ecommerce, dropped: ecommerceDropped } = parseEcommerce(payload);
+  if (ecommerceDropped.length > 0) {
+    logStructured({
+      level: 'warn',
+      message: `Ecommerce catalog fields dropped — malformed: ${ecommerceDropped.join(', ')}; event proceeds without product attribution`,
+      hostname,
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name
+    });
+  }
+
   const metaPayload: MetaCAPIPayload = {
     event_name: payload.event_name,
     event_id: payload.event_id,
@@ -732,6 +773,7 @@ function fanOut(
     currency: payload.currency,
     source: payload.source,
     event_source_url: payload.event_source_url,
+    ecommerce: Object.keys(ecommerce).length > 0 ? ecommerce : undefined,
     fbp: payload.fbp,
     fbc,
     client_ip: clientIp,
