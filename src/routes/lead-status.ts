@@ -70,6 +70,13 @@ interface LeadStatusBody {
   // 2026-07-17-es consent-audit szerint a site-ok soha nem töltik a CookieYes
   // ad-consentből, így önmagában minden uploadot némán blokkolna.
   ad_allowed?: boolean;
+  // Google click ID-k a lead capture-ből (site URL → Benolám orders → outbox).
+  // Jelenlétükkor a Data Manager match determinisztikus (pontosan egy megy fel,
+  // gclid > gbraid > wbraid prioritással — datamanager.ts), a hash-elt PII-match
+  // MELLETT, nem helyette.
+  gclid?: string;
+  gbraid?: string;
+  wbraid?: string;
 }
 
 export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null {
@@ -113,6 +120,12 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
     return null;
   }
 
+  // Click ID: end-user URL-ből örökölt érték (a CRM csak továbbítja). A hibás
+  // formájút ELDOBJUK, nem 400-olunk — egy tamperelt URL-paraméter nem égetheti
+  // el a lifecycle-konverziót; a PII-match click ID nélkül is él.
+  const clickId = (v: unknown): string | undefined =>
+    typeof v === 'string' && /^[A-Za-z0-9._-]{1,512}$/.test(v) ? v : undefined;
+
   return {
     lead_id: p.lead_id as string,
     status: p.status,
@@ -124,7 +137,10 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
     currency: typeof p.currency === 'string' ? p.currency.toUpperCase() : undefined,
     user_data: p.user_data as PlainUserData | undefined,
     user_data_hashed: p.user_data_hashed as Record<string, unknown> | undefined,
-    ad_allowed: p.ad_allowed as boolean | undefined
+    ad_allowed: p.ad_allowed as boolean | undefined,
+    gclid: clickId(p.gclid),
+    gbraid: clickId(p.gbraid),
+    wbraid: clickId(p.wbraid)
   };
 }
 
@@ -350,7 +366,10 @@ export async function handleLeadStatus(
       // postal_code/country (plain) are carried into the address identifier.
       postal_code: body.user_data?.postal_code ?? undefined,
       country: body.user_data?.country ?? undefined,
-      consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined
+      consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined,
+      gclid: body.gclid,
+      gbraid: body.gbraid,
+      wbraid: body.wbraid
     };
     const result = await sendToDataManager(siteConfig, env, gadsPayload, hashed);
     // `skipped` (nincs conversion action / nincs identifier) NEM upload — ha
@@ -510,7 +529,10 @@ export async function handleLeadStatus(
           currency: body.currency ?? siteConfig.currency,
           postal_code: body.user_data?.postal_code ?? undefined,
           country: body.user_data?.country ?? undefined,
-          consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined
+          consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined,
+          gclid: body.gclid,
+          gbraid: body.gbraid,
+          wbraid: body.wbraid
         } as unknown as Record<string, unknown>,
         hashed_user_data: blockedHashed as unknown as Record<string, unknown>,
         failure_reason: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
