@@ -4,7 +4,7 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import type { ConsentState } from './consent';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
-import { sanitizeErrorMessage } from './log-sanitize';
+import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
 
 /**
  * D1 ledger — append-only bizonyíték a beérkező konverziókról, a vendor-
@@ -42,6 +42,13 @@ interface DeliveryRecordBase {
   platform: Platform;
   error_code?: string;
   vendor_message?: string;
+  /**
+   * Strukturált vendor-hibarészlet (Data Manager `error.details[]`,
+   * benne a `fieldViolations` tömbbel). Külön oszlop, hogy a rövid
+   * `vendor_message` olvasható maradjon, a diagnózishoz kellő rész meg
+   * ne csonkolódjon le. Sanitizált — PII nem kerülhet bele.
+   */
+  error_detail?: string;
 }
 
 /**
@@ -64,6 +71,12 @@ export interface VendorResult {
   error_code?: TrackingErrorCode;
   error?: string;
   partial_failure_error?: string;
+  /**
+   * A vendor gépi olvasású hibarészlete (pl. Data Manager `error.details[]`
+   * JSON-ként). A hívó adja meg; a ledger sanitizálja és a `error_detail`
+   * oszlopba írja. Az `error` marad a rövid, ember-olvasható összefoglaló.
+   */
+  error_detail?: string;
   // true → a hívás szándékosan kimaradt (nem konfigurált platform / scaffold-only
   // transport). 'skipped'-ként kerül a ledgerbe, hogy ne torzítsa a reconciliation
   // coverage-számítását valódi kézbesítésként.
@@ -146,7 +159,10 @@ export function normalizeDelivery(
     status: 'rejected',
     http_status: v.status,
     error_code: v.error_code,
-    vendor_message: sanitizeErrorMessage(v.partial_failure_error || v.error)
+    vendor_message: sanitizeErrorMessage(v.partial_failure_error || v.error),
+    error_detail: v.error_detail
+      ? sanitizeErrorMessage(v.error_detail, VENDOR_DETAIL_MAX_LEN)
+      : undefined
   };
 }
 
@@ -431,7 +447,8 @@ function enforceVendorStatus(r: DeliveryRecord, siteId: string): DeliveryRecord 
     platform: r.platform,
     status: 'skipped',
     error_code: TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS,
-    vendor_message: r.vendor_message
+    vendor_message: r.vendor_message,
+    error_detail: r.error_detail
   };
 }
 
@@ -443,8 +460,8 @@ export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<vo
   try {
     const stmt = env.LEDGER.prepare(
       `INSERT INTO deliveries
-         (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, attempt, origin, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, error_detail, attempt, origin, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const batch = records.map((r) =>
       stmt.bind(
@@ -458,6 +475,7 @@ export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<vo
         r.http_status ?? null,
         r.error_code ?? null,
         r.vendor_message ?? null,
+        r.error_detail ?? null,
         0,
         origin,
         now

@@ -1,0 +1,15 @@
+-- Strukturált vendor-hibarészlet külön oszlopban.
+--
+-- MIÉRT: a `vendor_message` a sanitizer 200 karakteres vágása miatt pont a
+-- hasznos rész előtt ért véget. A Data Manager a generikus
+-- "There was a problem with the request." után az `error.details[]` tömbben
+-- adja meg a `fieldViolations`-t — vagyis MELYIK mező érvénytelen. 10 db
+-- trapezlemezes `booking_confirmed` INVALID_ARGUMENT volt emiatt
+-- diagnosztizálhatatlan (2026-08-11).
+--
+-- A `vendor_message` szemantikája NEM változik (rövid, ember-olvasható);
+-- az `error_detail` a gépi részlet, sanitizálva (PII-maszkolás fut rajta).
+--
+-- Additív és visszafelé kompatibilis: a régi kód figyelmen kívül hagyja.
+-- DEPLOY-SORREND: előbb ez a migráció, UTÁNA a Worker.
+ALTER TABLE deliveries ADD COLUMN error_detail TEXT;
