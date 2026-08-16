@@ -3,7 +3,6 @@ import { parseConsent, resolveConsent } from '../src/lib/consent';
 import { hashUserData, sha256Hex } from '../src/lib/hash';
 import { sendToMetaCAPI } from '../src/lib/meta';
 import { sendToGA4MP } from '../src/lib/ga4';
-import { sendToGoogleAdsCAPI } from '../src/lib/gads';
 import type { SiteConfig } from '../src/lib/config';
 import type { Env } from '../src/env';
 
@@ -45,7 +44,6 @@ describe('resolveConsent', () => {
   it('absent consent + require_consent=false → ad allowed (backward-compat)', () => {
     const d = resolveConsent(undefined, false);
     expect(d.adAllowed).toBe(true);
-    expect(d.analyticsAllowed).toBe(true);
   });
 
   it('absent consent + require_consent=true → ad blocked (fail-closed)', () => {
@@ -184,95 +182,7 @@ describe('sendToGA4MP — session_id + consent', () => {
   });
 });
 
-describe('sendToGoogleAdsCAPI — consent', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-  const cfg: SiteConfig = {
-    ...baseSiteConfig,
-    gads: {
-      customer_id: '1234567890',
-      login_customer_id: null,
-      conversion_actions: { callback_conversion: '99887766' }
-    }
-  };
-  // Fake KV: cached access token present → no refresh fetch needed.
-  const env: Env = {
-    GADS_DEVELOPER_TOKEN: 'devtoken',
-    GADS_OAUTH_CLIENT_ID: 'client',
-    GADS_OAUTH_CLIENT_SECRET: 'secret',
-    OAUTH_TOKENS: {
-      get: vi.fn(async (key: string) =>
-        key.endsWith(':access_token') ? 'cached-access-token' : null
-      )
-    }
-  } as unknown as Env;
-
-  beforeEach(() => {
-    fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ results: [{}] }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
-  it('forwards only GRANTED/DENIED; omits UNSPECIFIED (no invalid UNKNOWN enum)', async () => {
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      {
-        event_name: 'callback_conversion',
-        event_id: 'e1',
-        event_time: Math.floor(Date.now() / 1000),
-        consent: { ad_user_data: 'GRANTED', ad_personalization: 'UNSPECIFIED' }
-      },
-      {}
-    );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    // ad_personalization=UNSPECIFIED → kihagyva (UNKNOWN-t a Google elutasítaná).
-    expect(body.conversions[0].consent).toEqual({ adUserData: 'GRANTED' });
-  });
-
-  it('maps DENIED through and omits consent entirely when no GRANTED/DENIED present', async () => {
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      {
-        event_name: 'callback_conversion',
-        event_id: 'e1b',
-        event_time: Math.floor(Date.now() / 1000),
-        consent: { ad_user_data: 'GRANTED', ad_personalization: 'DENIED' }
-      },
-      {}
-    );
-    let body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0].consent).toEqual({ adUserData: 'GRANTED', adPersonalization: 'DENIED' });
-
-    fetchMock.mockClear();
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      {
-        event_name: 'callback_conversion',
-        event_id: 'e1c',
-        event_time: Math.floor(Date.now() / 1000),
-        consent: { analytics_storage: 'DENIED' }
-      },
-      {}
-    );
-    body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0]).not.toHaveProperty('consent');
-  });
-
-  it('omits consent when not provided', async () => {
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      { event_name: 'callback_conversion', event_id: 'e2', event_time: Math.floor(Date.now() / 1000) },
-      {}
-    );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0]).not.toHaveProperty('consent');
-  });
-});
+// A `sendToGoogleAdsCAPI — consent` blokk TÖRÖLVE (2026-08-16): a legacy
+// uploadClickConversions transport megszűnt (lásd lib/gads.ts). Az ekvivalens
+// fedezet a Data Manager úton él: tests/datamanager.test.ts →
+// „maps consent signals to CONSENT_GRANTED / CONSENT_DENIED".

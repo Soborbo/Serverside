@@ -239,6 +239,63 @@ describe('sendToDataManager — request shape', () => {
   });
 });
 
+// Átköltöztetve a tests/attribution.test.ts-ből (2026-08-16), amikor a legacy
+// uploadClickConversions transport törlődött: a click-ID prioritás üzleti szabálya
+// (pontosan EGY azonosító megy fel, gclid > gbraid > wbraid) a Data Manager úton
+// változatlanul érvényes, tehát a fedezetének is ide kellett követnie.
+describe('sendToDataManager — click ID priority', () => {
+  it('gclid nyer a gbraid/wbraid felett', async () => {
+    let captured: any = null;
+    vi.stubGlobal('fetch', async (_u: string, init: any) => {
+      captured = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ requestId: 'r' }) } as any;
+    });
+    const result = await sendToDataManager(
+      baseSiteConfig,
+      envWithCachedToken(),
+      { ...basePayload, gclid: 'G-abc', gbraid: 'GB-xyz', wbraid: 'WB-1' },
+      { em: 'EMHASH' }
+    );
+    expect(result.success).toBe(true);
+    expect(captured.events[0].adIdentifiers).toEqual({ gclid: 'G-abc' });
+  });
+
+  it('gclid nélkül a gbraid nyer a wbraid felett', async () => {
+    let captured: any = null;
+    vi.stubGlobal('fetch', async (_u: string, init: any) => {
+      captured = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ requestId: 'r' }) } as any;
+    });
+    await sendToDataManager(
+      baseSiteConfig,
+      envWithCachedToken(),
+      { ...basePayload, gbraid: 'GB-xyz', wbraid: 'WB-1' },
+      { em: 'EMHASH' }
+    );
+    expect(captured.events[0].adIdentifiers).toEqual({ gbraid: 'GB-xyz' });
+  });
+
+  it('csak wbraid → wbraid megy fel, a hash-elt PII-match MELLETTE megmarad', async () => {
+    let captured: any = null;
+    vi.stubGlobal('fetch', async (_u: string, init: any) => {
+      captured = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ requestId: 'r' }) } as any;
+    });
+    await sendToDataManager(
+      baseSiteConfig,
+      envWithCachedToken(),
+      { ...basePayload, wbraid: 'WB-1' },
+      { em: 'EMHASH' }
+    );
+    expect(captured.events[0].adIdentifiers).toEqual({ wbraid: 'WB-1' });
+    // A legacy uploadClickConversions VALUE_MUST_BE_UNSET korlátja (braid mellett
+    // TILOS userIdentifiers) a Data Managerre NEM vonatkozik — a PII-match marad.
+    expect(captured.events[0].userData.userIdentifiers).toContainEqual({
+      emailAddress: 'EMHASH'
+    });
+  });
+});
+
 describe('sendToDataManager — error handling', () => {
   it('classifies 401 as DATAMANAGER_AUTH_REJECTED', async () => {
     vi.stubGlobal('fetch', async () => ({
@@ -264,5 +321,34 @@ describe('sendToDataManager — error handling', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error_code).toBe('TRK-840-006');
+  });
+});
+
+/**
+ * 2026-08-16 audit, D-pont. A KV JSON vakon SiteConfig-ra castolódik, tehát egy
+ * kézzel írt vagy migrációs config `gads` blokk NÉLKÜL is beérkezhet. A típus
+ * korábban KÖTELEZŐNEK deklarálta a blokkot (hazudott), és ez az út guard nélkül
+ * olvasta: egy ilyen confignál TypeError → a lead-status 500-at adott volna a
+ * CRM-nek, determinisztikusan, amíg a config olyan marad. A `gads` mostantól
+ * opcionális a típusban is, és minden hívási pont guardol.
+ */
+describe('sendToDataManager — hiányzó gads blokk (nem dobhat)', () => {
+  it('gads blokk nélküli config → tiszta skip, NINCS hívás és NINCS exception', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const cfg = {
+      site_id: 'no-gads',
+      country_code: 'HU',
+      currency: 'HUF',
+      meta: { pixel_id: '1', access_token: 'T' }
+    } as unknown as SiteConfig;
+
+    const result = await sendToDataManager(cfg, envWithCachedToken(), basePayload, {
+      em: 'EMHASH'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

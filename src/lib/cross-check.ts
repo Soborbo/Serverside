@@ -184,7 +184,7 @@ async function fetchGadsOnsiteCounts(
   date: string,
   actionNameToEvent: Record<string, string>
 ): Promise<Record<string, number> | null> {
-  const customerId = siteConfig.gads.customer_id;
+  const customerId = siteConfig.gads?.customer_id;
   if (!customerId) return null;
   if (!env.GADS_DEVELOPER_TOKEN) {
     logStructured({
@@ -205,7 +205,7 @@ async function fetchGadsOnsiteCounts(
     'developer-token': env.GADS_DEVELOPER_TOKEN,
     'Content-Type': 'application/json'
   };
-  if (siteConfig.gads.login_customer_id) {
+  if (siteConfig.gads?.login_customer_id) {
     headers['login-customer-id'] = siteConfig.gads.login_customer_id;
   }
 
@@ -299,7 +299,7 @@ async function fetchGa4Counts(
   siteConfig: SiteConfig,
   date: string
 ): Promise<Record<string, number> | null> {
-  const customerId = siteConfig.gads.customer_id;
+  const customerId = siteConfig.gads?.customer_id;
   const propertyId = siteConfig.recon?.ga4_property_id;
   if (!customerId || !propertyId) return null;
 
@@ -410,42 +410,91 @@ async function fetchLedgerCrossCounts(
   }
 }
 
+/** Egy ki nem futott leg és az oka. */
+export interface CrossCheckLegSkip {
+  site_id: string;
+  platform: CrossCheckPlatform;
+  /**
+   * `not_configured` = a leg bemenete hiányzik (ga4_property_id /
+   *   gads_onsite_actions / gads.customer_id) — soha nem is indult el.
+   * `query_failed`   = a hívás elindult, de hibára futott (403 scope, 5xx, timeout).
+   */
+  reason: 'not_configured' | 'query_failed';
+}
+
+/**
+ * A cross-check TELJES kimenete — nem csak a findingok.
+ *
+ * MIÉRT NEM elég a `CrossCheckFinding[]`: az üres tömb két, gyökeresen eltérő
+ * dolgot jelent — „megnéztük, és rendben van" VAGY „meg sem néztük". Modell 2-ben
+ * ez a modul az EGYETLEN monitora a böngésző/GTM-ágnak, tehát a néma nem-futás
+ * pontosan az a vakfolt, ami ellen a modul készült. A 2026-08-16-i audit szerint
+ * a `recon` blokk EGYETLEN élő site-on sem volt beállítva: a check a bevezetése
+ * óta minden nap üres listát adott vissza, a napi riport pedig ezt
+ * megkülönböztethetetlenül „nincs drift"-ként jelentette. Ezekből a mezőkből tud
+ * a hívó különbséget tenni, és hangosan jelezni, ha a monitor maga áll.
+ */
+export interface CrossCheckOutcome {
+  findings: CrossCheckFinding[];
+  /** Hány monitorozott site-config érkezett be összesen. */
+  totalSites: number;
+  /** Ebből hánynak van `recon` blokkja. 0 → a check KONFIGURÁLATLAN, nem „tiszta". */
+  configuredSites: number;
+  /** Ki nem futott legek (config-hiány vagy API-hiba). */
+  skippedLegs: CrossCheckLegSkip[];
+  /** true → a ledger-lekérdezés bukott: SEMMILYEN összevetés nem történt. */
+  ledgerUnavailable: boolean;
+}
+
 /**
  * A teljes cross-platform check egy adott UTC-napra (YYYY-MM-DD). Site-onként
  * fut a `recon` configblokk szerint; minden fetch-hiba logolt skip (a többi
- * site/leg attól még lefut). LEDGER vagy recon-config nélkül üres lista.
+ * site/leg attól még lefut) — de a kimaradás mostantól a VISSZATÉRÉSI ÉRTÉKBEN is
+ * megjelenik (lásd CrossCheckOutcome), nem csak a Worker-logban.
  */
 export async function runCrossPlatformCheck(
   env: Env,
   siteConfigs: SiteConfig[],
   date: string,
   thresholds: CrossCheckThresholds = DEFAULT_CROSS_CHECK_THRESHOLDS
-): Promise<CrossCheckFinding[]> {
+): Promise<CrossCheckOutcome> {
   const reconSites = siteConfigs.filter((c) => c.recon);
-  if (reconSites.length === 0) return [];
+  const base: CrossCheckOutcome = {
+    findings: [],
+    totalSites: siteConfigs.length,
+    configuredSites: reconSites.length,
+    skippedLegs: [],
+    ledgerUnavailable: false
+  };
+  if (reconSites.length === 0) return base;
 
   const dayStartIso = `${date}T00:00:00.000Z`;
   const dayEndIso = new Date(Date.parse(dayStartIso) + 24 * 60 * 60 * 1000).toISOString();
   const ledger = await fetchLedgerCrossCounts(env, dayStartIso, dayEndIso);
-  if (ledger === null) return [];
+  if (ledger === null) return { ...base, ledgerUnavailable: true };
 
   const findings: CrossCheckFinding[] = [];
+  const skippedLegs: CrossCheckLegSkip[] = [];
   for (const cfg of reconSites) {
     const recon = cfg.recon!;
     const ledgerByEvent = ledger.get(cfg.site_id) ?? {};
 
     const onsiteActions = recon.gads_onsite_actions ?? {};
     const gadsEvents = Object.keys(onsiteActions);
-    if (cfg.gads.customer_id && gadsEvents.length > 0) {
+    if (cfg.gads?.customer_id && gadsEvents.length > 0) {
       const counts = await fetchGadsOnsiteCounts(env, cfg, date, invertOnsiteActions(onsiteActions));
       if (counts !== null) {
         findings.push(
           ...compareCrossCounts(cfg.site_id, 'gads', gadsEvents, ledgerByEvent, counts, thresholds)
         );
+      } else {
+        skippedLegs.push({ site_id: cfg.site_id, platform: 'gads', reason: 'query_failed' });
       }
+    } else {
+      skippedLegs.push({ site_id: cfg.site_id, platform: 'gads', reason: 'not_configured' });
     }
 
-    if (cfg.gads.customer_id && recon.ga4_property_id) {
+    if (cfg.gads?.customer_id && recon.ga4_property_id) {
       const counts = await fetchGa4Counts(env, cfg, date);
       if (counts !== null) {
         findings.push(
@@ -458,8 +507,12 @@ export async function runCrossPlatformCheck(
             thresholds
           )
         );
+      } else {
+        skippedLegs.push({ site_id: cfg.site_id, platform: 'ga4', reason: 'query_failed' });
       }
+    } else {
+      skippedLegs.push({ site_id: cfg.site_id, platform: 'ga4', reason: 'not_configured' });
     }
   }
-  return findings;
+  return { ...base, findings, skippedLegs };
 }

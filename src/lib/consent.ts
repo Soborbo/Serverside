@@ -11,8 +11,13 @@
  *    EGYÁLTALÁN ne tüzelj CAPI-eventet (2026-02 drezdai ítélet: 1500 €/fő).
  *    A Google Ads ebben a kódban kizárólag Enhanced Conversions for Leads-szel
  *    megy (gclid nélkül) → ha PII-t nem küldhetünk, nincs azonosító → skip.
- *  - GA4: MINDIG elküldjük a consent-objektummal együtt; ha analytics_storage
- *    DENIED, a Google cookieless modellezést végez (nem mi gate-eljük ki).
+ *  - GA4: a gateway on-site GA4-et NEM küld (Modell 2, 2026-06-28 óta — a
+ *    böngésző/GTM birtokolja, és a GA4 MP nem dedup-ol event_id-re, tehát a
+ *    szerver-leg dupla konverziót adna). Ezért a consent-feloldásnak NINCS GA4-ága
+ *    ezen az úton. A modul régi doksija itt még azt írta, hogy „GA4-et MINDIG
+ *    elküldjük" — az a Modell 2 előtti állapot volt, és 2026-08-16-ig bent maradt
+ *    félrevezető szövegként. (A GA4 Consent Mode-továbbítás logikája a lib/ga4.ts-ben
+ *    ÉL és helyes; azt a modult ma a debug-endpoint és a legacy DLQ-ürítés hívja.)
  *
  * Backward-compat: ha a payloadban nincs `consent` ÉS a SiteConfig nem írja elő
  * (`require_consent !== true`), a régi viselkedést tartjuk → ad-platform engedett.
@@ -54,12 +59,14 @@ export function parseConsent(raw: unknown): ConsentState | undefined {
 }
 
 export interface ConsentDecision {
-  /** Mehet-e ad-platform konverzió (Meta CAPI + Google Ads). */
+  /** Mehet-e ad-platform konverzió (Meta CAPI + a click-ID forwarderek). */
   adAllowed: boolean;
-  /** Mehet-e GA4 esemény (gyakorlatilag mindig igen, consent-jelekkel). */
-  analyticsAllowed: boolean;
   /** A normalizált consent-állapot a platformok felé továbbításhoz. */
   consent?: ConsentState;
+  // Az `analyticsAllowed` mező TÖRÖLVE (2026-08-16 audit): konstans `true` volt, és
+  // a Modell 2 (2026-06-28) óta SEHOL nem olvasta senki — a gateway nem küld on-site
+  // GA4-et, tehát nem volt mit kapuznia. Egy örökre igaz, sosem olvasott „engedély"
+  // mező azt sugallja, hogy van egy analytics-kapu, ami valójában nem létezik.
 }
 
 export function resolveConsent(
@@ -75,8 +82,8 @@ export function resolveConsent(
   //   ad_user_data === 'DENIED' tilt; minden más enged.
   if (requireConsent) {
     const adAllowed = consent?.ad_user_data === 'GRANTED';
-    return { adAllowed, analyticsAllowed: true, consent };
+    return { adAllowed, consent };
   }
   const adAllowed = consent?.ad_user_data !== 'DENIED';
-  return { adAllowed, analyticsAllowed: true, consent };
+  return { adAllowed, consent };
 }

@@ -300,6 +300,12 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Description**: A `user_data_hashed` egy mezője nem 64-hosszú lowercase hex SHA-256 (F3-A/2). A gateway NEM engedi át némán — egy rossz hash némán rontaná a Meta match rate-et.
 **Action**: A CRM-nek UGYANAZT a normalizálót kell futtatnia hash ELŐTT, mint a gateway (`lib/hash.ts`: email lowercase/trim, telefon E.164, város ékezet-tartó, irsz. uppercase-no-space, ország ISO-2 lowercase), majd lowercase hex SHA-256-ot küldeni. A hibaüzenet megnevezi a hibás mezőt.
 
+## TRK-400-021 — Request body read failed (stream aborted)
+
+**Severity**: Info (client 400)
+**Description**: A kérés-törzs olvasása MENET KÖZBEN szakadt meg (kliens bontott, hálózati hiba) — ez NEM a 16 KiB-os méret-korlát. Korábban a `readBoundedBody` mindkét esetre `null`-t adott, így a megszakadt olvasás `TRK-400-015` (BODY_TOO_LARGE, 413) néven logolódott: a hibakód azt állította, hogy a kliens túl nagy payloadot küld, holott a kapcsolat szakadt meg. Egy hálózati romlás így „óriás body"-hullámnak látszott.
+**Action**: Szórványos előfordulás normális (mobilhálózat, elnavigálás beacon közben). TARTÓS/tömeges megjelenés: a site oldali dispatch (sendBeacon vs fetch keepalive), proxy/CDN a hívó és a gateway között, vagy a hívó backend timeoutja. Ha ezzel EGYÜTT `TRK-400-015` is emelkedik, akkor van tényleges méret-probléma is — a kettő most már szétválasztható.
+
 ## TRK-900-007 — Retry record could not be stored anywhere
 
 **Severity**: Critical
@@ -323,6 +329,12 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Severity**: Warning
 **Description**: A cross-check egyik lekérdezése (D1 / Google Ads GAQL / GA4 Data API) elbukott — az adott láb aznap kimaradt, a többi lefutott. GA4 403 + "analytics.readonly scope" hint = a refresh token még a scope-bővítés ELŐTTI consenttel készült.
 **Action**: GA4 403-nál: re-consent (`/api/event/oauth-init?customer_id=...` a site gads customer-jével — az új consent a datamanager + adwords + analytics.readonly hármat adja). Google Ads hibánál: developer token / login-customer-id / OAuth token státusz. D1-hibánál: mint TRK-950-003.
+
+## TRK-950-011 — Cross-platform reconciliation NOT RUNNING
+
+**Severity**: Warning
+**Description**: Maga a monitor áll. Nem drift, hanem annak a hiánya, hogy bármit is megnéztünk volna: vagy EGYETLEN site-on sincs `recon` blokk, vagy minden leg kimaradt (hiányzó `ga4_property_id` / `gads_onsite_actions`, 403-as scope), vagy a ledger-lekérdezés bukott. Modell 2-ben ez a check az EGYETLEN monitora a böngésző/GTM-ágnak, ezért az álló monitor nem lehet néma. A 2026-08-16-i audit szerint a check a bevezetése óta EGYETLEN napon sem futott le — üres finding-listát adott, amit a napi riport megkülönböztethetetlenül „nincs drift"-ként jelentett.
+**Action**: 1) A napi recon-email megmondja, hány site-on van `recon` blokk (`X / Y`). 2) Vedd fel a SITE_CONFIG KV-be: `recon.ga4_property_id` = a GA4 **numerikus** property ID (NEM a `G-XXX` measurement id; GA4 → Admin → Property Settings), és/vagy `recon.gads_onsite_actions` = `{ "<kanonikus event_name>": "<on-site Google Ads conversion action NEVE>" }` (a fiókban látható név, pl. „Callback requested" — NEM a `gads.conversion_actions` offline ID-térképe). 3) Ha ezután a GA4-leg `query_failed`-del skippel 403-mal: re-consent (`/api/event/oauth-init?customer_id=...`) az `analytics.readonly` scope-hoz, és ellenőrizd, hogy az adott Google-fiók LÁTJA-e a property-t. 4) A leg-szintű kimaradás a logban `skipped_legs`-ként, site/platform/ok bontásban látszik.
 
 ## TRK-950-007 — Meta EMQ below threshold
 

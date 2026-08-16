@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS deliveries (
   lead_id        TEXT,
   site_id        TEXT NOT NULL,
   event_name     TEXT NOT NULL,
-  platform       TEXT NOT NULL,             -- meta | ga4 | gads
+  platform       TEXT NOT NULL,             -- meta | gads | tiktok | linkedin | msads | ga4
   status         TEXT NOT NULL,             -- accepted | rejected | skipped
   http_status    INTEGER,
   error_code     TEXT,                      -- TRK-... kód, ha rejected

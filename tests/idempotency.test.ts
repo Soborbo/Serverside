@@ -4,10 +4,15 @@ import { checkIdempotency, markDispatched, isOfflineUploadBlocked } from '../src
 // Fake D1: prepare().bind().first() returns a queued row (or throws), .run() no-ops.
 function envWith(firstResult: unknown, opts: { throwOnFirst?: boolean } = {}): any {
   const runCalls: string[] = [];
+  // A prepare()-hívások SQL-jét is rögzítjük: a `.first()`-tel futó lekérdezések
+  // (checkIdempotency) különben nem lennének megfigyelhetők a tesztből.
+  const prepareCalls: string[] = [];
   return {
     _runCalls: runCalls,
+    _prepareCalls: prepareCalls,
     LEDGER: {
       prepare(sql: string) {
+        prepareCalls.push(sql);
         return {
           bind() {
             return {
@@ -67,45 +72,40 @@ describe('checkIdempotency — dispatched-flag gate (conversion-loss fix)', () =
   });
 });
 
-describe('checkIdempotency — GA4 suppress on in-flight duplicate (audit #2)', () => {
-  it('in-flight duplicate (seen>1, dispatched=0, fresh first_seen) → suppressGa4', async () => {
+// A `suppressGa4` mező TÖRÖLVE (2026-08-16 audit): a GA4-leg 2026-06-28 óta nincs a
+// fan-outban (Modell 2), tehát a flaget senki nem olvasta. A blokk eredeti ÉRTÉKES
+// állítása viszont megmarad, és itt is marad tesztelve: a NEM-kézbesített (dispatched=0)
+// duplikátumot MINDIG újra kell dispatch-elni, korától függetlenül — a vendorok
+// event_id-vel dedup-olnak, tehát a rosszabbik kimenet egy dupla HÍVÁS, nem egy
+// elvesztett konverzió.
+describe('checkIdempotency — a nem-kézbesített duplikátum újra dispatch-el', () => {
+  it('friss, még in-flight duplikátum (seen>1, dispatched=0) → dispatch', async () => {
     const env = envWith({
       seen_count: 2,
       dispatched: 0,
-      do_not_replay: 0,
-      first_seen_at: new Date().toISOString()
+      do_not_replay: 0
     });
     const d = await checkIdempotency(env, 's', 'callback_conversion', 'evt');
-    expect(d.shouldDispatch).toBe(true); // Meta/GAds still re-dispatch (vendor dedup)
-    expect(d.suppressGa4).toBe(true); // GA4 NOT (no event_id dedup → would double-count)
+    expect(d.shouldDispatch).toBe(true); // vendor-dedup véd a duplikáció ellen
+    expect(d.seenCount).toBe(2);
   });
 
-  it('first sight → never suppress GA4', async () => {
-    const env = envWith({
-      seen_count: 1,
-      dispatched: 0,
-      do_not_replay: 0,
-      first_seen_at: new Date().toISOString()
-    });
-    const d = await checkIdempotency(env, 's', 'callback_conversion', 'evt');
-    expect(d.suppressGa4).toBe(false);
-  });
-
-  it('stale duplicate (first_seen > 60s ago → likely crashed, not in-flight) → re-send GA4', async () => {
+  it('régi, valószínűleg crash-elt duplikátum (dispatched=0) → szintén dispatch', async () => {
     const env = envWith({
       seen_count: 2,
       dispatched: 0,
-      do_not_replay: 0,
-      first_seen_at: new Date(Date.now() - 120_000).toISOString()
+      do_not_replay: 0
     });
     const d = await checkIdempotency(env, 's', 'callback_conversion', 'evt');
-    expect(d.shouldDispatch).toBe(true);
-    expect(d.suppressGa4).toBe(false); // crash recovery: GA4 hit was likely lost, resend
+    expect(d.shouldDispatch).toBe(true); // crash-recovery: az event sosem ment ki
   });
 
-  it('no LEDGER binding → suppressGa4 false (fail-open)', async () => {
-    const d = await checkIdempotency({} as any, 's', 'e', 'evt');
-    expect(d.suppressGa4).toBe(false);
+  it('a lekérdezés NEM kéri le a first_seen_at-ot (a suppress-logika megszűnt)', async () => {
+    const env = envWith({ seen_count: 1, dispatched: 0, do_not_replay: 0 });
+    await checkIdempotency(env, 's', 'callback_conversion', 'evt');
+    const sql = env._prepareCalls.join('\n');
+    expect(sql).toMatch(/RETURNING seen_count, dispatched, do_not_replay/);
+    expect(sql).not.toMatch(/first_seen_at\s*$/m);
   });
 });
 

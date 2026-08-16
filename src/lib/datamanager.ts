@@ -73,7 +73,8 @@ export async function sendToDataManager(
   // Skip-ágak: `skipped: true` KÖTELEZŐ. Enélkül a hívó (lead-status) sikeres
   // uploadnak könyvelné (`uploaded_to_gads: true`) azt, ami el sem indult, és a
   // ledger 'accepted'-et írna vendor HTTP-státusz nélkül.
-  if (!siteConfig.gads.customer_id) {
+  const customerId = siteConfig.gads?.customer_id;
+  if (!customerId) {
     return {
       success: true,
       skipped: true,
@@ -81,7 +82,7 @@ export async function sendToDataManager(
     };
   }
 
-  const conversionActionId = siteConfig.gads.conversion_actions?.[payload.event_name];
+  const conversionActionId = siteConfig.gads?.conversion_actions?.[payload.event_name];
   if (!conversionActionId) {
     logStructured({
       level: 'warn',
@@ -97,7 +98,7 @@ export async function sendToDataManager(
     };
   }
 
-  const accessToken = await getAccessToken(siteConfig.gads.customer_id, env);
+  const accessToken = await getAccessToken(customerId, env);
   if (!accessToken) {
     return {
       success: false,
@@ -182,11 +183,11 @@ export async function sendToDataManager(
   const destination: Record<string, unknown> = {
     operatingAccount: {
       accountType: DATAMANAGER_ACCOUNT_TYPE,
-      accountId: siteConfig.gads.customer_id
+      accountId: customerId
     },
     productDestinationId: conversionActionId
   };
-  if (siteConfig.gads.login_customer_id) {
+  if (siteConfig.gads?.login_customer_id) {
     destination.loginAccount = {
       accountType: DATAMANAGER_ACCOUNT_TYPE,
       accountId: siteConfig.gads.login_customer_id

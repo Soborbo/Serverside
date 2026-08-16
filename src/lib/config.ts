@@ -29,7 +29,15 @@ export interface SiteConfig {
     measurement_id: string;
     api_secret: string;
   };
-  gads: {
+  // OPCIONÁLIS — mint a `meta` és a `ga4`. A KV JSON vakon SiteConfig-ra castolódik
+  // (lookupSiteConfig), tehát a típus nem garancia: egy kézzel írt vagy migrációs
+  // config `gads` blokk NÉLKÜL is beérkezhet. Amíg ez kötelezőnek volt deklarálva,
+  // a típus HAZUDOTT, és a hívók egy része (lead-status pénz-útja, datamanager,
+  // cross-check) guard nélkül olvasta — egy ilyen config ott TypeError → 500-at
+  // adott volna a CRM-nek, determinisztikusan, amíg a config olyan marad. Az
+  // admin health-check már optional chaininggel védte magát (ott ki is derült a
+  // probléma); most a TÍPUS kényszeríti ki ugyanezt minden hívási ponton.
+  gads?: {
     customer_id: string | null;
     login_customer_id: string | null;
     conversion_actions?: Record<string, string>;

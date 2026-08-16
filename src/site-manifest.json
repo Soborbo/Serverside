@@ -1,20 +1,22 @@
 {
-  "source_commit": "27fba1cdc17a28eda2cdf96a4b165b77409e9883",
+  "source_commit": "8a5dbbd83fe81275464df68cb7b3c0c9e76a0c5c",
   "sites": {
-    "agykontroll.co.uk": "sha256:8d2fb4c6d1f3988a42f77f45aa92380dc55ff4b8e11f83f2ee33c3fef9ea35db",
-    "beautyflow.pro": "sha256:280ef155a3a7dd6a279affc958774b62f35fa9b4c0a86ee8b8ed6199b15a2719",
+    "agykontroll.co.uk": "sha256:8d2191206f1cda09e274bbd66f9f3618bb8e4cc3644fc8c4a7a446afebc35727",
+    "beautyflow.pro": "sha256:ac23c2e03252f23b87c59a6ffbc322876cbc4d1d9688e277e89dfc4a18f752b9",
     "event-gateway.golaxo.workers.dev": "sha256:e272b6f95e9913def1201371f6b69f4980dc6bfdc27ff8480e365d4f8113969e",
-    "lomtalan.hu": "sha256:2f300d3189c6201487e13216285558f8d822c4304977bb6550451799aa20aa2e",
-    "olcsokontenerhaz.hu": "sha256:bb77df503b4ba4bbb48a7577f6c404c1b0bb917ed0e6f819ed5060bf5a5e4178",
-    "painlessremovals.com": "sha256:e77ec15908cdf4e17e8d51267d2644e378cc3de2f0c23abb8beed79793b1524c",
-    "skinlabhungary.hu": "sha256:f3bed20070e461f41fa7f51f48e4b9a172490160856dac03373d7bcc1d749009",
+    "lomtalan.hu": "sha256:879f09ff67a2ce00d99d5eff842cbccd5447ad74c01d90b020e86f1fecaf21a1",
+    "olcsokontenerhaz.hu": "sha256:1286927cd359432be52bcfd7f41c7c1edd7873e2af95c3dc1ef8f45f4f0602e9",
+    "painlessremovals.com": "sha256:c19dbbd2882ce1a20ee02f71c1f445e75bccc7a38155b851ff1408be2bcdf51c",
+    "skinlabhungary.hu": "sha256:b8622288b6aeefdaa711a5598958db75c92e08f73c940afe89026da111d145bc",
     "szelloztessokosan.hu": "sha256:7654a244ceb0e65f375dfab540dda9f2ee9944a733bdc107132e164dab004584",
-    "www.agykontroll.co.uk": "sha256:8d2fb4c6d1f3988a42f77f45aa92380dc55ff4b8e11f83f2ee33c3fef9ea35db",
-    "www.beautyflow.pro": "sha256:280ef155a3a7dd6a279affc958774b62f35fa9b4c0a86ee8b8ed6199b15a2719",
-    "www.lomtalan.hu": "sha256:2f300d3189c6201487e13216285558f8d822c4304977bb6550451799aa20aa2e",
-    "www.olcsokontenerhaz.hu": "sha256:bb77df503b4ba4bbb48a7577f6c404c1b0bb917ed0e6f819ed5060bf5a5e4178",
-    "www.painlessremovals.com": "sha256:e77ec15908cdf4e17e8d51267d2644e378cc3de2f0c23abb8beed79793b1524c",
-    "www.skinlabhungary.hu": "sha256:f3bed20070e461f41fa7f51f48e4b9a172490160856dac03373d7bcc1d749009",
-    "www.szelloztessokosan.hu": "sha256:7654a244ceb0e65f375dfab540dda9f2ee9944a733bdc107132e164dab004584"
+    "trapezlemezes.hu": "sha256:81e6371584d0dd07a0db2644a7481ebe9879a521979735ef73be2b02c8b3ee4a",
+    "www.agykontroll.co.uk": "sha256:8d2191206f1cda09e274bbd66f9f3618bb8e4cc3644fc8c4a7a446afebc35727",
+    "www.beautyflow.pro": "sha256:ac23c2e03252f23b87c59a6ffbc322876cbc4d1d9688e277e89dfc4a18f752b9",
+    "www.lomtalan.hu": "sha256:879f09ff67a2ce00d99d5eff842cbccd5447ad74c01d90b020e86f1fecaf21a1",
+    "www.olcsokontenerhaz.hu": "sha256:1286927cd359432be52bcfd7f41c7c1edd7873e2af95c3dc1ef8f45f4f0602e9",
+    "www.painlessremovals.com": "sha256:c19dbbd2882ce1a20ee02f71c1f445e75bccc7a38155b851ff1408be2bcdf51c",
+    "www.skinlabhungary.hu": "sha256:b8622288b6aeefdaa711a5598958db75c92e08f73c940afe89026da111d145bc",
+    "www.szelloztessokosan.hu": "sha256:7654a244ceb0e65f375dfab540dda9f2ee9944a733bdc107132e164dab004584",
+    "www.trapezlemezes.hu": "sha256:81e6371584d0dd07a0db2644a7481ebe9879a521979735ef73be2b02c8b3ee4a"
   }
 }

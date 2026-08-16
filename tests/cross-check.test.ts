@@ -8,8 +8,11 @@ import {
   parseGa4RunReportResponse,
   assembleLedgerCounts,
   GA4_CHECK_EVENTS,
-  DEFAULT_CROSS_CHECK_THRESHOLDS
+  DEFAULT_CROSS_CHECK_THRESHOLDS,
+  runCrossPlatformCheck
 } from '../src/lib/cross-check';
+import type { SiteConfig } from '../src/lib/config';
+import type { Env } from '../src/env';
 
 const EVENTS = ['callback_request_submitted', 'quote_calculator_submitted'];
 
@@ -237,5 +240,68 @@ describe('DEFAULT_CROSS_CHECK_THRESHOLDS', () => {
     expect(DEFAULT_CROSS_CHECK_THRESHOLDS.relDiffWarn).toBeLessThan(
       DEFAULT_CROSS_CHECK_THRESHOLDS.relDiffCrit
     );
+  });
+});
+
+/**
+ * A cross-check NEM-FUTÁSA is eredmény (2026-08-16 audit, C-pont).
+ *
+ * A modul korábban `CrossCheckFinding[]`-et adott vissza, és az üres tömb két,
+ * gyökeresen eltérő dolgot jelentett: „megnéztük, rendben van" VAGY „meg sem
+ * néztük". Élesben az utóbbi állt fenn — EGYETLEN site-on sem volt `recon` blokk —,
+ * és a napi riport ezt „nincs drift"-ként jelentette. Modell 2-ben ez a modul az
+ * egyetlen monitora a böngésző/GTM-ágnak, tehát az álló monitornak hangosnak kell
+ * lennie. A CrossCheckOutcome mezői teszik megkülönböztethetővé a két esetet.
+ */
+const reconlessSite = (id: string): SiteConfig =>
+  ({
+    site_id: id,
+    country_code: 'HU',
+    currency: 'HUF',
+    gads: { customer_id: '1234567890', login_customer_id: null }
+  }) as SiteConfig;
+
+const ledgerEnv = (): Env =>
+  ({
+    LEDGER: {
+      prepare: () => ({
+        bind: () => ({ all: async () => ({ results: [] }) })
+      })
+    }
+  }) as unknown as Env;
+
+describe('runCrossPlatformCheck — a nem-futás megkülönböztethető a tiszta naptól', () => {
+  it('egyetlen site-on sincs recon blokk → configuredSites=0, NEM csak üres finding-lista', async () => {
+    const out = await runCrossPlatformCheck(
+      ledgerEnv(),
+      [reconlessSite('a'), reconlessSite('b')],
+      '2026-08-15'
+    );
+    expect(out.findings).toEqual([]);
+    expect(out.totalSites).toBe(2);
+    expect(out.configuredSites).toBe(0); // ← EZ különbözteti meg a „tiszta"-tól
+    expect(out.ledgerUnavailable).toBe(false);
+  });
+
+  it('van recon blokk, de üres → mindkét leg not_configured skipként jelenik meg', async () => {
+    const site = { ...reconlessSite('c'), recon: {} } as SiteConfig;
+    const out = await runCrossPlatformCheck(ledgerEnv(), [site], '2026-08-15');
+    expect(out.configuredSites).toBe(1);
+    expect(out.skippedLegs).toEqual(
+      expect.arrayContaining([
+        { site_id: 'c', platform: 'gads', reason: 'not_configured' },
+        { site_id: 'c', platform: 'ga4', reason: 'not_configured' }
+      ])
+    );
+    // Minden leg kimaradt → a hívó ezt „a monitor áll"-ként kezeli.
+    expect(out.skippedLegs.length).toBe(out.configuredSites * 2);
+  });
+
+  it('ledger-hiba → ledgerUnavailable, nem néma üres eredmény', async () => {
+    const site = { ...reconlessSite('d'), recon: { ga4_property_id: '123' } } as SiteConfig;
+    const out = await runCrossPlatformCheck({} as Env, [site], '2026-08-15');
+    expect(out.ledgerUnavailable).toBe(true);
+    expect(out.configuredSites).toBe(1);
+    expect(out.findings).toEqual([]);
   });
 });

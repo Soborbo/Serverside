@@ -1,11 +1,26 @@
-import type { Env } from '../env';
-import type { SiteConfig } from './config';
-import { type HashedUserData, normalizeCity, normalizePostalCode, normalizeCountry } from './hash';
 import type { ConsentState } from './consent';
-import { getAccessToken } from './gads-oauth';
-import { logStructured } from '../types';
-import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
-import { sanitizeErrorMessage } from './log-sanitize';
+import type { TrackingErrorCode } from './error-codes';
+
+/**
+ * Google Ads offline-konverzió KONTRAKTUS (payload + eredmény típusok) + az API
+ * major verzió.
+ *
+ * A LEGACY `uploadClickConversions` transport (sendToGoogleAdsCAPI) 2026-08-16-án
+ * TÖRÖLVE lett ebből a fájlból. Miért:
+ *  - 2026-06-15 óta a Google BLOKKOLJA az új adoptereket ezen a metóduson
+ *    (CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE) — mi új adopter vagyunk, tehát a
+ *    kód a mi fiókjainkon SOHA nem tudott volna sikeresen lefutni.
+ *  - A helyére lépő Data Manager API (lib/datamanager.ts) éles forgalomban
+ *    validált (accepted delivery-sorok a D1 ledgerben), és a retry-út is azt hívja.
+ *  - A fájl saját deprecation-jegyzete pontosan ezt a feltételt szabta a törléshez:
+ *    „remove once the Data Manager path is validated in production".
+ * A 230 sornyi halott transport megtartása azt kockáztatta, hogy egy jövőbeli hívó
+ * véletlenül a nem működő úton küldjön. A git-történet megőrzi (lásd lib/gads.ts
+ * a törlés előtti commitban).
+ *
+ * A típusok itt maradnak, mert a Data Manager transport, a lead-status route és a
+ * retry-ág MIND ezeket használja — ez a Google-ág közös alakja.
+ */
 
 // Google Ads API major verzió. A REST-útvonal csak a MAJOR verziót tartalmazza
 // (`/v24/`); a v24.x minor kiadások ugyanezen az úton mennek. 2026-06: v24 a
@@ -13,7 +28,6 @@ import { sanitizeErrorMessage } from './log-sanitize';
 // Exportált: a cross-check (lib/cross-check.ts) GAQL-lekérdezése ugyanezen a
 // verzión megy — verzió-bump itt egy helyen történik.
 export const GADS_API_VERSION = 'v24';
-const GADS_API_TIMEOUT_MS = 5000;
 
 export interface GAdsPayload {
   event_name: string;
@@ -52,262 +66,4 @@ export interface GAdsResult {
   // true → a hívás szándékosan kimaradt (nincs customer_id / conversion action /
   // identifier). A hívó NEM könyvelheti valós uploadnak (lead-status, ledger).
   skipped?: boolean;
-}
-
-function classifyGAdsError(
-  status: number,
-  apiCode: number | undefined,
-  apiMessage: string | undefined
-): TrackingErrorCode {
-  if (status === 401) return TrackingErrorCode.GADS_AUTH_REJECTED;
-  if (status === 429) return TrackingErrorCode.GADS_RATE_LIMITED;
-  if (apiMessage && /developer.token/i.test(apiMessage))
-    return TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID;
-  if (apiMessage && /conversion.action/i.test(apiMessage))
-    return TrackingErrorCode.GADS_INVALID_CONVERSION_ACTION;
-  if (apiCode === 16) return TrackingErrorCode.GADS_AUTH_REJECTED;
-  return TrackingErrorCode.GADS_PARTIAL_FAILURE;
-}
-
-/**
- * @deprecated Legacy Google Ads `uploadClickConversions` transport. As of
- * 2026-06-15 Google blocks NEW adopters of this method
- * (CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE) and directs migration to the Data
- * Manager API. We are a new adopter → this path is non-functional for us. The
- * live offline leg now uses {@link import('./datamanager').sendToDataManager}
- * (see routes/lead-status.ts). Kept dormant for reference; remove once the Data
- * Manager path is validated in production.
- */
-export async function sendToGoogleAdsCAPI(
-  siteConfig: SiteConfig,
-  env: Env,
-  payload: GAdsPayload,
-  hashedUserData: HashedUserData
-): Promise<GAdsResult> {
-  const startedAt = Date.now();
-
-  if (!siteConfig.gads.customer_id) {
-    return { success: true, skipped: true };
-  }
-
-  const conversionActionId = siteConfig.gads.conversion_actions?.[payload.event_name];
-  if (!conversionActionId) {
-    logStructured({
-      level: 'warn',
-      error_code: TrackingErrorCode.MISSING_CONVERSION_ACTION,
-      message: ERROR_DESCRIPTIONS[TrackingErrorCode.MISSING_CONVERSION_ACTION],
-      site_id: siteConfig.site_id,
-      event_name: payload.event_name
-    });
-    return { success: true, skipped: true };
-  }
-
-  const accessToken = await getAccessToken(siteConfig.gads.customer_id, env);
-  if (!accessToken) {
-    return {
-      success: false,
-      error_code: TrackingErrorCode.GADS_NO_ACCESS_TOKEN,
-      error: 'No access token available'
-    };
-  }
-
-  const dt = new Date(payload.event_time * 1000);
-  const conversionDateTime = formatGAdsDateTime(dt);
-
-  const userIdentifiers: Record<string, unknown>[] = [];
-  if (hashedUserData.em) userIdentifiers.push({ hashedEmail: hashedUserData.em });
-  if (hashedUserData.ph) userIdentifiers.push({ hashedPhoneNumber: hashedUserData.ph });
-
-  if (hashedUserData.fn || hashedUserData.ln) {
-    const addressInfo: Record<string, unknown> = {};
-    if (hashedUserData.fn) addressInfo.hashedFirstName = hashedUserData.fn;
-    if (hashedUserData.ln) addressInfo.hashedLastName = hashedUserData.ln;
-    // Google Ads addressInfo PLAIN (nem hash), DE ugyanazt a normalizációt kell
-    // kapnia, mint Meta (CLAUDE.md #7). Nyers kliens-input ("  Bristol " /
-    // "SW1A 1AA") rontaná az Enhanced Conversions match rate-et.
-    const ct = normalizeCity(payload.city);
-    if (ct) addressInfo.city = ct;
-    const zp = normalizePostalCode(payload.postal_code);
-    if (zp) addressInfo.postalCode = zp;
-    // countryCode: a user country-ja elsőbbséget élvez, fallback a site default.
-    // normalizeCountry kiszűri az invalid kódokat (pl. 'EU'). Google uppercase-t vár.
-    const cc = normalizeCountry(payload.country) || normalizeCountry(siteConfig.country_code);
-    if (cc) addressInfo.countryCode = cc.toUpperCase();
-    userIdentifiers.push({ addressInfo });
-  }
-
-  const conversion: Record<string, unknown> = {
-    conversionAction: `customers/${siteConfig.gads.customer_id}/conversionActions/${conversionActionId}`,
-    conversionDateTime,
-    orderId: payload.event_id.slice(0, 64)
-  };
-
-  // Google click ID — pontosan egy, prioritás szerint. A legerősebb attribúciós jel.
-  const hasGclid = !!payload.gclid;
-  const usingBraid = !hasGclid && (!!payload.gbraid || !!payload.wbraid);
-  if (payload.gclid) conversion.gclid = payload.gclid;
-  else if (payload.gbraid) conversion.gbraid = payload.gbraid;
-  else if (payload.wbraid) conversion.wbraid = payload.wbraid;
-  if (typeof payload.value === 'number' && payload.value > 0) {
-    conversion.conversionValue = payload.value;
-  }
-  // currencyCode csak conversionValue mellett — érték nélkül nincs értelme, és
-  // a validáció elutasíthatja.
-  if (payload.currency && conversion.conversionValue !== undefined) {
-    conversion.currencyCode = payload.currency;
-  }
-  // Enhanced Conversions for Leads (userIdentifiers) CSAK gclid mellett (vagy
-  // click ID nélkül) engedett. gbraid/wbraid mellett a Google VALUE_MUST_BE_UNSET
-  // hibát ad → partialFailure-rel csendben elbukna a sor. Ezért braid esetén
-  // a click ID-re hagyatkozunk, PII-match nélkül.
-  if (userIdentifiers.length > 0 && !usingBraid) conversion.userIdentifiers = userIdentifiers;
-
-  // Consent Mode v2 jelek. FONTOS: a Google Ads API a consent mezőkre CSAK
-  // GRANTED / DENIED bemenetet fogad el — az `UNKNOWN`/`UNSPECIFIED` érték
-  // INVALID_ENUM_VALUE hibát ad (a sor partialFailure-rel csendben elbukik).
-  // Ezért a nem-egyértelmű jeleket KIHAGYJUK (a hiányzó mező = UNSPECIFIED default).
-  if (payload.consent) {
-    const consent: Record<string, string> = {};
-    if (payload.consent.ad_user_data === 'GRANTED' || payload.consent.ad_user_data === 'DENIED') {
-      consent.adUserData = payload.consent.ad_user_data;
-    }
-    if (
-      payload.consent.ad_personalization === 'GRANTED' ||
-      payload.consent.ad_personalization === 'DENIED'
-    ) {
-      consent.adPersonalization = payload.consent.ad_personalization;
-    }
-    if (Object.keys(consent).length > 0) conversion.consent = consent;
-  }
-
-  const body = {
-    conversions: [conversion],
-    partialFailure: true
-  };
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': env.GADS_DEVELOPER_TOKEN,
-    'Content-Type': 'application/json'
-  };
-  if (siteConfig.gads.login_customer_id) {
-    headers['login-customer-id'] = siteConfig.gads.login_customer_id;
-  }
-
-  const url = `https://googleads.googleapis.com/${GADS_API_VERSION}/customers/${siteConfig.gads.customer_id}:uploadClickConversions`;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), GADS_API_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    const responseBody = (await response.json()) as {
-      results?: unknown[];
-      partialFailureError?: { code?: number; message?: string };
-      error?: { code?: number; message?: string; details?: unknown[] };
-    };
-
-    if (!response.ok || responseBody.error) {
-      const errorCode = classifyGAdsError(
-        response.status,
-        responseBody.error?.code,
-        responseBody.error?.message
-      );
-      const sanitizedError = sanitizeErrorMessage(responseBody.error?.message);
-      logStructured({
-        level:
-          errorCode === TrackingErrorCode.GADS_AUTH_REJECTED ||
-          errorCode === TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID
-            ? 'error'
-            : 'warn',
-        error_code: errorCode,
-        message: ERROR_DESCRIPTIONS[errorCode],
-        site_id: siteConfig.site_id,
-        event_name: payload.event_name,
-        status: response.status,
-        gads_error: sanitizedError,
-        gads_error_code: responseBody.error?.code,
-        duration_ms: Date.now() - startedAt
-      });
-      return {
-        success: false,
-        error_code: errorCode,
-        error: sanitizedError,
-        status: response.status
-      };
-    }
-
-    if (responseBody.partialFailureError) {
-      const sanitizedPartial = sanitizeErrorMessage(responseBody.partialFailureError.message);
-      logStructured({
-        level: 'warn',
-        error_code: TrackingErrorCode.GADS_PARTIAL_FAILURE,
-        message: ERROR_DESCRIPTIONS[TrackingErrorCode.GADS_PARTIAL_FAILURE],
-        site_id: siteConfig.site_id,
-        event_name: payload.event_name,
-        partial_error: sanitizedPartial,
-        duration_ms: Date.now() - startedAt
-      });
-      return {
-        success: false,
-        error_code: TrackingErrorCode.GADS_PARTIAL_FAILURE,
-        partial_failure_error: sanitizedPartial,
-        status: response.status
-      };
-    }
-
-    logStructured({
-      level: 'info',
-      message: 'Google Ads conversion uploaded',
-      site_id: siteConfig.site_id,
-      event_name: payload.event_name,
-      conversions_processed: responseBody.results?.length || 0,
-      ec_identifiers_provided: userIdentifiers.length,
-      duration_ms: Date.now() - startedAt
-    });
-    return {
-      success: true,
-      conversions_processed: responseBody.results?.length || 0,
-      status: response.status
-    };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    const errorCode = isTimeout
-      ? TrackingErrorCode.GADS_API_TIMEOUT
-      : TrackingErrorCode.GADS_API_NETWORK_ERROR;
-    logStructured({
-      level: 'warn',
-      error_code: errorCode,
-      message: ERROR_DESCRIPTIONS[errorCode],
-      site_id: siteConfig.site_id,
-      event_name: payload.event_name,
-      error: errMsg,
-      duration_ms: Date.now() - startedAt
-    });
-    return {
-      success: false,
-      error_code: errorCode,
-      error: isTimeout ? 'timeout' : errMsg
-    };
-  }
-}
-
-function formatGAdsDateTime(d: Date): string {
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  const yyyy = d.getUTCFullYear();
-  const mm = pad(d.getUTCMonth() + 1);
-  const dd = pad(d.getUTCDate());
-  const hh = pad(d.getUTCHours());
-  const mi = pad(d.getUTCMinutes());
-  const ss = pad(d.getUTCSeconds());
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}+00:00`;
 }

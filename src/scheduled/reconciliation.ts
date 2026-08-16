@@ -2,7 +2,7 @@ import type { Env } from '../env';
 import { logStructured } from '../types';
 import { sendAdminEmail, escapeHtml } from '../lib/notify';
 import { recordReconciliationMetric } from '../lib/metrics';
-import { TrackingErrorCode } from '../lib/error-codes';
+import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   fetchReconInputs,
   summarize,
@@ -10,7 +10,11 @@ import {
   type DriftKind,
   type DriftFinding
 } from '../lib/reconciliation';
-import { runCrossPlatformCheck, type CrossCheckFinding } from '../lib/cross-check';
+import {
+  runCrossPlatformCheck,
+  type CrossCheckFinding,
+  type CrossCheckOutcome
+} from '../lib/cross-check';
 import { listMonitoredSiteConfigs } from '../lib/config';
 import type { MetricPlatform } from '../lib/metrics';
 
@@ -70,7 +74,13 @@ export async function handleReconciliation(env: Env): Promise<void> {
   // egyeztetés a TEGNAPI teljes UTC-napra. A ledger-belső recon szerkezetileg
   // nem látja, ha a böngésző/GTM-ág romlik el (Modell 2) — ez a check pont azt
   // fogja meg. Hibatűrő: bármely leg query-hibája logolt skip, a cron nem dől el.
-  let crossFindings: CrossCheckFinding[] = [];
+  let crossOutcome: CrossCheckOutcome = {
+    findings: [],
+    totalSites: 0,
+    configuredSites: 0,
+    skippedLegs: [],
+    ledgerUnavailable: false
+  };
   // Ha a cross-check ELDŐL (lejárt analytics.readonly scope, API 5xx, visszavont
   // token), az NEM „nincs drift" — a Modell-2 böngésző/GTM-vakfolt egyetlen monitora
   // sötétbe borul. Enélkül a flag nélkül egy tiszta ledger-nap mellett NEM ment volna
@@ -80,7 +90,7 @@ export async function handleReconciliation(env: Env): Promise<void> {
   try {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const siteConfigs = await listMonitoredSiteConfigs(env);
-    crossFindings = await runCrossPlatformCheck(env, siteConfigs, yesterday);
+    crossOutcome = await runCrossPlatformCheck(env, siteConfigs, yesterday);
   } catch (err) {
     crossCheckFailed = true;
     logStructured({
@@ -88,6 +98,42 @@ export async function handleReconciliation(env: Env): Promise<void> {
       error_code: TrackingErrorCode.RECON_CROSS_QUERY_FAILED,
       message: 'Cross-platform reconciliation threw',
       error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  const crossFindings = crossOutcome.findings;
+
+  // A THROW csak az egyik módja annak, hogy a monitor álljon. A csendesebb (és a
+  // gyakorlatban valóságos) mód: a check LEFUT, de nincs mit néznie — egyetlen
+  // site-on sincs `recon` blokk, vagy minden leg kimarad hiányzó property-id /
+  // action-térkép / 403-as scope miatt. 2026-08-16-ig pontosan ez volt a helyzet,
+  // és semmi nem jelezte. Innentől ez ugyanúgy riaszt, mint egy elbukott lekérdezés.
+  const anyLegRan =
+    crossOutcome.configuredSites > 0 &&
+    !crossOutcome.ledgerUnavailable &&
+    crossOutcome.skippedLegs.length < crossOutcome.configuredSites * 2;
+  const crossCheckNotRunning = !crossCheckFailed && !anyLegRan;
+  if (crossCheckNotRunning) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING],
+      total_sites: crossOutcome.totalSites,
+      configured_sites: crossOutcome.configuredSites,
+      ledger_unavailable: crossOutcome.ledgerUnavailable,
+      skipped_legs: crossOutcome.skippedLegs
+        .map((l) => `${l.site_id}/${l.platform}:${l.reason}`)
+        .join(',')
+    });
+  } else if (crossOutcome.skippedLegs.length > 0) {
+    // Részleges kimaradás: a check futott, de nem mindenhol. Nem riasztás-szintű,
+    // de a riportban látszania kell, különben a hiányzó leg „tiszta"-ként olvasódik.
+    logStructured({
+      level: 'info',
+      error_code: TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING,
+      message: 'Cross-platform reconciliation ran with some legs skipped',
+      skipped_legs: crossOutcome.skippedLegs
+        .map((l) => `${l.site_id}/${l.platform}:${l.reason}`)
+        .join(',')
     });
   }
 
@@ -124,19 +170,49 @@ export async function handleReconciliation(env: Env): Promise<void> {
     warning_count: summary.warning_count + crossWarning,
     critical_count: summary.critical_count + crossCritical,
     cross_platform_findings: crossFindings.length,
+    // A puszta finding-szám félrevezet, ha a check nem is futott — a kontextus
+    // mostantól MINDIG ott van a napi log-sorban.
+    cross_check_configured_sites: crossOutcome.configuredSites,
+    cross_check_total_sites: crossOutcome.totalSites,
+    cross_check_skipped_legs: crossOutcome.skippedLegs.length,
+    cross_check_not_running: crossCheckNotRunning,
     worst: summary.worst
   });
 
-  if (summary.findings.length + crossFindings.length > 0 || crossCheckFailed) {
+  if (
+    summary.findings.length + crossFindings.length > 0 ||
+    crossCheckFailed ||
+    crossCheckNotRunning
+  ) {
     const criticalCount = summary.critical_count + crossCritical;
     const warningCount = summary.warning_count + crossWarning;
     const failNote = crossCheckFailed
       ? '<p><strong>⚠️ A cross-platform check ELDŐLT — a GA4/Google-Ads vs ledger összevetés (a Modell-2 böngésző/GTM-vakfolt monitora) MA NEM futott le. Ellenőrizd az analytics.readonly tokent / az API-státuszt.</strong></p>'
       : '';
+    const notRunningNote = crossCheckNotRunning
+      ? `<p><strong>⚠️ A cross-platform check NEM FUT — a Modell-2 böngésző/GTM-ág monitorozatlan.</strong>
+           ${crossOutcome.configuredSites} / ${crossOutcome.totalSites} site-on van <code>recon</code> blokk${
+             crossOutcome.ledgerUnavailable ? ', és a ledger-lekérdezés is elbukott' : ''
+           }. Ez NEM azt jelenti, hogy nincs drift — azt, hogy nem néztük meg.
+           Teendő: <code>recon.ga4_property_id</code> (numerikus GA4 property ID) és/vagy
+           <code>recon.gads_onsite_actions</code> felvétele a SITE_CONFIG KV-be, majd — ha a
+           GA4-leg 403-mal skippel — re-consent az <code>/api/event/oauth-init</code>-en
+           (az <code>analytics.readonly</code> scope-hoz).</p>`
+      : '';
+    const skipNote =
+      !crossCheckNotRunning && crossOutcome.skippedLegs.length > 0
+        ? `<p>ℹ️ Részlegesen kimaradt cross-check legek: ${escapeHtml(
+            crossOutcome.skippedLegs.map((l) => `${l.site_id}/${l.platform} (${l.reason})`).join(', ')
+          )}. Ezek a legek MA nem adtak jelet — a hiányuk nem „tiszta".</p>`
+        : '';
+    const subjectSuffix = [
+      crossCheckFailed ? ' + cross-check FAILED' : '',
+      crossCheckNotRunning ? ' + cross-check NOT RUNNING' : ''
+    ].join('');
     await sendAdminEmail(
       env,
-      `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning${crossCheckFailed ? ' + cross-check FAILED' : ''}`,
-      failNote + buildDriftEmail(summary.findings, crossFindings, since),
+      `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning${subjectSuffix}`,
+      failNote + notRunningNote + skipNote + buildDriftEmail(summary.findings, crossFindings, since),
       criticalCount > 0 || crossCheckFailed ? 'critical' : 'warning'
     );
   }
