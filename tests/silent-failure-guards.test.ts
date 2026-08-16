@@ -69,13 +69,15 @@ describe('normalizeDelivery propagates vendor skip error codes', () => {
     });
   });
 
-  it('leaves a plain consent skip without an error code', () => {
+  it('leaves a plain consent skip without an error code, but names the skip', () => {
     const r = normalizeDelivery('meta', {
       status: 'fulfilled',
       value: { success: true, skipped: true, skip_reason: 'consent_denied' }
     });
 
-    expect(r).toEqual({ platform: 'meta', status: 'skipped' });
+    // Fázis D: hibakód továbbra sincs (a consent-kihagyás nem hiba), de az ok
+    // átjut a ledgerbe — enélkül a `skipped` sorok oka visszakereshetetlen.
+    expect(r).toEqual({ platform: 'meta', status: 'skipped', skip_reason: 'consent_denied' });
   });
 });
 

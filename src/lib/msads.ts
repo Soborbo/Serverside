@@ -84,11 +84,11 @@ export async function sendToMsAds(
   }
   const conversion = buildOfflineConversion(siteConfig, payload);
   // Van config, de nincs matchelhető azonosító (nincs msclkid / event nincs mappelve)
-  // → TERMINÁLIS skip (nincs skip_reason). Ez NEM konfig-hiba: se retry, se CRITICAL
-  // (vö. linkedin.ts). Enélkül egy expected_platforms.smoke-ba tett 'msads' minden
-  // msclkid nélküli eventre PLATFORM_NOT_CONFIGURED-et lőne.
+  // → TERMINÁLIS skip (`no_identifiers`, NEM `not_configured`). Ez NEM konfig-hiba:
+  // se retry, se CRITICAL (vö. linkedin.ts). Enélkül egy expected_platforms.smoke-ba
+  // tett 'msads' minden msclkid nélküli eventre PLATFORM_NOT_CONFIGURED-et lőne.
   if (!conversion) {
-    return { success: true, skipped: true };
+    return { success: true, skipped: true, skip_reason: 'no_identifiers' };
   }
 
   // TODO(live): itt menne a Bing Ads ApplyOfflineConversions kiküldés (lásd a

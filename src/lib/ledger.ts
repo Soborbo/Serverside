@@ -43,6 +43,13 @@ interface DeliveryRecordBase {
   error_code?: string;
   vendor_message?: string;
   /**
+   * Fázis D: MIÉRT maradt ki a hívás (`deliveries.skip_reason`). Csak `skipped`
+   * soron értelmes. E nélkül a ledger csak annyit tudott, hogy „skipped", és a
+   * 30 napos adatban 9 GRANTED-consent melletti skip oka visszakereshetetlen
+   * maradt — nem lehetett eldönteni, melyik ágon keletkeztek.
+   */
+  skip_reason?: SkipReason;
+  /**
    * Strukturált vendor-hibarészlet (Data Manager `error.details[]`,
    * benne a `fieldViolations` tömbbel). Külön oszlop, hogy a rövid
    * `vendor_message` olvasható maradjon, a diagnózishoz kellő rész meg
@@ -89,6 +96,27 @@ export interface VendorResult {
 }
 
 /**
+ * Vendor-hibakód → skip-ok, azoknak a skip-ágaknak, amik `skip_reason` NÉLKÜL,
+ * csak `error_code`-dal jeleznek (a Data Manager offline lába ilyen). Pure.
+ *
+ * Ami NEM szerepel benne, az szándékos: a DATAMANAGER_VALIDATE_ONLY nem a
+ * SkipReason-taxonómia egyik ága (nem „miért maradt ki", hanem „a Google csak
+ * validált"), az `error_code` oszlop ott az igazságforrás. Inkább maradjon NULL
+ * a skip_reason, mint hogy egy odaerőltetett ok félrevigye a Fázis D bontását.
+ */
+export function skipReasonFromErrorCode(code: string | undefined): SkipReason | undefined {
+  switch (code) {
+    case TrackingErrorCode.PLATFORM_NOT_CONFIGURED:
+    case TrackingErrorCode.MISSING_CONVERSION_ACTION:
+      return 'not_configured';
+    case TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS:
+      return 'no_identifiers';
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Vendor-válasz normalizálás (#9). A platformok különbözőképp válaszolnak; ez egy
  * közös DeliveryRecord-ba fordít. A skip EGYETLEN igazságforrása a vendor-eredmény
  * `skipped` flagje (consent-tiltás és nem-konfigurált platform egyaránt ezt hozza)
@@ -108,7 +136,8 @@ export function normalizeDelivery(
       return {
         platform,
         status: 'skipped',
-        error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED
+        error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
+        skip_reason: 'not_configured'
       };
     }
     // A vendor SAJÁT hibakódja is átjut, ha adott (a Data Manager offline lába
@@ -118,9 +147,16 @@ export function normalizeDelivery(
     // jogos consent-kihagyástól — pontosan az a vakfolt, ami a lomtalan Meta-
     // kiesését elrejtette, csak az offline lábon.
     if (settled.value.error_code) {
-      return { platform, status: 'skipped', error_code: settled.value.error_code };
+      return {
+        platform,
+        status: 'skipped',
+        error_code: settled.value.error_code,
+        // A `skip_reason` a vendor-eredményből elsődleges; ha nincs (a Data
+        // Manager offline lába csak error_code-dal jelez), a kódból vezetjük le.
+        skip_reason: settled.value.skip_reason ?? skipReasonFromErrorCode(settled.value.error_code)
+      };
     }
-    return { platform, status: 'skipped' };
+    return { platform, status: 'skipped', skip_reason: settled.value.skip_reason };
   }
   if (settled.status === 'rejected') {
     return {
@@ -448,9 +484,12 @@ export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<vo
   const records = d.records.map((r) => enforceVendorStatus(r, d.site_id));
   try {
     const stmt = env.LEDGER.prepare(
+      // A `skip_reason` SZÁNDÉKOSAN az oszloplista VÉGÉN van (0004 migráció):
+      // az ALTER TABLE hozzáfűzi, és így a meglévő pozíciófüggő olvasók
+      // (tesztek, ad-hoc lekérdezések) indexei érintetlenek maradnak.
       `INSERT INTO deliveries
-         (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, error_detail, attempt, origin, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, error_detail, attempt, origin, created_at, skip_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const batch = records.map((r) =>
       stmt.bind(
@@ -467,7 +506,9 @@ export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<vo
         r.error_detail ?? null,
         0,
         origin,
-        now
+        now,
+        // Csak skipped soron van értelme; egyébként NULL (accepted/rejected).
+        r.status === 'skipped' ? (r.skip_reason ?? null) : null
       )
     );
     await env.LEDGER.batch(batch);
