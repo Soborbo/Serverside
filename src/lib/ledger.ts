@@ -98,6 +98,18 @@ export function normalizeDelivery(
         error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED
       };
     }
+    // Ugyanaz az elv formahibás azonosítóra: a blokk megvan, de a benne lévő ID
+    // használhatatlan, ezért hívás nem indult. Külön kód, mert a teendő más —
+    // „javítsd az ID-t", nem „írd be a blokkot". A kód ITT képződik (nem a
+    // vendor-modulban), hogy a fan-out általános CRITICAL-riasztó ága ne lőjön rá
+    // még a skip-osztályozás előtt — lásd lib/meta.ts.
+    if (settled.value.skip_reason === 'invalid_identifier') {
+      return {
+        platform,
+        status: 'skipped',
+        error_code: TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID
+      };
+    }
     // A vendor SAJÁT hibakódja is átjut, ha adott (a Data Manager offline lába
     // `skip_reason` nélkül, csak `error_code`-dal jelez: PLATFORM_NOT_CONFIGURED /
     // MISSING_CONVERSION_ACTION / DATAMANAGER_NO_IDENTIFIERS). Enélkül minden

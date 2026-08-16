@@ -869,17 +869,19 @@ function fanOut(
         includeUserData: boolean,
         platformStart: number
       ) => {
-        // Egy not_configured skip {success:true}-t ad (hívás nem történt) — de a
+        // Egy konfigurációs skip {success:true}-t ad (hívás nem történt) — de a
         // fan-out SIKER-metrikában ez NEM siker, különben egy config-vesztés
-        // (lomtalan-osztály) zöldnek látszana az AE-dashboardon. A ledger-sor +
-        // CRITICAL riasztás elkapja, de az AE-nézet félrevezetne. (A jogos
-        // consent-skip marad success:true — az a fan-out helyes működése.)
-        const notConfigured =
+        // (lomtalan-osztály) vagy egy formahibás azonosító (agykontroll-osztály)
+        // zöldnek látszana az AE-dashboardon. A ledger-sor + CRITICAL riasztás
+        // elkapja, de az AE-nézet félrevezetne. (A jogos consent-skip marad
+        // success:true — az a fan-out helyes működése.)
+        const configBlocked =
           result.status === 'fulfilled' &&
           result.value.skipped === true &&
-          result.value.skip_reason === 'not_configured';
+          (result.value.skip_reason === 'not_configured' ||
+            result.value.skip_reason === 'invalid_identifier');
         const success =
-          result.status === 'fulfilled' && result.value.success && !notConfigured;
+          result.status === 'fulfilled' && result.value.success && !configBlocked;
         const errorCode =
           result.status === 'fulfilled' ? result.value.error_code : undefined;
 
@@ -904,7 +906,7 @@ function fanOut(
         }
 
         // ── Skip-osztályozás ────────────────────────────────────────────────
-        // Három eset, három kimenet (lásd lib/skip-reason.ts). A `skipped` flag
+        // Négy ok, három kimenet (lásd lib/skip-reason.ts). A `skipped` flag
         // önmagában NEM elég: 2026-07-15 és 07-20 között a lomtalan hiányzó Meta
         // configja pontosan úgy nézett ki, mint egy jogos consent-kihagyás, így
         // 3 valódi lead veszett el retry-rekord nélkül, zöld monitor mellett.
@@ -914,7 +916,7 @@ function fanOut(
           const skipReason = result.value.skip_reason;
           // (a) consent_denied / no-identifier / scaffold → terminális, nincs DLQ.
           if (isTerminalSkip(skipReason)) return;
-          // (b) not_configured, de a platform nem is elvárt ezen a site-on
+          // (b) konfigurációs skip, de a platform nem is elvárt ezen a site-on
           //     (pl. TikTok egy csak-Meta site-on) → szintén terminális. Az okot
           //     `not_expected`-re minősítjük, hogy a ledger NE kapjon
           //     PLATFORM_NOT_CONFIGURED hibakódot: egy sosem-bekötött platform
@@ -924,21 +926,31 @@ function fanOut(
             result.value.skip_reason = 'not_expected';
             return;
           }
-          // (c) ELVÁRT platform + hiányzó config → retryable konfigurációs blokk.
-          //     Ez az egyetlen skip, ami DLQ-rekordot és CRITICAL riasztást kap:
-          //     magától soha nem javul meg, viszont a config helyreállítása után
-          //     az EREDETI event_id-vel és event_time-mal újrajátszható.
+          // (c) ELVÁRT platform + használhatatlan config → retryable konfigurációs
+          //     blokk. Ez az egyetlen skip-ág, ami DLQ-rekordot és CRITICAL
+          //     riasztást kap: magától soha nem javul meg, viszont a config
+          //     javítása után az EREDETI event_id-vel és event_time-mal
+          //     újrajátszható. Két alesete van, és a TEENDŐ különbözik:
+          //     hiányzó blokk → „írd be", formahibás azonosító → „javítsd az ID-t".
+          const configErrorCode =
+            skipReason === 'invalid_identifier'
+              ? TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID
+              : TrackingErrorCode.PLATFORM_NOT_CONFIGURED;
+          const configFailureReason =
+            skipReason === 'invalid_identifier'
+              ? `expected platform '${platform}' has a malformed identifier in its config block`
+              : `expected platform '${platform}' has no config block for this site`;
           logStructured({
             level: 'error',
-            error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
-            message: ERROR_DESCRIPTIONS[TrackingErrorCode.PLATFORM_NOT_CONFIGURED],
+            error_code: configErrorCode,
+            message: ERROR_DESCRIPTIONS[configErrorCode],
             site_id: siteConfig.site_id,
             hostname,
             platform,
             event_name: payload.event_name
           });
           alerts.push(
-            sendAlert(env, TrackingErrorCode.PLATFORM_NOT_CONFIGURED, {
+            sendAlert(env, configErrorCode, {
               site_id: siteConfig.site_id,
               hostname,
               platform,
@@ -955,7 +967,7 @@ function fanOut(
               hashed_user_data: includeUserData
                 ? (hashedUserData as unknown as Record<string, unknown>)
                 : undefined,
-              failure_reason: `expected platform '${platform}' has no config block for this site`,
+              failure_reason: configFailureReason,
               // Konfigurációs blokk: a retry-keretet nem szabad percek alatt
               // elégetnie (lásd lib/deadletter.ts backoffSeconds/blocked flag).
               blocked_configuration: true,

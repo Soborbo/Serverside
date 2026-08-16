@@ -9,6 +9,11 @@ import { sanitizeErrorMessage } from './log-sanitize';
 const META_API_VERSION = 'v25.0';
 const META_API_TIMEOUT_MS = 5000;
 
+// A pixel_id (dataset ID) elfogadott alakja. UGYANAZ a minta, amit az onboarding
+// már kikényszerít (scripts/generate-site.mjs) — a runtime-ellenőrzés nem lehet
+// lazább a beviteli oldalnál, különben a kézzel írt KV-bejegyzés kicsúszik alóla.
+const META_PIXEL_ID_PATTERN = /^\d{5,}$/;
+
 export interface MetaCAPIPayload {
   event_name: string;
   event_id: string;
@@ -86,6 +91,43 @@ export async function sendToMetaCAPI(
   const meta = siteConfig.meta;
   if (!meta) {
     return { success: true, skipped: true, skip_reason: 'not_configured' };
+  }
+
+  // A blokk megvan, de a pixel_id alakja használhatatlan (kitöltetlen
+  // `REPLACE_ME_*` placeholder, üres string, elgépelt vagy rossz típusú ID).
+  //
+  // MIÉRT ÁLLUNK MEG ITT: a pixel_id nem a body-ba megy, hanem az endpoint-URL
+  // ÚTVONALÁBA (lásd a `url`-t lentebb). Ezért a Meta nem validációs hibát ad rá,
+  // hanem Graph-objektumként próbálja feloldani — a válasz 400
+  // „Object with ID … does not exist, cannot be loaded due to missing
+  // permissions", ami első ránézésre jogosultsági problémának látszik, nem
+  // konfigurációs elgépelésnek. Az agykontroll 2026-07-27 és 08-11 között 43 ilyen
+  // külső hívást futtatott el `warning` súlyú vendor-hibakóddal (TRK-600-005),
+  // mire a hiba egyáltalán észrevehetővé vált.
+  //
+  // A skip ugyanabba a retryable ágba fut, mint a hiányzó blokk: DLQ-rekord +
+  // CRITICAL riasztás, és a KV javítása után az EREDETI event_id-vel újrajátszható.
+  // Így 43 néma külső 400 helyett egy azonnal látható, önmagát megmagyarázó sor lesz.
+  if (!META_PIXEL_ID_PATTERN.test(meta.pixel_id ?? '')) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID],
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      // Az érték HOSSZA és alakja diagnosztikus, maga az érték nem PII (a
+      // pixel_id publikus azonosító) — de a nyers logolást kerüljük, mert egy
+      // elrontott configba tévedésből bármi kerülhetett. A vendor_message-be
+      // úgysem jut el, hiszen hívás nem történik.
+      pixel_id_length: (meta.pixel_id ?? '').length
+    });
+    // SZÁNDÉKOSAN nincs `error_code` a visszatérési értéken: a fan-out a vendor-
+    // oldali kódokra általános CRITICAL-riasztást lő, MÉG a skip-osztályozás előtt
+    // (routes/conversion.ts). Ha itt kódot adnánk, egy be nem kötött platform
+    // formahibás ID-je is riasztana, és az elvárt platformnál duplán menne ki a
+    // riasztás. A ledger-kódot ezért — a `not_configured` mintájára — a
+    // normalizeDelivery képezi le a skip_reason-ből (lib/ledger.ts).
+    return { success: true, skipped: true, skip_reason: 'invalid_identifier' };
   }
 
   const url = `https://graph.facebook.com/${META_API_VERSION}/${meta.pixel_id}/events`;

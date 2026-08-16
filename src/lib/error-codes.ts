@@ -143,6 +143,13 @@ export enum TrackingErrorCode {
   // az eredeti payloaddal —, de hosszú backoff-fal, hogy a config helyreállítása
   // előtt ne égesse el a retry-keretet. E kód nélkül a skip csendes adatvesztés.
   PLATFORM_NOT_CONFIGURED = 'TRK-900-008',
+  // ELVÁRT platform, a config-blokk MEGVAN, de a benne lévő azonosító alakja
+  // használhatatlan (kitöltetlen placeholder, elgépelt vagy rossz típusú ID).
+  // Testvére a fentinek: ugyanaz a kár (a platform-láb halott), ugyanaz a
+  // gyógymód (KV-javítás + replay), csak a hiányzó blokk helyett egy formahibás
+  // mező okozza. Azért KÜLÖN kód, mert a teendő más: nem „írd be a blokkot",
+  // hanem „javítsd az azonosítót" — és a digestben is másképp kell olvasni.
+  PLATFORM_IDENTIFIER_INVALID = 'TRK-900-009',
 
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
@@ -281,6 +288,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Platform call failed AND the retry record could not be stored anywhere (Queue + R2) — event left undispatched; recovery needs a MANUAL resend (the caller already got its response, no automatic retry is coming)',
   [TrackingErrorCode.PLATFORM_NOT_CONFIGURED]:
     'An EXPECTED platform has no config block for this site — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the config is restored',
+  [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]:
+    'An EXPECTED platform has a config block, but its identifier is malformed (unfilled placeholder or typo) — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the identifier is fixed in KV',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
     'Vendor delivery failure rate exceeded threshold (reconciliation)',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
@@ -328,6 +337,10 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'critical',
   [TrackingErrorCode.RETRY_PERSIST_FAILED]: 'critical',
   [TrackingErrorCode.PLATFORM_NOT_CONFIGURED]: 'critical',
+  // Ugyanaz a súly, mint a hiányzó blokké: a platform-láb halott, és magától
+  // soha nem javul meg. A 43 elutasítás pont azért futhatott két hétig, mert
+  // vendor-oldali `warning` (TRK-600-005) volt, nem konfigurációs `critical`.
+  [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]: 'critical',
   [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]: 'critical',
   [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'critical',
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'critical',
