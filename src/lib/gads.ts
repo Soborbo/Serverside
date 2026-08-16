@@ -40,6 +40,13 @@ export interface GAdsResult {
   conversions_processed?: number;
   partial_failure_error?: string;
   error?: string;
+  /**
+   * Gépi olvasású vendor-hibarészlet (Data Manager `error.details[]`, benne a
+   * `fieldViolations` tömbbel). Az `error` marad a rövid összefoglaló; ez a
+   * mező a ledger `error_detail` oszlopába megy, hogy egy 400-as
+   * INVALID_ARGUMENT találgatás nélkül diagnosztizálható legyen.
+   */
+  error_detail?: string;
   error_code?: TrackingErrorCode;
   status?: number;
   // true → a hívás szándékosan kimaradt (nincs customer_id / conversion action /

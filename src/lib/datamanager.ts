@@ -5,7 +5,7 @@ import type { ConsentState } from './consent';
 import { getAccessToken } from './gads-oauth';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
-import { sanitizeErrorMessage } from './log-sanitize';
+import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
 import type { GAdsPayload, GAdsResult } from './gads';
 
 /**
@@ -229,8 +229,13 @@ export async function sendToDataManager(
       // The top-level message is generic ("There was a problem with the request.").
       // The actionable per-field validation errors live in error.details[] — log a
       // capped, sanitized snapshot so a 400 is diagnosable without guessing.
+      // A sanitizer alapértelmezett 200-as vágása pont a hasznos rész előtt
+      // ért véget (a generikus message + ErrorInfo-fejléc elviszi), így a
+      // `fieldViolations` — az EGYETLEN mező, ami megmondja MI a baj — sosem
+      // került a ledgerbe. VENDOR_DETAIL_MAX_LEN mellett megmarad; a PII-
+      // maszkolás (email/telefon/32+ hex → placeholder) változatlanul fut.
       const detailSnippet = responseBody.error?.details
-        ? sanitizeErrorMessage(JSON.stringify(responseBody.error.details))?.slice(0, 5000)
+        ? sanitizeErrorMessage(JSON.stringify(responseBody.error.details), VENDOR_DETAIL_MAX_LEN)
         : undefined;
       logStructured({
         level:
@@ -252,7 +257,8 @@ export async function sendToDataManager(
       return {
         success: false,
         error_code: errorCode,
-        error: detailSnippet ? `${sanitizedError} | ${detailSnippet}` : sanitizedError,
+        error: sanitizedError,
+        error_detail: detailSnippet,
         status: response.status
       };
     }
