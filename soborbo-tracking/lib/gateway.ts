@@ -21,6 +21,7 @@
  */
 
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
+import { getFbp, getFbcCookie, getStorageReadBlocked } from './persistence';
 import { CLIENT_LIB_VERSION } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
@@ -409,10 +410,17 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     return false;
   }
 
-  const fbp = getCookie('_fbp');
-  const fbc = getCookie('_fbc');
+  // Meta browser ids. Cookie READ is terminal-storage access under PECR, so it
+  // goes through the same marketing gate as the rest of the package
+  // (persistence.ts getFbp/getFbc) — not a second, ungated `getCookie` path.
+  // `_ga` / `_ga_<stream>` stay here: GA4's own cookies are analytics-scoped and
+  // the browser GA4 leg owns them (Model 2); the gateway sends no GA4.
+  const fbp = getFbp() || undefined;
+  const fbc = getFbcCookie() || undefined;
   const clientId = extractGAClientId(getCookie('_ga'));
   const sessionId = extractGASessionId();
+  // Snapshot AFTER the reads above, so a block recorded by them is reported.
+  const readBlocked = getStorageReadBlocked();
 
   const body = JSON.stringify({
     ...payload,
@@ -424,6 +432,11 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     // Fázis D telemetria — a döntést NEM befolyásolja, csak jelenti, mit láttak
     // a párhuzamos consent-források ebben a pillanatban.
     consent_sources: collectConsentSources(),
+    // PECR read-gate telemetria: blokkolt-e a consent-kapu storage-OLVASÁST ezen
+    // az oldalletöltésen. GRANTED consent melletti magas arány = betöltési
+    // verseny (a CookieYes API még nem töltött be, amikor olvastunk volna).
+    storage_read_blocked: readBlocked.blocked,
+    storage_read_blocked_keys: readBlocked.keys,
     attribution: payload.attribution || collectAttribution(),
     event_source_url: payload.event_source_url || location.href
   });

@@ -31,6 +31,7 @@ import {
 } from '../lib/consent';
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
+import { parseStorageReadTelemetry } from '../lib/storage-telemetry';
 import { parseEcommerce } from '../lib/ecommerce';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTerminalSkip } from '../lib/skip-reason';
@@ -838,7 +839,15 @@ function fanOut(
       ad_allowed: adAllowed,
       // Fázis D: forrásonkénti parse-olt booleanok + a döntést hajtó forrás.
       // NULL = az a forrás nem volt elérhető (a betöltési verseny bizonyítéka).
-      sources: consentTelemetry.sources
+      sources: consentTelemetry.sources,
+      // PECR read-gate (2. brief): blokkolt-e a kliens consent-kapuja
+      // storage-OLVASÁST. GRANTED consent melletti magas arány = betöltési
+      // verseny, MÁSODIK, független bizonyítékként. A consent-kapura nincs
+      // hatással — tisztán megfigyelés.
+      storage: parseStorageReadTelemetry(
+        payload.storage_read_blocked,
+        payload.storage_read_blocked_keys
+      )
     })
   );
 

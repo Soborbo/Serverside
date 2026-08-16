@@ -28,8 +28,10 @@ export {
   persistTrackingParams, captureUrlParams, getGclid, getFbclid, getFbp, getFbc,
   getAllTrackingData, getStoredData, getAttribution, getSourceType,
   getSessionId, getDevice, getPageUrl, clearTrackingData,
+  purgeMarketingStorage, purgeAnalyticsStorage,
+  getStorageReadBlocked, resetStorageReadBlocked,
   normalizeEmail, normalizePhone, sanitizeName,
-  type TrackingData, type AttributionData,
+  type TrackingData, type AttributionData, type StorageReadBlockedReport,
 } from './persistence';
 export {
   trackCalculatorStart, trackCalculatorStep, trackCalculatorOption,
@@ -53,6 +55,7 @@ import { hasMarketingConsent, hasAnalyticsConsent, onConsentChange } from './con
 import {
   persistTrackingParams, captureUrlParams,
   getGclid, getFbclid, getSessionId, getSourceType, getAttribution, getAllTrackingData,
+  purgeMarketingStorage, purgeAnalyticsStorage,
   normalizePhone,
 } from './persistence';
 import {
@@ -76,7 +79,16 @@ export function initTracking(): void {
   captureUrlParams();
   if (!consentListenerBound) {
     consentListenerBound = true;
-    onConsentChange((c) => { if (c.advertisement) persistTrackingParams(); });
+    // Withdrawal must reach the data at rest — until now this callback only had a
+    // grant branch, so `clearTrackingData()` existed but was never wired, and
+    // everything stored under a previous grant simply stayed there. Per category,
+    // because the two are revoked independently: turning marketing off while
+    // analytics stays on must not destroy the session.
+    onConsentChange((c) => {
+      if (c.advertisement) persistTrackingParams();
+      else purgeMarketingStorage();
+      if (!c.analytics) purgeAnalyticsStorage();
+    });
   }
   if (hasMarketingConsent()) persistTrackingParams();
 }

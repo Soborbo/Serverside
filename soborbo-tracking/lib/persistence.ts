@@ -1,10 +1,25 @@
 /**
  * Persistence — localStorage, attribution, sessions, normalization
  *
- * Storage rules:
- *   localStorage  → only after marketing consent
- *   sessionStorage → only after analytics consent
- *   memory         → always (lost on reload, that's fine)
+ * Storage rules (WRITE **and** READ):
+ *   localStorage / _fbp / _fbc → only with marketing consent
+ *   sessionStorage             → only with analytics consent
+ *   memory + URL params        → always (lost on reload, that's fine)
+ *
+ * WHY READS ARE GATED TOO (2026-08): under the UK PECR — and the ICO's April 2026
+ * final guidance — it is not only STORING on the terminal equipment that needs
+ * consent, but also GAINING ACCESS to what is stored there. Reading `sb_tracking`
+ * or the `_fbp` cookie is therefore exactly as consent-bound as writing it. The
+ * writes were already gated (`persistTrackingParams`, `getSession`); the reads
+ * were not, and every getter below fed the conversion payload.
+ *
+ * The URL is NOT terminal storage: `captureUrlParams()` and the direct
+ * `URLSearchParams` reads stay ungated on purpose. Do not "fix" that.
+ *
+ * The gate uses the SAME consent resolution as everything else in this package
+ * (`hasMarketingConsent` / `hasAnalyticsConsent`) — there is deliberately NO
+ * fourth reading path. Which source we believe is the subject of the Phase D
+ * measurement and must not change here.
  */
 
 import { hasMarketingConsent, hasAnalyticsConsent } from './consent';
@@ -49,6 +64,53 @@ export interface AttributionData {
 interface SessionData { id: string; lastActivity: number; }
 
 // ── Safe storage ───────────────────────────────────────────────────
+
+// ── Blocked-read telemetry (Phase D instrument — do NOT drop) ──────
+//
+// The read-gate has one real failure mode: `getCkyConsent()` not having loaded
+// yet. The package's consent helpers return `isDevMode()` in that case, i.e.
+// deny-all in production — so a CONSENTING visitor can have their gclid read
+// blocked purely because the CMP script was slow. That would be silent
+// attribution loss, and it is the same boot-race the Phase D diagnosis is
+// chasing. Every blocked read is therefore recorded and reported in the
+// conversion payload (`storage_read_blocked` / `storage_read_blocked_keys`),
+// so a high rate UNDER GRANTED CONSENT proves the race independently.
+//
+// Cumulative per page-load: a block early in the pageview stays reported even if
+// consent arrives later — that IS the signal. Keys only (`sb_tracking`, `_fbp`,
+// …), never values.
+const blockedReads = new Set<string>();
+/** Bounded: a runaway loop must not grow the payload without limit. */
+const MAX_BLOCKED_KEYS = 12;
+
+function noteBlockedRead(key: string): void {
+  if (blockedReads.size >= MAX_BLOCKED_KEYS && !blockedReads.has(key)) return;
+  blockedReads.add(key);
+}
+
+export interface StorageReadBlockedReport {
+  blocked: boolean;
+  keys: string[];
+}
+
+/** Telemetry snapshot for the gateway payload (see gateway.ts `sendToWorker`). */
+export function getStorageReadBlocked(): StorageReadBlockedReport {
+  return { blocked: blockedReads.size > 0, keys: [...blockedReads] };
+}
+
+/** Test seam / SPA reset. Production code never needs to call this. */
+export function resetStorageReadBlocked(): void {
+  blockedReads.clear();
+}
+
+/**
+ * Marketing-gated read. Returns `fallback` (and records the block) when consent
+ * is absent — never throws, never falls through to the storage call.
+ */
+function marketingRead<T>(key: string, read: () => T, fallback: T): T {
+  if (!hasMarketingConsent()) { noteBlockedRead(key); return fallback; }
+  return read();
+}
 
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k: string, v: string): void { try { localStorage.setItem(k, v); } catch { /* */ } }
@@ -199,7 +261,9 @@ export function persistTrackingParams(): void {
 
 export function getAttribution(): AttributionData {
   const r: AttributionData = {};
-  const fr = lsGet(FIRST_TOUCH_KEY);
+  // `sb_first_touch` is a SECOND localStorage key, so it needs its own gate —
+  // inheriting getStoredData()'s would leave this read open.
+  const fr = marketingRead(FIRST_TOUCH_KEY, () => lsGet(FIRST_TOUCH_KEY), null);
   if (fr) {
     try {
       const f = JSON.parse(fr);
@@ -230,8 +294,15 @@ export function getSourceType(): 'paid'|'organic'|'social'|'referral'|'direct' {
 
 // ── Data access ────────────────────────────────────────────────────
 
+/**
+ * The single localStorage read of `sb_tracking` — and therefore the single
+ * marketing gate every derived getter (`getGclid`, `getFbclid`, `getAttribution`,
+ * `getSourceType`, `getAllTrackingData`, `getFbc`) inherits. Without consent it
+ * returns `null`, exactly as it does for an absent/expired record, so callers
+ * need no new branch.
+ */
 export function getStoredData(): TrackingData | null {
-  const raw = lsGet(TRACKING_KEY);
+  const raw = marketingRead(TRACKING_KEY, () => lsGet(TRACKING_KEY), null);
   if (!raw) return null;
   try {
     const d: TrackingData = JSON.parse(raw);
@@ -258,8 +329,20 @@ export function getAllTrackingData(): Partial<TrackingData> {
   };
 }
 
+/**
+ * Meta's `_fbp` browser id. READING the cookie is terminal-storage access, so it
+ * sits behind the marketing gate too — `document.cookie` is not a free channel
+ * just because the Pixel wrote the value.
+ */
 export function getFbp(): string | null {
-  return typeof document !== 'undefined' ? document.cookie.match(/(?:^|;\s*)_fbp=([^;]*)/)?.[1] || null : null;
+  return marketingRead(
+    '_fbp',
+    () =>
+      typeof document !== 'undefined'
+        ? document.cookie.match(/(?:^|;\s*)_fbp=([^;]*)/)?.[1] || null
+        : null,
+    null
+  );
 }
 
 /**
@@ -278,11 +361,27 @@ export function getFbp(): string | null {
  * Spec: https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/fbp-and-fbc/
  */
 const FBCLID_RE = /^[A-Za-z0-9_-]{1,500}$/;
+
+/**
+ * The RAW Pixel-set `_fbc` cookie, marketing-gated, with NO reconstruction
+ * fallback. Exists so the gateway payload builder can read the cookie through
+ * the same single gate without inheriting `getFbc()`'s reconstruction — that
+ * would change what the browser leg sends under granted consent.
+ */
+export function getFbcCookie(): string | null {
+  return marketingRead(
+    '_fbc',
+    () =>
+      typeof document !== 'undefined'
+        ? document.cookie.match(/(?:^|;\s*)_fbc=([^;]*)/)?.[1] || null
+        : null,
+    null
+  );
+}
+
 export function getFbc(): string | null {
-  if (typeof document !== 'undefined') {
-    const cookie = document.cookie.match(/(?:^|;\s*)_fbc=([^;]*)/)?.[1];
-    if (cookie) return cookie;
-  }
+  const cookie = getFbcCookie();
+  if (cookie) return cookie;
   const stored = getStoredData();
   if (!stored?.fbclid || !stored.fbclidAt) return null;
   if (!FBCLID_RE.test(stored.fbclid)) return null;
@@ -298,7 +397,71 @@ export function getDevice(): 'mobile'|'tablet'|'desktop' {
   return w < 768 ? 'mobile' : w < 1024 ? 'tablet' : 'desktop';
 }
 
-export function clearTrackingData(): void {
-  lsRm(TRACKING_KEY); lsRm(FIRST_TOUCH_KEY); ssRm(SESSION_KEY);
+// ── Purge on consent withdrawal ────────────────────────────────────
+//
+// Withdrawal has to reach the data at rest, not just future writes: leaving
+// `sb_tracking` in place after the user revokes marketing consent means we keep
+// storing (and, until the read-gate above, kept reading) exactly what they
+// withdrew. Two functions, deliberately NOT one — the categories are revoked
+// independently, and a visitor who turns marketing off while leaving analytics on
+// must keep their session.
+
+/**
+ * Best-effort first-party cookie deletion.
+ *
+ * KNOWN LIMITS (documented, not bugs):
+ *  - The Domain attribute is not readable back from `document.cookie`, so we
+ *    expire the name under the host, `.host` and the parent domain with `path=/`.
+ *    A cookie written on a deeper path survives.
+ *  - An HttpOnly cookie (server-set first-party `_fbp` in a CAPI-gateway/Stape
+ *    setup) is invisible AND undeletable from JS. Nothing client-side can fix
+ *    that; it needs a Set-Cookie from the same origin.
+ *  - CHIPS/partitioned cookies need the matching `Partitioned` attribute.
+ * The read-gate is what actually enforces the withdrawal in those cases: even if
+ * the value survives, we no longer access it.
+ */
+function expireCookie(name: string): void {
+  if (typeof document === 'undefined') return;
+  const past = 'Thu, 01 Jan 1970 00:00:00 GMT';
+  const host = typeof location !== 'undefined' ? location.hostname : '';
+  const parent = host.split('.').slice(-2).join('.');
+  const domains = [undefined, host, `.${host}`, parent ? `.${parent}` : undefined];
+  for (const d of domains) {
+    if (d === '' || d === '.') continue;
+    try {
+      document.cookie = `${name}=; path=/; expires=${past}; SameSite=Lax${d ? `; domain=${d}` : ''}`;
+    } catch { /* */ }
+  }
+}
+
+/** localStorage half of the marketing purge — shared with clearTrackingData. */
+function removeMarketingLocalStorage(): void {
+  lsRm(TRACKING_KEY); lsRm(FIRST_TOUCH_KEY);
+}
+
+/**
+ * Marketing consent withdrawn → drop the attribution at rest: `sb_tracking`,
+ * `sb_first_touch`, and the Meta `_fbp` / `_fbc` cookies where technically
+ * possible (see `expireCookie` limits).
+ */
+export function purgeMarketingStorage(): void {
+  removeMarketingLocalStorage();
+  expireCookie('_fbp');
+  expireCookie('_fbc');
+}
+
+/** Analytics consent withdrawn → drop `sb_session` and the in-memory session. */
+export function purgeAnalyticsStorage(): void {
+  ssRm(SESSION_KEY);
   memorySession = null;
+}
+
+/**
+ * Legacy "clear everything" helper. Behaviour UNCHANGED (localStorage keys +
+ * `sb_session` + memory session; it does NOT touch the Meta cookies) — the
+ * consent-withdrawal path is the category-split pair above, which does.
+ */
+export function clearTrackingData(): void {
+  removeMarketingLocalStorage();
+  purgeAnalyticsStorage();
 }
