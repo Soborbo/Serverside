@@ -436,6 +436,13 @@ export interface ConsentReceiptSources {
   ingress_kind: IngressKind;
   client_lib_version?: string;
   consent_age_s?: number;
+  /**
+   * A TRK-910 megállapítások vesszős listája (pl. "TRK-910-003,TRK-910-005"),
+   * vagy undefined, ha az event tiszta. Enélkül a -005/-006 kód SEHOL nem lenne
+   * D1-ből lekérdezhető, pedig épp azok aránya dönti el, hogy a CookieYes vagy a
+   * saját bekötéseink hibáznak (a Fázis D döntési kapuja).
+   */
+  finding_codes?: string;
 }
 
 /** boolean|null → INTEGER|null (a NULL végig NULL marad). */
@@ -455,8 +462,8 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
       `INSERT INTO consent_receipts
          (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at,
           src_cookie_analytics, src_cookie_marketing, src_api_analytics, src_api_marketing, src_server_analytics, src_server_marketing,
-          source_used, source_consistent, ingress_kind, client_lib_version, consent_age_s)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          source_used, source_consistent, ingress_kind, client_lib_version, consent_age_s, finding_codes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -482,7 +489,8 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
         s?.client_lib_version ?? null,
         // CookieYes alatt MINDIG NULL — a süti nem hordoz timestampet, és
         // heurisztikát nem találunk ki rá.
-        s?.consent_age_s ?? null
+        s?.consent_age_s ?? null,
+        s?.finding_codes ?? null
       )
       .run();
   } catch (err) {

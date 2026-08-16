@@ -78,6 +78,10 @@ export interface Env {
   CONSENT_RETENTION_DAYS?: string;
   // Opt-in: lead_status purge napokban (default OFF — az offline-konverzió marad).
   LEAD_RETENTION_DAYS?: string;
+  // Fázis D: a consent_debug (NYERS consent-stringek, csak mismatch esetén)
+  // purge-ablaka. Unset → 14 nap, és a purge NEM opt-in: ez rövid életű
+  // bizonyíték, nem napló.
+  CONSENT_DEBUG_RETENTION_DAYS?: string;
   // R2 'dead' DLQ-archívum purge napokban. Unset → RETENTION_DAYS default (90).
   // A PENDING (retry-olható) rekordokat SOHA nem purge-öljük.
   DEAD_RECORD_RETENTION_DAYS?: string;

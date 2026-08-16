@@ -18,6 +18,15 @@
 
 export const DEFAULT_RETENTION_DAYS = 90;
 
+/**
+ * A `consent_debug` tábla megőrzési ablaka (Fázis D). RÖVID ÉS ALAPBÓL BE VAN
+ * KAPCSOLVA — szemben a `consent_receipts`-szel, ami consent-proof, tehát
+ * megmarad. Ez a tábla NYERS consent-stringeket tárol (a consentid-vel együtt),
+ * kizárólag mismatch-diagnosztikához: nem napló, hanem rövid életű bizonyíték.
+ * A CONSENT_DEBUG_RETENTION_DAYS env felülírhatja, de a default nem 90.
+ */
+export const CONSENT_DEBUG_RETENTION_DAYS = 14;
+
 export interface RetentionPolicy {
   table: string;
   /** ISO 8601 text timestamp oszlop, ami alapján vágunk. */
@@ -53,6 +62,7 @@ export function cutoffIso(nowMs: number, days: number): string {
 export function buildRetentionPolicies(env: {
   RETENTION_DAYS?: string;
   CONSENT_RETENTION_DAYS?: string;
+  CONSENT_DEBUG_RETENTION_DAYS?: string;
   LEAD_RETENTION_DAYS?: string;
 }): RetentionPolicy[] {
   const days = resolveRetentionDays(env.RETENTION_DAYS);
@@ -61,7 +71,15 @@ export function buildRetentionPolicies(env: {
     { table: 'events_raw', column: 'received_at', days },
     { table: 'deliveries', column: 'created_at', days },
     // do_not_replay = 1 → permanens szuppressziós lista, SOHA nem purge-öljük.
-    { table: 'idempotency', column: 'last_seen_at', days, guard: 'do_not_replay = 0' }
+    { table: 'idempotency', column: 'last_seen_at', days, guard: 'do_not_replay = 0' },
+    // Fázis D: a nyers consent-stringek rövid életűek, és a purge NEM opt-in —
+    // ez a tábla percenként nőhet egy elromlott CMP mellett, és tartalma
+    // érzékenyebb, mint a receipteké.
+    {
+      table: 'consent_debug',
+      column: 'created_at',
+      days: resolveRetentionDays(env.CONSENT_DEBUG_RETENTION_DAYS, CONSENT_DEBUG_RETENTION_DAYS)
+    }
   ];
 
   // Opt-in, érzékeny táblák — alapból OFF (fallback 0 = kihagyás).

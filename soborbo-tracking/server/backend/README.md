@@ -36,7 +36,11 @@ beautyflow.hu) — do not "simplify" them; every odd-looking line is a fixed inc
 ```ts
 // src/pages/api/contact.ts (Astro API route) — the shape that runs in production
 import type { APIRoute } from 'astro';
-import { sendGatewayConversion, readConsentFromCookie } from '../../lib/tracking/gateway-dispatch';
+import {
+  sendGatewayConversion,
+  readConsentFromCookie,
+  buildConsentSources,
+} from '../../lib/tracking/gateway-dispatch';
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const env = locals.runtime.env;
@@ -75,6 +79,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     },
     // Same CookieYes cookie the browser reads → the two legs cannot disagree.
     consent: readConsentFromCookie(request.headers.get('cookie')),
+    // Phase D consent diagnostics: reports WHAT this backend saw, and does not
+    // change what is sent. Without it the gateway records NULL sources for every
+    // server-ingress event — and every high-value conversion travels this path,
+    // so the measurement would be blind exactly where it matters.
+    consentSources: buildConsentSources(request.headers.get('cookie')),
     eventSourceUrl: request.headers.get('referer') || undefined,
     // The REAL visitor's IP/UA — not the Worker's egress.
     clientIpAddress: request.headers.get('cf-connecting-ip') || undefined,

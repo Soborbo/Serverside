@@ -50,6 +50,17 @@ ALTER TABLE consent_receipts ADD COLUMN client_lib_version TEXT;
 -- és heurisztikát nem találunk ki rá. Csak az sbo_consent korszakban lesz értéke.
 ALTER TABLE consent_receipts ADD COLUMN consent_age_s INTEGER;
 
+-- KIEGÉSZÍTÉS a brief oszloplistájához (jelezve, mert ELTÉRÉS a specifikációtól):
+-- a napi keresztellenőrzés (S3/2.) „TRK-9xx darabszám site_id × client_lib_version
+-- bontásban"-t kér. A -002/-003 a consent_debug-ból számolható, a -001 a
+-- jel-oszlopokból — de a -005 (a jelek belül inkonzisztensek) és a -006 (elavult
+-- kliens-lib) SEHOL nem lenne D1-ből lekérdezhető, csak a Workers-logban.
+-- Márpedig épp ezek dominanciája dönti el a döntési kaput (A kimenetel: „a saját
+-- bekötéseink csúsznak szét"). Ezért a receipt egy vesszős KÓD-listát is hordoz
+-- (pl. "TRK-910-003,TRK-910-005"); tiszta eventnél NULL. Ez parse-olt telemetria,
+-- NEM nyers süti — az továbbra is kizárólag a consent_debug táblába megy.
+ALTER TABLE consent_receipts ADD COLUMN finding_codes TEXT;
+
 -- ── 3. Rövid életű debug-tábla ───────────────────────────────────────────────
 -- CSAK mismatch esetén ír (TRK-910-002 parse-olhatatlan / TRK-910-003 források
 -- ellentmondanak). A nyers süti-stringek KIZÁRÓLAG ide kerülnek, a

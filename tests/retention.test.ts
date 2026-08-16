@@ -36,16 +36,35 @@ describe('cutoffIso', () => {
 });
 
 describe('buildRetentionPolicies', () => {
-  it('purges only operational tables by default', () => {
+  it('purges only operational tables (+ consent_debug) by default', () => {
     const tables = buildRetentionPolicies({}).map((p) => p.table);
-    expect(tables).toEqual(['events_raw', 'deliveries', 'idempotency']);
+    expect(tables).toEqual(['events_raw', 'deliveries', 'idempotency', 'consent_debug']);
+    // A consent-PROOF és az üzleti érték marad; a nyers debug-string nem.
     expect(tables).not.toContain('consent_receipts');
     expect(tables).not.toContain('lead_status');
   });
 
   it('uses RETENTION_DAYS for the operational tables', () => {
     const policies = buildRetentionPolicies({ RETENTION_DAYS: '30' });
-    expect(policies.every((p) => p.days === 30)).toBe(true);
+    const operational = policies.filter((p) => p.table !== 'consent_debug');
+    expect(operational.every((p) => p.days === 30)).toBe(true);
+  });
+
+  it('purges consent_debug after 14 days — NOT opt-in, NOT the 90-day window', () => {
+    // A tábla nyers consent-stringeket tárol (consentid-vel). Rövid életű
+    // bizonyíték, nem napló: ha a RETENTION_DAYS-t követné, hónapokig állna.
+    const debug = buildRetentionPolicies({ RETENTION_DAYS: '90' }).find(
+      (p) => p.table === 'consent_debug'
+    );
+    expect(debug?.days).toBe(14);
+    expect(deleteSql(debug!)).toBe('DELETE FROM consent_debug WHERE created_at < ?1');
+  });
+
+  it('a consent_debug ablak env-vel felülírható', () => {
+    const debug = buildRetentionPolicies({ CONSENT_DEBUG_RETENTION_DAYS: '7' }).find(
+      (p) => p.table === 'consent_debug'
+    );
+    expect(debug?.days).toBe(7);
   });
 
   it('protects the do_not_replay suppression list on idempotency', () => {

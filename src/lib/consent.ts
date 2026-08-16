@@ -477,6 +477,11 @@ export interface ConsentTelemetry {
     ingress_kind: IngressKind;
     client_lib_version?: string;
     consent_age_s?: number;
+    /**
+     * A megállapítások vesszős TRK-kód-listája a receipten (D1-ből lekérdezhető
+     * bontáshoz), vagy undefined, ha az event tiszta.
+     */
+    finding_codes?: string;
   };
   diagnostics: ConsentDiagnostics;
   /** A naplózandó TRK-910 kódok (a findings sorrendjében). */
@@ -535,7 +540,11 @@ export function buildConsentTelemetry(input: ConsentTelemetryInput): ConsentTele
       source_consistent: diagnostics.source_consistent,
       ingress_kind: input.ingressKind,
       client_lib_version: client?.client_lib_version,
-      consent_age_s: client?.consent_age_s
+      consent_age_s: client?.consent_age_s,
+      finding_codes:
+        diagnostics.findings.length > 0
+          ? diagnostics.findings.map((f) => CONSENT_FINDING_CODES[f]).join(',')
+          : undefined
     },
     diagnostics,
     errorCodes: diagnostics.findings.map((f) => CONSENT_FINDING_CODES[f]),

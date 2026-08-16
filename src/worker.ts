@@ -21,6 +21,7 @@ import {
 import { handleDailyDigest } from './scheduled/daily-digest';
 import { handleSloCheck } from './scheduled/slo-check';
 import { handleReconciliation } from './scheduled/reconciliation';
+import { handleConsentCrossCheck } from './scheduled/consent-check';
 import { handleRetention } from './scheduled/retention';
 import {
   writeDeadLetter,
@@ -151,6 +152,11 @@ export default {
     } else if (event.cron === '15 8 * * *') {
       // Napi reconciliation (drift-detektálás a D1 ledger fölött), a digest után.
       ctx.waitUntil(handleReconciliation(env));
+    } else if (event.cron === '30 8 * * *') {
+      // Fázis D — napi consent-keresztellenőrzés a TEGNAPI UTC-napra, a
+      // reconciliation után. Külön cron, mert külön kérdésre válaszol: nem a
+      // kézbesítés driftjét méri, hanem hogy a consent-források egyetértenek-e.
+      ctx.waitUntil(handleConsentCrossCheck(env));
     } else if (event.cron === '*/30 * * * *') {
       ctx.waitUntil(handleSloCheck(env));
     } else if (event.cron === '30 3 * * *') {

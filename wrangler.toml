@@ -139,6 +139,7 @@ simple = { limit = 20, period = 60 }
 crons = [
   "0 8 * * *",        # Daily digest at 8 AM GMT
   "15 8 * * *",       # Reconciliation drift-check (D1 ledger) at 8:15 AM GMT
+  "30 8 * * *",       # Phase D consent cross-check (consent sources vs skips) at 8:30 AM GMT
   "*/30 * * * *",     # SLO check every 30 min
   "30 3 * * *",       # Retention cleanup (D1 ledger + R2 'dead' archive) at 3:30 AM GMT
   "0 * * * *"         # DLQ retry every hour
