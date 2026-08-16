@@ -105,6 +105,14 @@ export interface ConversionRequestPayload {
   // Google Consent Mode v2 jelek (ad_user_data, ad_personalization, ad_storage,
   // analytics_storage). Lásd lib/consent.ts.
   consent?: unknown;
+  // Fázis D — TELEMETRIA, nem döntés. A kliens (böngésző-lib vagy site-backend)
+  // ide jelenti, MIT látott az egyes consent-forrásokból (CookieYes süti-parse,
+  // getCkyConsent() API), melyikből döntött, és milyen lib-verzióval. A gateway
+  // ezt a saját Cookie-header olvasatával veti össze (lib/consent.ts
+  // buildConsentTelemetry). SZÁNDÉKOSAN nincs rá elutasítási szabály: a blokk
+  // hiánya vagy hibás formája a forrást „nem elérhető"-vé teszi, de a konverziót
+  // SOHA nem buktathatja el.
+  consent_sources?: unknown;
   // Univerzális attribúció: click ID-k (gclid/gbraid/wbraid/fbclid/...) + UTM-ek
   // + kontextus. Lásd lib/attribution.ts.
   attribution?: unknown;

@@ -1,7 +1,12 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
-import type { ConsentState } from './consent';
+import type {
+  ConsentState,
+  ConsentSourceSnapshot,
+  ConsentSourceName,
+  IngressKind
+} from './consent';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
@@ -413,15 +418,45 @@ export interface ConsentReceiptInput {
   consent?: ConsentState;
   require_consent: boolean;
   ad_allowed: boolean;
+  /**
+   * Fázis D — forrásonkénti, PARSE-OLT booleanok (NEM nyers stringek: azok
+   * kizárólag a consent_debug táblába mennek, és csak mismatch esetén).
+   * A `null` itt tartalmi állítás: az a forrás nem volt elérhető abban a
+   * pillanatban — ez a betöltési verseny bizonyítéka, nem hiányzó adat.
+   */
+  sources?: ConsentReceiptSources;
+}
+
+export interface ConsentReceiptSources {
+  cookie: ConsentSourceSnapshot;
+  api: ConsentSourceSnapshot;
+  server: ConsentSourceSnapshot;
+  source_used: ConsentSourceName;
+  source_consistent: 1 | 0 | null;
+  ingress_kind: IngressKind;
+  client_lib_version?: string;
+  consent_age_s?: number;
+}
+
+/** boolean|null → INTEGER|null (a NULL végig NULL marad). */
+function boolCol(v: boolean | null | undefined): 0 | 1 | null {
+  if (v === true) return 1;
+  if (v === false) return 0;
+  return null;
 }
 
 export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Promise<void> {
   if (!env.LEDGER) return;
+  const s = c.sources;
   try {
     await env.LEDGER.prepare(
+      // Az új oszlopok a 0004 migrációból, az oszloplista VÉGÉN (ALTER TABLE
+      // sorrend) — a meglévő pozíciófüggő olvasók így nem csúsznak el.
       `INSERT INTO consent_receipts
-         (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at,
+          src_cookie_analytics, src_cookie_marketing, src_api_analytics, src_api_marketing, src_server_analytics, src_server_marketing,
+          source_used, source_consistent, ingress_kind, client_lib_version, consent_age_s)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -434,11 +469,64 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
         c.consent?.analytics_storage ?? null,
         c.require_consent ? 1 : 0,
         c.ad_allowed ? 1 : 0,
-        new Date().toISOString()
+        new Date().toISOString(),
+        boolCol(s?.cookie.analytics),
+        boolCol(s?.cookie.marketing),
+        boolCol(s?.api.analytics),
+        boolCol(s?.api.marketing),
+        boolCol(s?.server.analytics),
+        boolCol(s?.server.marketing),
+        s?.source_used ?? null,
+        s?.source_consistent ?? null,
+        s?.ingress_kind ?? null,
+        s?.client_lib_version ?? null,
+        // CookieYes alatt MINDIG NULL — a süti nem hordoz timestampet, és
+        // heurisztikát nem találunk ki rá.
+        s?.consent_age_s ?? null
       )
       .run();
   } catch (err) {
     ledgerError('recordConsentReceipt', err, { site_id: c.site_id });
+  }
+}
+
+export interface ConsentDebugInput {
+  event_id: string;
+  site_id: string;
+  error_code: string;
+  raw_cookie?: string;
+  raw_api?: string;
+  raw_server?: string;
+}
+
+/**
+ * Nyers consent-stringek — KIZÁRÓLAG mismatch/parse-hiba esetén (TRK-910-002 /
+ * TRK-910-003), és KIZÁRÓLAG ebbe a táblába. A `consent_receipts` sosem kap
+ * nyers sütit; ez a tábla 14 nap után purge-ölődik (lib/retention.ts).
+ *
+ * Sosem dob és sosem logolja ki a nyers tartalmat (CLAUDE.md 13.).
+ */
+export async function recordConsentDebug(env: Env, d: ConsentDebugInput): Promise<void> {
+  if (!env.LEDGER) return;
+  try {
+    await env.LEDGER.prepare(
+      `INSERT INTO consent_debug
+         (id, event_id, site_id, error_code, raw_cookie, raw_api, raw_server, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        id(),
+        d.event_id,
+        d.site_id,
+        d.error_code,
+        d.raw_cookie ?? null,
+        d.raw_api ?? null,
+        d.raw_server ?? null,
+        new Date().toISOString()
+      )
+      .run();
+  } catch (err) {
+    ledgerError('recordConsentDebug', err, { site_id: d.site_id });
   }
 }
 

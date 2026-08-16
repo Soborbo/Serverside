@@ -150,6 +150,40 @@ export enum TrackingErrorCode {
   // előtt ne égesse el a retry-keretet. E kód nélkül a skip csendes adatvesztés.
   PLATFORM_NOT_CONFIGURED = 'TRK-900-008',
 
+  // ── 910: Consent-diagnosztika (Fázis D, 2026-08) ──────────────────────────
+  // SÁVVÁLASZTÁS — olvasd el, mielőtt „javítanád": az éjszakai brief ezeket
+  // TRK-900-001…006-ként írja le, DE a 900-as sáv 001–008 ALREADY FOGLALT
+  // (DLQ + Cron: DLQ_WRITE_FAILED … PLATFORM_NOT_CONFIGURED), élesben kibocsátott
+  // kódokkal, amikre a docs/error-codes.md, a Workers-log-keresések és a
+  // historikus riasztások hivatkoznak. Újraszámozni őket néma diagnosztika-
+  // vesztés lenne (egy TRK-900-002 találat holnap már mást jelentene, mint
+  // tegnap). Ezért a consent-kódok a szabad 910-es sávot kapják, 1:1 sorrendben
+  // a briefhez: 910-001 ↔ 900-001, … 910-006 ↔ 900-006. Lásd a PR nyitott kérdését.
+  /** brief: TRK-900-001 — a consent objektum teljesen hiányzik a payloadból. */
+  CONSENT_MISSING = 'TRK-910-001',
+  /** brief: TRK-900-002 — jelen van, de egyetlen érvényes jel sem olvasható ki. */
+  CONSENT_UNPARSEABLE = 'TRK-910-002',
+  /** brief: TRK-900-003 — két forrás ellentmond (source_consistent=0). */
+  CONSENT_SOURCE_MISMATCH = 'TRK-910-003',
+  /**
+   * brief: TRK-900-004 — a consent lejárt. **DEFINIÁLVA, DE NEM ÉLESÍTVE.**
+   * CookieYes alatt SOHA nem tüzelhet: a `cookieyes-consent` süti nem hordoz
+   * timestampet, tehát a `consent_age_s` mindig NULL. Kizárólag az sbo_consent
+   * korszakban aktiválható, amikor a saját CMP a döntés idejét is rögzíti.
+   */
+  CONSENT_EXPIRED = 'TRK-910-004',
+  /** brief: TRK-900-005 — a jelek belül inkonzisztensek (ad-hármas szétesik). */
+  CONSENT_SIGNALS_INCONSISTENT = 'TRK-910-005',
+  /** brief: TRK-900-006 — client_lib_version a minimum alatt (WARN, később block). */
+  CONSENT_CLIENT_LIB_OUTDATED = 'TRK-910-006',
+  /** A napi consent-keresztellenőrzés (S3) D1-lekérdezése elbukott. */
+  CONSENT_CROSS_CHECK_FAILED = 'TRK-910-007',
+  /**
+   * GRANTED consent MELLETT keletkezett `skipped` delivery — pontosan az a 9
+   * darab rejtély, amiért a Fázis D létezik. Nem szabadna léteznie.
+   */
+  CONSENT_GRANTED_BUT_SKIPPED = 'TRK-910-008',
+
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
   RECON_QUERY_FAILED = 'TRK-950-003',
@@ -296,6 +330,22 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Platform call failed AND the retry record could not be stored anywhere (Queue + R2) — event left undispatched; recovery needs a MANUAL resend (the caller already got its response, no automatic retry is coming)',
   [TrackingErrorCode.PLATFORM_NOT_CONFIGURED]:
     'An EXPECTED platform has no config block for this site — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the config is restored',
+  [TrackingErrorCode.CONSENT_MISSING]:
+    'Consent object absent from the payload — the site require_consent rule decides (no behaviour change from this code)',
+  [TrackingErrorCode.CONSENT_UNPARSEABLE]:
+    'Consent object present but no valid Consent Mode v2 signal could be read — uncertain consent (consent_debug row written)',
+  [TrackingErrorCode.CONSENT_SOURCE_MISMATCH]:
+    'Two consent sources disagree (cookie / getCkyConsent API / server Cookie header) — uncertain consent (consent_debug row written)',
+  [TrackingErrorCode.CONSENT_EXPIRED]:
+    'Consent older than the retention policy — DEFINED BUT NOT ARMED: under CookieYes consent_age_s is always NULL, so this can never fire',
+  [TrackingErrorCode.CONSENT_SIGNALS_INCONSISTENT]:
+    'Consent signals internally inconsistent (e.g. ad_user_data GRANTED while ad_storage is missing or DENIED)',
+  [TrackingErrorCode.CONSENT_CLIENT_LIB_OUTDATED]:
+    'Reported client_lib_version is below the minimum that emits consent telemetry — warn now, block later',
+  [TrackingErrorCode.CONSENT_CROSS_CHECK_FAILED]:
+    'Daily consent cross-check D1 query failed — that leg is dark for the day',
+  [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]:
+    'A delivery was skipped while its consent receipt says GRANTED — the exact anomaly Phase D exists to explain; check the skip_reason breakdown',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
     'Vendor delivery failure rate exceeded threshold (reconciliation)',
   [TrackingErrorCode.RECON_COVERAGE_DRIFT]:
@@ -418,6 +468,22 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.SITE_CONFIG_DRIFT]: 'critical',
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RETENTION_R2_FAILED]: 'warning',
+
+  // Consent-diagnosztika. A per-event kódok INFO-k: `consent_strict: false`
+  // mellett ezek NEM viselkedésváltozást jelentenek, csak megfigyelést, és egy
+  // gyakori betöltési verseny warningja két nap alatt zajjá tenné a riasztási
+  // láncot — pont azt a fáradtságot okozva, ami a néma hibákat elrejti. Az
+  // aggregált jel a NAPI keresztellenőrzésé (S3), az riaszt.
+  [TrackingErrorCode.CONSENT_MISSING]: 'info',
+  [TrackingErrorCode.CONSENT_UNPARSEABLE]: 'info',
+  [TrackingErrorCode.CONSENT_SOURCE_MISMATCH]: 'info',
+  [TrackingErrorCode.CONSENT_EXPIRED]: 'info',
+  [TrackingErrorCode.CONSENT_SIGNALS_INCONSISTENT]: 'info',
+  [TrackingErrorCode.CONSENT_CLIENT_LIB_OUTDATED]: 'info',
+  [TrackingErrorCode.CONSENT_CROSS_CHECK_FAILED]: 'warning',
+  // Ez viszont NEM zaj: GRANTED consent mellett keletkezett skip. Nem szabadna
+  // léteznie — a napi ellenőrzés ezen riaszt, ha nem nulla.
+  [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'warning',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',

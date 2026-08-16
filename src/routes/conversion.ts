@@ -21,7 +21,14 @@ import { sendToMetaCAPI, type MetaCAPIPayload, type MetaCAPIResult } from '../li
 import { sendToTikTok, type TikTokPayload, type TikTokResult } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload, type LinkedInResult } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload, type MsAdsResult } from '../lib/msads';
-import { parseConsent, resolveConsent, type ConsentDecision } from '../lib/consent';
+import {
+  parseConsent,
+  resolveConsent,
+  buildConsentTelemetry,
+  parseConsentCookieHeader,
+  type ConsentDecision,
+  type ConsentTelemetry
+} from '../lib/consent';
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
 import { parseEcommerce } from '../lib/ecommerce';
@@ -35,6 +42,7 @@ import {
   markDispatched,
   recordEventRaw,
   recordConsentReceipt,
+  recordConsentDebug,
   recordDeliveries,
   normalizeDelivery,
   isValidLeadId,
@@ -582,6 +590,63 @@ export async function handleConversion(
   // pedig kizárólag offline megy (routes/lead-status.ts), saját consent-kapuval.
   const consentState = parseConsent(payload.consent);
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
+
+  // ── Fázis D · consent-diagnosztika (2026-08) ────────────────────────────────
+  // A FENTI KAPU VÁLTOZATLAN. Ez a blokk MÉR: begyűjti a párhuzamos consent-
+  // olvasatokat (kliens süti-parse, kliens getCkyConsent API, és itt: a worker
+  // SAJÁT Cookie-header parse-a), összeveti őket, és TRK-910 kódokat állít elő.
+  //
+  // A kézbesítési döntést KIZÁRÓLAG a `consent_strict: true` site-configon írja
+  // felül (bizonytalan consent → fail-closed). Default false → nulla
+  // viselkedésváltozás; ezt a tests/consent-strict-parity.test.ts bizonyítja.
+  //
+  // Szerver-ingressen a Cookie header jellemzően HIÁNYZIK (a site backendje
+  // service bindingon hív, a végfelhasználó sütijeit nem továbbítja) — ilyenkor
+  // a `src_server_*` NULL marad, és a süti-olvasatot a site backendje jelenti a
+  // `consent_sources` blokkban. A NULL itt adat, nem hiba.
+  const consentTelemetry = buildConsentTelemetry({
+    rawConsent: payload.consent,
+    rawSources: payload.consent_sources,
+    consent: consentState,
+    baseAdAllowed: consentDecision.adAllowed,
+    requireConsent: siteConfig.require_consent === true,
+    strict: siteConfig.consent_strict === true,
+    ingressKind: serverIngress ? 'server' : 'browser',
+    serverCookie: parseConsentCookieHeader(request.headers.get('Cookie'))
+  });
+  for (const code of consentTelemetry.errorCodes) {
+    logStructured({
+      // INFO: strict=false mellett ez megfigyelés, nem hiba. A napi
+      // keresztellenőrzés (scheduled/consent-check.ts) az, ami riaszt.
+      level: 'info',
+      error_code: code,
+      message: ERROR_DESCRIPTIONS[code],
+      hostname,
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      // A JELEK sosem PII-k; a nyers süti-string SOHA nem kerül logba (csak a
+      // consent_debug táblába, mismatch esetén). CLAUDE.md 13.
+      source_consistent: consentTelemetry.sources.source_consistent,
+      source_used: consentTelemetry.sources.source_used,
+      ingress_kind: consentTelemetry.sources.ingress_kind,
+      client_lib_version: consentTelemetry.sources.client_lib_version,
+      consent_strict: siteConfig.consent_strict === true,
+      strict_blocked: consentTelemetry.strictBlocked
+    });
+  }
+  if (consentTelemetry.debug) {
+    ctx.waitUntil(
+      recordConsentDebug(env, {
+        event_id: payload.event_id,
+        site_id: siteConfig.site_id,
+        error_code: consentTelemetry.debug.error_code,
+        raw_cookie: consentTelemetry.debug.raw_cookie,
+        raw_api: consentTelemetry.debug.raw_api,
+        raw_server: consentTelemetry.debug.raw_server
+      })
+    );
+  }
+
   const attribution = parseAttribution(payload.attribution);
 
   // A quote-state Durable Object (60 perces halasztott Lead + upgrade-öröklés)
@@ -634,6 +699,7 @@ export async function handleConversion(
     clientIp,
     userAgent,
     consentDecision,
+    consentTelemetry,
     attribution,
     leadId,
     env,
@@ -726,13 +792,17 @@ function fanOut(
   clientIp: string | undefined,
   userAgent: string | undefined,
   consentDecision: ConsentDecision,
+  consentTelemetry: ConsentTelemetry,
   attribution: AttributionParams | undefined,
   leadId: string | undefined,
   env: Env,
   ctx: ExecutionContext
 ): Promise<FanOutOutcome> {
   try {
-  const adAllowed = consentDecision.adAllowed;
+  // `consent_strict: false` (default) mellett ez BITRE a consentDecision.adAllowed
+  // — a telemetria csak akkor írja felül, ha a site explicit strict módban van
+  // ÉS a consent bizonyítottan bizonytalan (TRK-910-002/003/005).
+  const adAllowed = consentTelemetry.adAllowed;
 
   // Meta fbc: a kliens _fbc cookie-ja elsődleges; ha nincs, fbclid-ből építjük.
   const fbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
@@ -765,7 +835,10 @@ function fanOut(
       site_id: siteConfig.site_id,
       consent: consentDecision.consent,
       require_consent: siteConfig.require_consent === true,
-      ad_allowed: adAllowed
+      ad_allowed: adAllowed,
+      // Fázis D: forrásonkénti parse-olt booleanok + a döntést hajtó forrás.
+      // NULL = az a forrás nem volt elérhető (a betöltési verseny bizonyítéka).
+      sources: consentTelemetry.sources
     })
   );
 
@@ -840,11 +913,17 @@ function fanOut(
   // A flag NEM elhagyható: e nélkül a ledger 'accepted'-et írna vendor HTTP-státusz
   // nélkül — a lomtalan Meta-lába pont így nézett ki egészségesnek, miközben a
   // Meta semmit nem kapott (2026-07-14, D1 ledger). Lásd normalizeDelivery.
+  //
+  // Fázis D: a skip MEGNEVEZI magát. Eddig MINDEN consent-eredetű kihagyás
+  // `consent_denied`-ként ment a ledgerbe, akkor is, ha a felhasználó semmit nem
+  // utasított el (hiányzó/UNSPECIFIED jel a betöltési verseny miatt). Épp ezt a
+  // megkülönböztetést nem lehetett utólag megtenni a 9 rejtélyes soron.
+  const adSkipReason = consentTelemetry.skipReason ?? 'consent_denied';
   const skippedResult = () =>
     Promise.resolve({
       success: true as const,
       skipped: true as const,
-      skip_reason: 'consent_denied' as const
+      skip_reason: adSkipReason
     });
   const metaStart = Date.now();
   // A `&& siteConfig.meta` szándékosan KIKERÜLT: a config-hiányt a sender jelzi
