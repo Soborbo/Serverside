@@ -1,0 +1,51 @@
+{
+  "_comment": "Verbatim banner and panel copy, pinned to a version. This file is the evidence limb of consent_log.consent_text_version: the Git history is what shows WHAT the visitor read at the moment they consented (GDPR Art. 7(1)). NEVER EDIT THIS FILE IN PLACE — a copy change means a NEW version directory (2026-08-b, …), otherwise the evidence behind past decisions would change retroactively. A copy change is also a re-consent trigger (ICO: fresh consent is required when purposes/activities change).",
+  "version": "2026-08-a",
+  "lang": "en",
+
+  "banner": {
+    "title": "Cookies on this site",
+    "body": "We always use the cookies needed to run the site. Beyond that — only with your permission — we measure how visitors use the site, and we measure and personalise our Google and Meta advertising. Some of this data is transferred to the United States.",
+    "accept": "Accept",
+    "reject": "Reject",
+    "settings": "Settings",
+    "_button_rule": "Accept and Reject are PIXEL-IDENTICAL in size, contrast, font and number of clicks. A unit test measures this, not a visual check — the compliance harness found this to be the fleet's most serious defect, and it is exactly what NAIH fined TV2 for (NAIH-3195/2022)."
+  },
+
+  "panel": {
+    "title": "Cookie settings",
+    "intro": "You can decide per category. You can change your decision at any time via the “Cookie settings” link at the bottom of the page.",
+    "save": "Save settings",
+    "accept_all": "Accept all",
+    "reject_all": "Reject all",
+    "categories": {
+      "necessary": {
+        "label": "Strictly necessary",
+        "always_on": "Always active",
+        "body": "Required for the site to work at all (security, forms, storing your cookie decision). We do not ask permission for these, because without them the site cannot be used."
+      },
+      "analytics": {
+        "label": "Analytics",
+        "body": "We measure how visitors use the site: which pages are popular, where people get stuck. Provider: Google (Google Analytics 4).",
+        "default": "off"
+      },
+      "marketing": {
+        "label": "Marketing",
+        "body": "Measuring and personalising our Google and Meta advertising. Providers: Google (Google Ads), Meta (Facebook, Instagram).",
+        "default": "off"
+      }
+    },
+    "third_parties_link": "Who receives this data?",
+    "policy_link": "Privacy notice"
+  },
+
+  "footer_link": "Cookie settings",
+
+  "_copy_rules": [
+    "FORBIDDEN: “if you reject, no data goes to any third party” — under advanced Consent Mode this is FALSE, and while any site in the fleet runs advanced it must not appear anywhere.",
+    "FORBIDDEN: “you won't get irrelevant ads” — not guaranteeable, therefore a promise rather than a fact.",
+    "REQUIRED: third parties BY NAME (Google, Meta) — vague “our partners” is expressly insufficient per both the ICO and NAIH.",
+    "REQUIRED: mention of the international (US) transfer.",
+    "Copy is factual and human, without promises."
+  ]
+}

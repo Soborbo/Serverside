@@ -31,6 +31,7 @@ import {
 } from '../lib/consent';
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
+import { parseConsentId } from '../lib/consent-log';
 import { parseEcommerce } from '../lib/ecommerce';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTerminalSkip } from '../lib/skip-reason';
@@ -838,7 +839,11 @@ function fanOut(
       ad_allowed: adAllowed,
       // Fázis D: forrásonkénti parse-olt booleanok + a döntést hajtó forrás.
       // NULL = az a forrás nem volt elérhető (a betöltési verseny bizonyítéka).
-      sources: consentTelemetry.sources
+      sources: consentTelemetry.sources,
+      // Soborbo CMP: a saját CMP döntésének azonosítója, ha a site azzal fut.
+      // CookieYes-oldalon undefined → a receipten NULL, ami NEM hiba. Formahibás
+      // érték is CSAK kimarad: egy consent-KÖTÉS soha nem buktathat konverziót.
+      consent_id: parseConsentId(payload.consent_id)
     })
   );
 

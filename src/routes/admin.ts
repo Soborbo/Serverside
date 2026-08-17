@@ -89,8 +89,94 @@ export async function handleAdmin(
   if (request.method === 'POST' && path === 'test-alert') {
     return handleTestAlert(env);
   }
+  if (request.method === 'GET' && path === 'consent-stats') {
+    return handleConsentStats(env, hostname);
+  }
 
   return json({ error: 'not_found' }, 404);
+}
+
+// ── GET /admin/consent-stats ─────────────────────────────────────────────────
+/**
+ * Soborbo CMP — consent-arányok site × banner_version bontásban, a `cky_agreement`
+ * egyezési aránnyal és a medián helyett használt átlagos `interaction_ms`-szel.
+ *
+ * MI EZ A HÁROM SZÁM, ÉS MIÉRT ÉPP EZ:
+ *  1. accept/reject arány banner-verziónként — az A/B-variánsok összevetése. A
+ *     baseline NEM a receipts-alapú 78% (az event-szintű szám, nem látogatói),
+ *     hanem a CookieYes Consent Log tényleges aránya ugyanarra az időszakra.
+ *  2. `cky_agreement` — a párhuzamos ablak fő mérőszáma: ugyanazt látja-e a két
+ *     rendszer UGYANARRA a látogatóra. Ha ez tartósan < 1, a pilot nem
+ *     élesíthető tovább, mert nem tudjuk, melyik fordítás a rossz.
+ *  3. `interaction_ms` — mennyi idő alatt döntenek. A NULL-ok aránya (döntés
+ *     nélkül elhagyott banner) legalább annyira érdekes, mint az átlag.
+ *
+ * A `consent_metrics` NEM JOIN-olható a `consent_log`-hoz (ID-mentes), ezért a
+ * megjelenés-számok KÜLÖN blokkban jönnek — ez nem hiányosság, hanem a lényeg.
+ */
+async function handleConsentStats(env: Env, hostname: string): Promise<Response> {
+  const siteConfig = await getSiteConfig(hostname, env);
+  if (!siteConfig) return json({ error: 'no_site_config', hostname }, 404);
+  if (!env.LEDGER) return json({ error: 'no_ledger_binding' }, 503);
+
+  try {
+    const [decisions, agreement, shown] = await Promise.all([
+      env.LEDGER.prepare(
+        `SELECT banner_version, decision, COUNT(*) AS n
+           FROM consent_log
+          WHERE site_id = ?1 AND server_received_at >= datetime('now', '-30 days')
+          GROUP BY banner_version, decision
+          ORDER BY banner_version, decision`
+      )
+        .bind(siteConfig.site_id)
+        .all(),
+      // A NULL-ok (nincs CookieYes-olvasat) KIMARADNAK a nevezőből — különben a
+      // párhuzamos ablak vége után az arány magától „romlani" látszana.
+      env.LEDGER.prepare(
+        `SELECT COUNT(*) AS comparable,
+                SUM(CASE WHEN cky_agreement = 1 THEN 1 ELSE 0 END) AS agreed
+           FROM consent_log
+          WHERE site_id = ?1 AND cky_agreement IS NOT NULL
+            AND server_received_at >= datetime('now', '-30 days')`
+      )
+        .bind(siteConfig.site_id)
+        .first<{ comparable: number; agreed: number }>(),
+      env.LEDGER.prepare(
+        `SELECT banner_version,
+                COUNT(*) AS shown,
+                SUM(CASE WHEN interaction_ms IS NOT NULL THEN 1 ELSE 0 END) AS decided,
+                AVG(interaction_ms) AS avg_interaction_ms
+           FROM consent_metrics
+          WHERE site_id = ?1 AND shown_at >= datetime('now', '-30 days')
+          GROUP BY banner_version`
+      )
+        .bind(siteConfig.site_id)
+        .all()
+    ]);
+
+    const comparable = agreement?.comparable ?? 0;
+    return json({
+      site_id: siteConfig.site_id,
+      window_days: 30,
+      // Ha ez 'cookieyes', a táblák üresek — nem hiba, hanem a Fázis 1 inertsége.
+      consent_provider: siteConfig.consent?.provider ?? 'cookieyes',
+      decisions: decisions.results ?? [],
+      cky_agreement: {
+        comparable,
+        agreed: agreement?.agreed ?? 0,
+        // null, ha nincs összevethető sor — NEM 0 és NEM 1. A „nincs adat" és a
+        // „teljes egyetértés" megkülönböztetése ugyanaz a hibaosztály, mint a
+        // source_consistent üresen-igaz esete.
+        rate: comparable > 0 ? (agreement!.agreed ?? 0) / comparable : null
+      },
+      banner_impressions: shown.results ?? []
+    }, 200);
+  } catch (err) {
+    return json(
+      { error: 'query_failed', detail: err instanceof Error ? err.message : String(err) },
+      500
+    );
+  }
 }
 
 // ── POST /admin/test-alert ───────────────────────────────────────────────────

@@ -70,6 +70,34 @@ export interface SiteConfig {
   // után, NAPOKON belül: tartósan false-ként hagyva új legacy fail-open ág lesz belőle.
   consent_strict?: boolean;
 
+  // Soborbo CMP (Fázis 1, 2026-08) — MELYIK consent-rendszer fut ezen a site-on.
+  //
+  // A mező HIÁNYA és a `'cookieyes'` UGYANAZT jelenti, és minden site ebben az
+  // állapotban van: a Fázis 1 merge önmagában NULLA viselkedésváltozás. A pilot
+  // átállítása EGYETLEN KV-flag, amit EMBER csinál — nem a kód, nem egy migráció.
+  //
+  //   'cookieyes' (default) → a mai szabályok, bitre. A GA4 a mai módon megy, a
+  //                           /api/consent végpont 403-at ad (a site nem a saját
+  //                           CMP-nkkel fut, tehát tőle nem fogadunk el döntést).
+  //   'sbo'                 → a saját CMP. A `consent_log` írása engedélyezett, és
+  //                           a GA4 `analytics_storage='GRANTED'`-hez kötött (a
+  //                           jogi audit 2. prioritása: a DUAA statisztikai
+  //                           kivétel a GA4-et NEM menti meg, mert a Google saját
+  //                           célra újrahasznosítja az adatot).
+  //
+  // MIÉRT FLAG MÖGÖTT A GA4-KAPU: ez viselkedésváltozás. Flag nélkül a merge az
+  // egész flottán elvágná a GA4-et, egyetlen mérés nélkül — pontosan az a néma,
+  // egy éjszaka alatti volumenesés, ami ellen az egész terv szól.
+  consent?: {
+    provider?: 'cookieyes' | 'sbo';
+    /**
+     * basic | advanced (v4 terv, 8. függelék). A default `basic`: az advanced
+     * pre-consent cookieless pingjei EEA-ban vitatottak, és a portfólió fele HU.
+     * A `consent_log.consent_mode` ezt rögzíti minden döntésnél.
+     */
+    mode?: 'basic' | 'advanced';
+  };
+
   // Extra engedélyezett böngésző-originek (`https://foo.example.com` vagy puszta
   // hostnév). A site SAJÁT hostja + az apex/www testvére MINDIG engedett — ez a
   // mező csak hozzáad. Csak akkor kell, ha a site egy MÁSIK hostról is küld
