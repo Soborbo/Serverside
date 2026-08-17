@@ -1,0 +1,14 @@
+{
+  "_comment": "ÖNTESZT-lista — NEM a flotta. Egyetlen HELYI fixture, ami minden ellenőrzésre szándékosan hibázik, hogy a mérőműszer kalibrálható legyen élő oldal nélkül is. Indítsd előbb: node tests/compliance/selftest/serve.mjs",
+  "sites": [
+    {
+      "site_id": "selftest",
+      "url": "http://localhost:4187/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes-shaped-fixture",
+      "manifest": false,
+      "onboarded": false,
+      "notes": "Szándékosan szabálysértő fixture: minden FAIL-nek meg KELL jelennie."
+    }
+  ]
+}

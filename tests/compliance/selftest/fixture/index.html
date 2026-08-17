@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <title>Compliance harness · önteszt-fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .cky-consent-container {
+      position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
+      border-top: 2px solid #222; padding: 16px; display: flex; gap: 12px; align-items: center;
+    }
+    /* SZÁNDÉKOSAN egyenlőtlen: az elfogadás nagy és telített, az elutasítás apró
+       és halvány — így az UI-mérésnek FAIL-t KELL adnia. Ez a fixture a mérőműszer
+       kalibrálása, nem egy valódi oldal. */
+    .cky-btn-accept { background: #0a7d2b; color: #fff; font-size: 18px; padding: 14px 28px; border: 0; cursor: pointer; }
+    .cky-btn-reject { background: #f2f2f2; color: #b9b9b9; font-size: 11px; padding: 4px 8px; border: 0; cursor: pointer; }
+    .cky-btn-customize { background: #eee; color: #333; font-size: 13px; padding: 8px 14px; border: 0; cursor: pointer; }
+    .cky-btn-revisit-wrapper { position: fixed; left: 12px; bottom: 120px; padding: 8px; background: #ddd; cursor: pointer; }
+  </style>
+  <!-- A GTM noscript iframe SZÁNDÉKOSAN itt van: az A_noscript_iframe_absent
+       ellenőrzésnek FAIL-t kell adnia rá. -->
+  <noscript>
+    <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-SELFTEST" height="0" width="0" style="display:none"></iframe>
+  </noscript>
+</head>
+<body>
+  <h1>Önteszt-fixture</h1>
+  <p>Ez az oldal SZÁNDÉKOSAN szabálysértő: minden ellenőrzésnek van itt egy kiváltó oka.</p>
+  <p><a href="/cookie-policy.html">Süti-tájékoztató</a></p>
+
+  <!-- A safety-net bizonyítéka: ez az űrlap magától próbál beküldeni. -->
+  <form id="lead" action="/api/lead" method="POST">
+    <input type="email" name="email" value="nobody@example.com" />
+    <button type="submit">Küldés</button>
+  </form>
+
+  <div class="cky-consent-container">
+    <span>Sütiket használunk.</span>
+    <button class="cky-btn-accept">Elfogadom</button>
+    <button class="cky-btn-customize">Beállítások</button>
+    <button class="cky-btn-reject">Elutasítom</button>
+  </div>
+  <div class="cky-btn-revisit-wrapper">Süti-beállítások</div>
+
+  <script>
+    // ── Döntés ELŐTTI szabálysértések (az A forgatókönyv célpontjai) ──────────
+    window.dataLayer = window.dataLayer || [];
+    // GTM-kérés ELŐBB, consent default UTÁNA → az A_consent_default_before_gtm bukik.
+    var s = document.createElement('script');
+    s.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-SELFTEST';
+    document.head.appendChild(s);
+    function gtag() { window.dataLayer.push(arguments); }
+    gtag('consent', 'default', { ad_storage: 'denied' });
+
+    // Nem-esszenciális storage ÍRÁS és OLVASÁS consent nélkül.
+    localStorage.setItem('sb_tracking', JSON.stringify({ gclid: 'SELFTEST-1' }));
+    localStorage.getItem('sb_tracking');
+    localStorage.getItem('__sb_attribution');
+    sessionStorage.setItem('sb_session', 'sess_selftest');
+
+    // Meta browser-id süti írása + olvasása consent nélkül.
+    document.cookie = '_fbp=fb.1.100.200;path=/';
+    void document.cookie;
+
+    // Consent-kötött kérések döntés előtt. A hálózat itt EL FOG bukni (a fixture
+    // offline fut) — ez nem baj: a harness azt méri, hogy a site MEGKÍSÉRELTE-e,
+    // és a kísérlet a request-eseményben ugyanúgy látszik.
+    new Image().src = 'https://www.google-analytics.com/g/collect?v=2&tid=G-SELFTEST&uid=user-123&ep.email=a%40b.com';
+    new Image().src = 'https://www.facebook.com/tr?id=1&ev=PageView';
+
+    // ── A safety-net próbája ────────────────────────────────────────────────
+    // Mindkettőnek MEG KELL HIÚSULNIA: a DOM-blokk a submit-eseményt fogja meg,
+    // a hálózati abort pedig a first-party POST-ot.
+    setTimeout(function () {
+      try { document.getElementById('lead').submit(); } catch (e) {}
+      try { fetch('/api/event/conversion', { method: 'POST', body: '{}' }); } catch (e) {}
+    }, 300);
+
+    // ── Döntés UTÁNI viselkedés ─────────────────────────────────────────────
+    function afterDecision(kind) {
+      document.querySelector('.cky-consent-container').style.display = 'none';
+      document.cookie = 'cookieyes-consent=consent:yes,analytics:' + (kind === 'accept' ? 'yes' : 'no') +
+        ',advertisement:' + (kind === 'accept' ? 'yes' : 'no') + ';path=/';
+      // SZÁNDÉKOS SZABÁLYSÉRTÉS: elutasítás után IS megy ping, ráadásul user_id-vel.
+      new Image().src = 'https://www.google-analytics.com/g/collect?v=2&tid=G-SELFTEST&uid=user-123&gclid=SELFTEST-GCLID';
+      if (kind === 'accept') localStorage.setItem('sb_first_touch', '{"gclid":"SELFTEST-1"}');
+    }
+    document.querySelector('.cky-btn-accept').addEventListener('click', function () { afterDecision('accept'); });
+    document.querySelector('.cky-btn-reject').addEventListener('click', function () { afterDecision('reject'); });
+    document.querySelector('.cky-btn-revisit-wrapper').addEventListener('click', function () {
+      // A visszavonó felület újranyitja a bannert… de SEMMIT nem töröl.
+      document.querySelector('.cky-consent-container').style.display = 'flex';
+    });
+  </script>
+</body>
+</html>

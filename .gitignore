@@ -11,3 +11,7 @@ dist/
 # NEVER commit: the KV side stores only the SHA-256.
 secrets/
 prod-audit/
+
+# Compliance harness: az önteszt kimenete tranziens (a dátumozott flotta-baseline
+# viszont MEGY a repóba — az a mérés lényege).
+tests/compliance/selftest/last-run/
