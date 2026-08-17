@@ -29,7 +29,8 @@ export {
   getAllTrackingData, getStoredData, getAttribution, getSourceType,
   getSessionId, getDevice, getPageUrl, clearTrackingData,
   purgeMarketingStorage, purgeAnalyticsStorage,
-  getStorageReadBlocked, resetStorageReadBlocked,
+  getStorageReadBlocked, resetStorageReadBlocked, readMarketingLocalStorage,
+  ATTR_STORAGE_KEY,
   normalizeEmail, normalizePhone, sanitizeName,
   type TrackingData, type AttributionData, type StorageReadBlockedReport,
 } from './persistence';
@@ -55,7 +56,7 @@ import { hasMarketingConsent, hasAnalyticsConsent, onConsentChange } from './con
 import {
   persistTrackingParams, captureUrlParams,
   getGclid, getFbclid, getSessionId, getSourceType, getAttribution, getAllTrackingData,
-  purgeMarketingStorage, purgeAnalyticsStorage,
+  purgeMarketingStorage, purgeAnalyticsStorage, resetStorageReadBlocked,
   normalizePhone,
 } from './persistence';
 import {
@@ -76,6 +77,12 @@ let consentListenerBound = false;
 
 export function initTracking(): void {
   if (window.location.search.includes('debugTracking=1')) enableDebug();
+  // A blokkolt-olvasás jel PER OLDALLETÖLTÉS értendő, és ez a függvény minden
+  // `astro:page-load`-ra lefut — view transition esetén ÚJ navigáció, de UGYANAZ
+  // a dokumentum. Reset nélkül egyetlen korai blokk után a session minden további
+  // oldala `storage_read_blocked=true`-t jelentene, akkor is, ha ott a consent már
+  // megvolt minden olvasás előtt — az arány felfújva, a diagnózis hamis.
+  resetStorageReadBlocked();
   captureUrlParams();
   if (!consentListenerBound) {
     consentListenerBound = true;

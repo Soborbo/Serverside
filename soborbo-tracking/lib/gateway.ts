@@ -21,7 +21,9 @@
  */
 
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
-import { getFbp, getFbcCookie, getStorageReadBlocked } from './persistence';
+import {
+  getFbp, getFbcCookie, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
+} from './persistence';
 import { CLIENT_LIB_VERSION } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
@@ -251,7 +253,6 @@ export function collectConsentSources(): ConsentSourcesPayload {
 // persisted in localStorage (the conversion often happens on a different page
 // than the landing). Last-touch wins for click IDs/UTMs; the landing context
 // (landing_page, referrer) is first-touch.
-const ATTR_STORAGE_KEY = '__sb_attribution';
 const ATTR_CLICK_PARAMS = [
   'gclid',
   'gbraid',
@@ -278,8 +279,12 @@ const ATTR_UTM_PARAMS = [
 ];
 
 function readStoredAttribution(): AttributionParams {
+  // PECR: az OLVASÁS is engedélyköteles. Ez a kulcs marketing-scope (click ID-k +
+  // UTM-ek), ezért ugyanazon az EGY read-gate-en megy át, mint a persistence.ts
+  // getterei — nem egy másodikon. Consent nélkül üres objektum, és a blokk
+  // bekerül a `storage_read_blocked_keys` telemetriába.
   try {
-    const raw = localStorage.getItem(ATTR_STORAGE_KEY);
+    const raw = readMarketingLocalStorage(ATTR_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as AttributionParams) : {};
   } catch {
     return {};
@@ -419,7 +424,11 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   const fbc = getFbcCookie() || undefined;
   const clientId = extractGAClientId(getCookie('_ga'));
   const sessionId = extractGASessionId();
-  // Snapshot AFTER the reads above, so a block recorded by them is reported.
+  // Az attribúció-gyűjtés IS olvas storage-ot (`__sb_attribution`) — ezért előbb
+  // fut le, és CSAK utána készül a telemetria-pillanatkép. Fordítva a saját
+  // blokkja kimaradna a jelentésből, vagyis a mérőműszer pont azt a hozzáférést
+  // nem látná, amiért készült.
+  const attribution = payload.attribution || collectAttribution();
   const readBlocked = getStorageReadBlocked();
 
   const body = JSON.stringify({
@@ -437,7 +446,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     // verseny (a CookieYes API még nem töltött be, amikor olvastunk volna).
     storage_read_blocked: readBlocked.blocked,
     storage_read_blocked_keys: readBlocked.keys,
-    attribution: payload.attribution || collectAttribution(),
+    attribution,
     event_source_url: payload.event_source_url || location.href
   });
 

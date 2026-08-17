@@ -60,7 +60,12 @@ describe('sendToWorker — storage_read_blocked telemetria', () => {
     expect(body.fbp).toBeUndefined();
     expect(body.fbc).toBeUndefined();
     expect(body.storage_read_blocked).toBe(true);
-    expect((body.storage_read_blocked_keys as string[]).sort()).toEqual(['_fbc', '_fbp']);
+    // A `__sb_attribution` IS benne van: a collectAttribution ugyanezt a kaput
+    // használja, és a pillanatkép SZÁNDÉKOSAN utána készül — különben pont az a
+    // hozzáférés maradna ki a jelentésből, amiért a műszer készült.
+    expect((body.storage_read_blocked_keys as string[]).sort()).toEqual([
+      '__sb_attribution', '_fbc', '_fbp',
+    ]);
   });
 
   it('a payload csak KULCSNEVEKET hordoz, értéket soha', async () => {

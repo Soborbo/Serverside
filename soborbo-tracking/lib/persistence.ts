@@ -28,6 +28,13 @@ import { trackingConfig, type Market } from './config';
 const TRACKING_KEY = 'sb_tracking';
 const FIRST_TOUCH_KEY = 'sb_first_touch';
 const SESSION_KEY = 'sb_session';
+/**
+ * A gateway-attribúció localStorage kulcsa (`collectAttribution` írja/olvassa).
+ * NEM új kulcs — a `gateway.ts` eddig is ezt használta; itt él, mert a
+ * storage-kulcsok gazdája ez a modul, és így a read-gate ÉS a purge ugyanabból
+ * az egy definícióból dolgozik (a gateway.ts innen importálja).
+ */
+export const ATTR_STORAGE_KEY = '__sb_attribution';
 const EXPIRY_DAYS = 90;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -110,6 +117,15 @@ export function resetStorageReadBlocked(): void {
 function marketingRead<T>(key: string, read: () => T, fallback: T): T {
   if (!hasMarketingConsent()) { noteBlockedRead(key); return fallback; }
   return read();
+}
+
+/**
+ * Marketing-kapuzott localStorage olvasás, EXPORTÁLVA — hogy a gateway.ts
+ * attribúció-olvasása ugyanezen az EGY kapun menjen át, ne egy másodikon.
+ * Consent nélkül `null` + a blokk rögzítve.
+ */
+export function readMarketingLocalStorage(key: string): string | null {
+  return marketingRead(key, () => lsGet(key), null);
 }
 
 function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
@@ -424,8 +440,18 @@ function expireCookie(name: string): void {
   if (typeof document === 'undefined') return;
   const past = 'Thu, 01 Jan 1970 00:00:00 GMT';
   const host = typeof location !== 'undefined' ? location.hostname : '';
-  const parent = host.split('.').slice(-2).join('.');
-  const domains = [undefined, host, `.${host}`, parent ? `.${parent}` : undefined];
+
+  // MINDEN szülő-utótagot végigpróbálunk (≥2 címke), nem csak az „utolsó kettőt".
+  // Az utóbbi a többcímkés public suffixeken hibás: `www.agykontroll.co.uk`
+  // esetén `co.uk`-ot adna — az böngésző-oldalon érvénytelen domain-attribútum,
+  // a VALÓDI registrable domain (`.agykontroll.co.uk`) pedig sosem kerülne sorra,
+  // vagyis az apexre írt _fbp/_fbc túlélné a visszavonást a .co.uk flottán.
+  // Publiksuffix-lista nélkül a helyes megoldás a végigpróbálás: az érvénytelen
+  // domain-attribútummal küldött Set-Cookie-t a böngésző egyszerűen eldobja.
+  const labels = host ? host.split('.') : [];
+  const domains: Array<string | undefined> = [undefined, host, `.${host}`];
+  for (let i = 1; i <= labels.length - 2; i++) domains.push(`.${labels.slice(i).join('.')}`);
+
   for (const d of domains) {
     if (d === '' || d === '.') continue;
     try {
@@ -434,9 +460,17 @@ function expireCookie(name: string): void {
   }
 }
 
-/** localStorage half of the marketing purge — shared with clearTrackingData. */
+/**
+ * localStorage half of the marketing purge — shared with clearTrackingData.
+ *
+ * `__sb_attribution` is in the list because `collectAttribution()` keeps a
+ * SECOND copy of the withdrawn data there (click IDs + UTMs). Purging only
+ * `sb_tracking`/`sb_first_touch` would leave that copy at rest — and
+ * `writeStoredAttribution()` refuses to write after revocation, so its own
+ * explicit-denial branch can never clean it up either.
+ */
 function removeMarketingLocalStorage(): void {
-  lsRm(TRACKING_KEY); lsRm(FIRST_TOUCH_KEY);
+  lsRm(TRACKING_KEY); lsRm(FIRST_TOUCH_KEY); lsRm(ATTR_STORAGE_KEY);
 }
 
 /**
