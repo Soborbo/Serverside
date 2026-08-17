@@ -1,0 +1,122 @@
+{
+  "_comment": "A mérendő flotta. FORRÁS: src/site-manifest.json (a KV-configok hash-listája) + a wrangler.toml [[routes]] blokkja (az onboardolt és a még tervezett zónák) + soborbo-tracking/server/site-inputs/. A `manifest: false` site-ok SZÁNDÉKOSAN itt vannak, de a manifestet NEM módosítottuk (2. brief tiltólista): a riport külön jelöli őket. Az `onboarded` azt jelenti, hogy a site KV-configgal és élő gateway-úttal rendelkezik — a compliance-mérés szempontjából ez nem feltétel, minden élő oldal mérendő.",
+  "sites": [
+    {
+      "site_id": "painless",
+      "url": "https://painlessremovals.com/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "UK PECR. Sprint 9 go-live; require_consent a KV-ben MÉG false (kézi tétel)."
+    },
+    {
+      "site_id": "lomtalan",
+      "url": "https://lomtalan.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "HU/NAIH. Szerver-ingress service bindingon, zóna-route nélkül."
+    },
+    {
+      "site_id": "beautyflow",
+      "url": "https://beautyflow.pro/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "HU/NAIH."
+    },
+    {
+      "site_id": "skinlab",
+      "url": "https://skinlabhungary.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "HU/NAIH."
+    },
+    {
+      "site_id": "szelloztetes",
+      "url": "https://szelloztessokosan.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "HU/NAIH."
+    },
+    {
+      "site_id": "kontenerhaz",
+      "url": "https://olcsokontenerhaz.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "HU/NAIH. A v4 terv szerinti CMP-pilot jelöltje."
+    },
+    {
+      "site_id": "agykontroll",
+      "url": "https://agykontroll.co.uk/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": true,
+      "onboarded": true,
+      "notes": "UK PECR. A 9 GRANTED-skip egyike innen jött (Fázis D)."
+    },
+    {
+      "site_id": "trapezlemezes",
+      "url": "https://trapezlemezes.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "cookieyes",
+      "manifest": false,
+      "onboarded": true,
+      "notes": "HIÁNYZIK a site-manifest.json-ból, pedig élő route-ja és KV-configja van (onboard 2026-08-11). A manifestet NEM módosítottuk — a riport jelöli."
+    },
+    {
+      "site_id": "nemesventilatorhaz",
+      "url": "https://nemesventilatorhaz.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "unknown",
+      "manifest": false,
+      "onboarded": false,
+      "notes": "wrangler.toml: route kikommentelve (Sprint 10, Hét 2-3). Élő oldal, tehát mérendő."
+    },
+    {
+      "site_id": "skinlab_hu",
+      "url": "https://skinlab.hu/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "unknown",
+      "manifest": false,
+      "onboarded": false,
+      "notes": "wrangler.toml: route kikommentelve (Hét 6-7). A mérés előtt HTTP 500-at adott — a riport ERROR-t vár."
+    },
+    {
+      "site_id": "bristolheatpump",
+      "url": "https://bristolheatpump.co.uk/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "unknown",
+      "manifest": false,
+      "onboarded": false,
+      "notes": "UK PECR. wrangler.toml: route kikommentelve (Hét 8-9)."
+    },
+    {
+      "site_id": "bristolhouseclearances",
+      "url": "https://bristolhouseclearances.co.uk/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "unknown",
+      "manifest": false,
+      "onboarded": false,
+      "notes": "UK PECR. wrangler.toml: route kikommentelve (Hét 8-9)."
+    },
+    {
+      "site_id": "bristolcleaningheroes",
+      "url": "https://bristolcleaningheroes.co.uk/",
+      "expected_ruleset": "eea_uk",
+      "cmp": "unknown",
+      "manifest": false,
+      "onboarded": false,
+      "notes": "UK PECR. wrangler.toml: route kikommentelve (Hét 8-9)."
+    }
+  ]
+}
