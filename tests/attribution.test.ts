@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { parseAttribution, buildFbcFromFbclid } from '../src/lib/attribution';
-import { sendToGoogleAdsCAPI } from '../src/lib/gads';
 import { sendToGA4MP } from '../src/lib/ga4';
 import type { SiteConfig } from '../src/lib/config';
 import type { Env } from '../src/env';
@@ -71,90 +70,13 @@ describe('buildFbcFromFbclid', () => {
   });
 });
 
-describe('sendToGoogleAdsCAPI — click ID priority', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-  const cfg: SiteConfig = {
-    ...baseSiteConfig,
-    gads: {
-      customer_id: '1234567890',
-      login_customer_id: null,
-      conversion_actions: { callback_conversion: '99887766' }
-    }
-  };
-  const env: Env = {
-    GADS_DEVELOPER_TOKEN: 'devtoken',
-    GADS_OAUTH_CLIENT_ID: 'client',
-    GADS_OAUTH_CLIENT_SECRET: 'secret',
-    OAUTH_TOKENS: {
-      get: vi.fn(async (key: string) => (key.endsWith(':access_token') ? 'tok' : null))
-    }
-  } as unknown as Env;
-
-  beforeEach(() => {
-    fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ results: [{}] }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
-  it('sets gclid on the conversion when present', async () => {
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      {
-        event_name: 'callback_conversion',
-        event_id: 'e1',
-        event_time: Math.floor(Date.now() / 1000),
-        gclid: 'G-abc',
-        gbraid: 'GB-xyz'
-      },
-      { em: 'hashedmail' }
-    );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0].gclid).toBe('G-abc');
-    // gclid prioritás → gbraid NEM kerül rá
-    expect(body.conversions[0]).not.toHaveProperty('gbraid');
-    // EC for Leads fallback megmarad
-    expect(body.conversions[0].userIdentifiers).toEqual([{ hashedEmail: 'hashedmail' }]);
-  });
-
-  it('falls back to gbraid then wbraid', async () => {
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      {
-        event_name: 'callback_conversion',
-        event_id: 'e2',
-        event_time: Math.floor(Date.now() / 1000),
-        wbraid: 'WB-1'
-      },
-      {}
-    );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0].wbraid).toBe('WB-1');
-  });
-
-  it('does NOT attach userIdentifiers when using gbraid/wbraid (VALUE_MUST_BE_UNSET guard)', async () => {
-    await sendToGoogleAdsCAPI(
-      cfg,
-      env,
-      {
-        event_name: 'callback_conversion',
-        event_id: 'e3',
-        event_time: Math.floor(Date.now() / 1000),
-        gbraid: 'GB-1'
-      },
-      { em: 'hashedmail', ph: 'hashedphone' }
-    );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.conversions[0].gbraid).toBe('GB-1');
-    expect(body.conversions[0]).not.toHaveProperty('userIdentifiers');
-  });
-});
+// A `sendToGoogleAdsCAPI — click ID priority` blokk ÁTKÖLTÖZÖTT (2026-08-16):
+// a legacy uploadClickConversions transport megszűnt (lásd lib/gads.ts), a click-ID
+// prioritás (gclid > gbraid > wbraid) fedezete a Data Manager úton él tovább —
+// tests/datamanager.test.ts → „sendToDataManager — click ID priority".
+// (A legacy `userIdentifiers`-tiltás braid mellett NEM költözött: az az
+//  uploadClickConversions VALUE_MUST_BE_UNSET szabálya volt, a Data Manager
+//  API-ra nem vonatkozik.)
 
 describe('sendToGA4MP — UTM forwarding', () => {
   let fetchMock: ReturnType<typeof vi.fn>;

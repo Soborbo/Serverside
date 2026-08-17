@@ -445,3 +445,78 @@ describe('Skip-osztályozás — a config helyreállítása után', () => {
     expect(notConfiguredAlerts()).toHaveLength(0);
   });
 });
+
+/**
+ * F4-2 kiterjesztés az AE-metrikára (2026-08-16 audit, G-pont).
+ *
+ * A ledger már korábban is kiszűrte a `not_expected` scaffold-sorokat, az Analytics
+ * Engine fan-out metrika viszont NEM: a `recordFanoutMetric` a skip-MINŐSÍTÉS ELŐTT
+ * futott, így minden ad-allowed event success=0 datapontot írt a be nem kötött
+ * forwarderekre (tiktok/linkedin/msads). Következmény: e platformok „hibarátája" az
+ * AE-ben tartósan 100% volt — egy örökre piros sor, ami pont azt a napot fedné el,
+ * amikor egy VALÓDI, bekötött forwarder kezd bukni. A metrika mostantól ugyanazt a
+ * szabályt követi, mint a ledger.
+ */
+describe('Fan-out AE-metrika — a not_expected scaffold-láb nem ír datapontot', () => {
+  it('a be nem kötött forwarderek KIMARADNAK, a Meta viszont datapontot kap', async () => {
+    installFetch(200);
+    const { ledger, deliveries } = makeLedger();
+    const { env } = makeEnv({
+      siteConfig: await config({ withMeta: true, expectedSmoke: ['meta'] }),
+      ledger
+    });
+    const points: { platform: string; success: number }[] = [];
+    env.TRACKING_METRICS = {
+      writeDataPoint(dp: { blobs: string[]; doubles: number[]; indexes: string[] }) {
+        // A fan-out metrika 4 blobot ír (site, event, platform, error_code); a
+        // konverzió-összesítő metrikát (indexes: ['conversion_total']) kihagyjuk.
+        if (dp.indexes?.[0] !== 'conversion_total') {
+          points.push({ platform: dp.blobs[2], success: dp.doubles[0] });
+        }
+      }
+    };
+
+    const { ctx, tasks } = collectingCtx();
+    await handleConversion(leadRequest(true), env, ctx);
+    await Promise.all(tasks);
+
+    const platforms = points.map((p) => p.platform).sort();
+    // A Meta elvárt (expected_platforms.smoke) és konfigurált → mérjük, sikerrel.
+    expect(platforms).toEqual(['meta']);
+    expect(points.find((p) => p.platform === 'meta')?.success).toBe(1);
+    // A három scaffold-láb sem datapontot, sem ledger-sort nem kap.
+    for (const p of ['tiktok', 'linkedin', 'msads']) {
+      expect(platforms).not.toContain(p);
+      expect(deliveries.find((d) => d.platform === p)).toBeUndefined();
+    }
+  });
+
+  it('ELVÁRT, de konfigurálatlan platform TOVÁBBRA IS datapontot kap, success=0-val', async () => {
+    installFetch(200);
+    const { ledger } = makeLedger();
+    // A tiktok itt ELVÁRT (expected_platforms.smoke), de nincs tiktok config-blokk
+    // → not_configured, ami valódi hiba: a metrikában is látszania KELL.
+    const { env } = makeEnv({
+      siteConfig: await config({ withMeta: true, expectedSmoke: ['meta', 'tiktok'] }),
+      ledger,
+      withQueue: true
+    });
+    const points: { platform: string; success: number }[] = [];
+    env.TRACKING_METRICS = {
+      writeDataPoint(dp: { blobs: string[]; doubles: number[]; indexes: string[] }) {
+        if (dp.indexes?.[0] !== 'conversion_total') {
+          points.push({ platform: dp.blobs[2], success: dp.doubles[0] });
+        }
+      }
+    };
+
+    const { ctx, tasks } = collectingCtx();
+    await handleConversion(leadRequest(true), env, ctx);
+    await Promise.all(tasks);
+
+    expect(points.find((p) => p.platform === 'tiktok')?.success).toBe(0);
+    expect(points.find((p) => p.platform === 'meta')?.success).toBe(1);
+    // A nem elvárt lábak továbbra sem mérendők.
+    expect(points.map((p) => p.platform)).not.toContain('linkedin');
+  });
+});

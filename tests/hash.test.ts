@@ -209,3 +209,26 @@ describe('SHA-256 reference vector', () => {
     expect(hash).toBe('8830eedd6c6b5ea97d181563a349476ca1bb25ace1f94b5c5e48d9cad727941b');
   });
 });
+
+/**
+ * 2026-08-16 audit, H-pont. Az 'EU' korábban a GB-ággal EGY ágon futott
+ * (`countryCode === 'GB' || countryCode === 'EU'`), vagyis egy EU-generikus site
+ * NÉMET nemzeti száma (`0176…`) `+44176…`-ként hash-elődött: szintaktikailag
+ * érvényes UK-szám, ami garantáltan SENKIVEL nem match-el, és semmilyen hibát nem
+ * jelez. Az 'EU' régió-kód, nem ország — nincs hívókódja.
+ */
+describe('normalizePhone — az EU régió-kód nem UK (audit 2026-08-16)', () => {
+  it('EU + nemzeti formátumú (trunk-0) szám → eldobva, NEM +44-esítve', () => {
+    expect(normalizePhone('0176 1234567', 'EU')).toBeUndefined();
+    expect(normalizePhone('06 30 123 4567', 'EU')).toBeUndefined();
+  });
+
+  it('EU + teljes nemzetközi szám → változatlanul átmegy', () => {
+    expect(normalizePhone('+49 176 1234567', 'EU')).toBe('+491761234567');
+    expect(normalizePhone('49 176 1234567', 'EU')).toBe('+491761234567');
+  });
+
+  it('GB viszont TOVÁBBRA IS trunk-0 → +44 (a valódi országkódnál ez helyes)', () => {
+    expect(normalizePhone('07123 456789', 'GB')).toBe('+447123456789');
+  });
+});

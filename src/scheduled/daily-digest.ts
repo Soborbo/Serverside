@@ -248,6 +248,14 @@ export async function collectLifecycleFreshness(env: Env): Promise<LifecycleFres
   const empty: LifecycleFreshness = { lastEventAt: null, daysSince: null };
   if (!env.LEDGER) return empty;
   try {
+    // MEGJEGYZÉS a `NOT LIKE 'smoke-%'` szűrőről: az offline lábon ez SOSEM
+    // illeszkedik, mert a lead-status determinisztikus orderId-t képez
+    // (sha256(lead_id_status) 32 karakteres szelete), nem `smoke-` prefixű
+    // event_id-t — szemben a böngésző-ág synthetic smoke-eseményeivel. A szűrő
+    // ártalmatlan, és szándékosan BENT MARAD: ha valaha lesz hitelesített offline
+    // synthetic füstteszt (ma nincs — lásd collectSmokeStatus doksija), az a
+    // konvención `smoke-` prefixet kapna, és nem szabad, hogy a valódi lifecycle-
+    // frissességet elfedje.
     const row = await env.LEDGER.prepare(
       `SELECT site_id, event_name, created_at FROM deliveries
        WHERE origin = 'offline' AND event_id NOT LIKE 'smoke-%'

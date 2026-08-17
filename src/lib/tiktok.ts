@@ -85,11 +85,15 @@ export async function sendToTikTok(
   if (payload.client_user_agent) user.user_agent = payload.client_user_agent;
 
   const properties: Record<string, unknown> = {};
-  // A currency-t a value>0-hoz kötjük (mint minden más platform). Lone currency
-  // value nélkül a TikTok malformed/zero-value konverzióként kezelhetné (§3).
-  if (typeof payload.value === 'number' && payload.value > 0) {
+  // value és currency CSAK EGYÜTT és CSAK > 0 — ugyanaz a szabály, mint a Meta
+  // (lib/meta.ts), a GA4 (lib/ga4.ts) és a Data Manager (lib/datamanager.ts) lábon.
+  // Korábban a `currency` a `value`-n BELÜL volt opcionális, vagyis egy currency
+  // nélküli payload PUSZTA SZÁMOT küldött fel: a TikTok ilyenkor a fiók
+  // alap-pénznemét feltételezi, így egy 250 000 HUF-os konverzió 250 000 USD-ként
+  // is beeshet a ROAS-ba. A hiányzó érték jobb, mint a rossz pénznemű.
+  if (typeof payload.value === 'number' && payload.value > 0 && payload.currency) {
     properties.value = payload.value;
-    if (payload.currency) properties.currency = payload.currency;
+    properties.currency = payload.currency;
   }
 
   const body = {

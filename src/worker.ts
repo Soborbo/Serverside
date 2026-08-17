@@ -97,7 +97,15 @@ export default {
 
       // Admin read/ops API (reconciliation, lead-trail, DLQ replay, health-check).
       // Mind X-Admin-Token mögött. Lásd routes/admin.ts.
-      if (url.pathname.startsWith('/api/event/admin/')) {
+      //
+      // Az OPTIONS KIVÉVE: egy CORS-preflight nem hordoz `X-Admin-Token`-t (a
+      // böngésző szándékosan nem küld custom headert a preflightban), így az
+      // admin-handlerbe futva mindig 401-et kapna — a preflight elbukna, a
+      // böngésző pedig a VALÓDI kérést el sem indítaná. Same-origin admin-UI-nál
+      // ez ma nem jelentkezik (nincs preflight), de egy másik originről nyitott
+      // admin-felület némán működésképtelen lenne. Az OPTIONS a lenti közös
+      // CORS-ágra megy.
+      if (request.method !== 'OPTIONS' && url.pathname.startsWith('/api/event/admin/')) {
         return await handleAdmin(request, env, ctx);
       }
 

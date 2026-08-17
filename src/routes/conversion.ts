@@ -46,15 +46,25 @@ const MAX_BODY_BYTES = 16 * 1024;
 /**
  * Body-olvasás KEMÉNY felső korláttal. A stream-et olvasás közben mérjük, és a cap
  * átlépésekor megszakítjuk — szemben a puszta Content-Length-ellenőrzéssel, amit egy
- * chunked kérés (nincs Content-Length) megkerül. `null` = túl nagy.
+ * chunked kérés (nincs Content-Length) megkerül.
+ *
+ * A kimenet SZÁNDÉKOSAN megkülönbözteti a két hibamódot. Korábban mindkettő `null`
+ * volt, ezért egy MEGSZAKADT olvasás (kliens bontott, hálózati hiba) is
+ * BODY_TOO_LARGE-ként, 413-mal logolódott: a hibakód azt állította, hogy a kliens
+ * túl nagy payloadot küld, holott a kapcsolat szakadt meg. Egy hálózati romlás így
+ * „óriás body"-hullámnak látszott a riportban — rossz diagnózis, rossz beavatkozás.
  */
-async function readBoundedBody(request: Request, max: number): Promise<string | null> {
+type BoundedBody =
+  | { ok: true; body: string }
+  | { ok: false; reason: 'too_large' | 'read_error' };
+
+async function readBoundedBody(request: Request, max: number): Promise<BoundedBody> {
   const declared = request.headers.get('Content-Length');
   if (declared) {
     const len = parseInt(declared, 10);
-    if (Number.isFinite(len) && len > max) return null;
+    if (Number.isFinite(len) && len > max) return { ok: false, reason: 'too_large' };
   }
-  if (!request.body) return '';
+  if (!request.body) return { ok: true, body: '' };
 
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -67,12 +77,12 @@ async function readBoundedBody(request: Request, max: number): Promise<string | 
       total += value.byteLength;
       if (total > max) {
         await reader.cancel();
-        return null;
+        return { ok: false, reason: 'too_large' };
       }
       chunks.push(value);
     }
   } catch {
-    return null;
+    return { ok: false, reason: 'read_error' };
   }
 
   const merged = new Uint8Array(total);
@@ -81,7 +91,7 @@ async function readBoundedBody(request: Request, max: number): Promise<string | 
     merged.set(c, offset);
     offset += c.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  return { ok: true, body: new TextDecoder().decode(merged) };
 }
 
 async function ingestRateLimit(env: Env, hostname: string, request: Request): Promise<boolean> {
@@ -163,12 +173,16 @@ export async function handleConversion(
   // (Content-Length nélküli) kérés simán megkerülte, és a request.json() korlátlanul
   // olvasott. Most a streamet MÉRJÜK olvasás közben, és a cap átlépésekor
   // megszakítjuk. Ez a DLQ/AE-elárasztás elleni valódi korlát.
-  const raw = await readBoundedBody(request, MAX_BODY_BYTES);
-  if (raw === null) {
+  const bodyRead = await readBoundedBody(request, MAX_BODY_BYTES);
+  if (!bodyRead.ok) {
+    const tooLarge = bodyRead.reason === 'too_large';
+    const errorCode = tooLarge
+      ? TrackingErrorCode.BODY_TOO_LARGE
+      : TrackingErrorCode.REQUEST_BODY_READ_FAILED;
     logStructured({
       level: 'info',
-      error_code: TrackingErrorCode.BODY_TOO_LARGE,
-      message: ERROR_DESCRIPTIONS[TrackingErrorCode.BODY_TOO_LARGE],
+      error_code: errorCode,
+      message: ERROR_DESCRIPTIONS[errorCode],
       hostname,
       duration_ms: Date.now() - startedAt
     });
@@ -177,11 +191,14 @@ export async function handleConversion(
       site_id: 'unknown',
       event_name: 'unknown',
       accepted: false,
-      error_code: TrackingErrorCode.BODY_TOO_LARGE,
+      error_code: errorCode,
       total_duration_ms: Date.now() - startedAt
     });
-    return new Response(null, { status: 413, headers: cors });
+    // 413 CSAK valódi méret-túllépésre; a megszakadt olvasás 400 (a kérés nem volt
+    // teljes), hogy a státusz se hazudjon méret-problémát.
+    return new Response(null, { status: tooLarge ? 413 : 400, headers: cors });
   }
+  const raw = bodyRead.body;
 
   // Böngésző-beaconnek a drop 204 (nem szivárgunk hibát, a sendBeacon úgysem
   // olvassa). SZERVER-hívónak (token jelen VAGY server-only út) viszont 400 jár:
@@ -559,8 +576,10 @@ export async function handleConversion(
     payload.test_event_code = undefined;
   }
 
-  // Consent feloldása (Consent Mode v2). adAllowed=false → Meta + Google Ads
-  // konverzió tiltva (GDPR). GA4 mindig megy, consent-jelekkel.
+  // Consent feloldása (Consent Mode v2). adAllowed=false → a Meta CAPI és a
+  // click-ID forwarderek (TikTok/LinkedIn/MsAds) kimaradnak (GDPR). GA4-ág ezen
+  // az úton NINCS (Modell 2: a böngésző birtokolja az on-site GA4-et), a Google Ads
+  // pedig kizárólag offline megy (routes/lead-status.ts), saját consent-kapuval.
   const consentState = parseConsent(payload.consent);
   const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
   const attribution = parseAttribution(payload.attribution);
@@ -771,7 +790,6 @@ function fanOut(
     event_time: payload.event_time,
     value: payload.value,
     currency: payload.currency,
-    source: payload.source,
     event_source_url: payload.event_source_url,
     ecommerce: Object.keys(ecommerce).length > 0 ? ecommerce : undefined,
     fbp: payload.fbp,
@@ -874,23 +892,34 @@ function fanOut(
         // (lomtalan-osztály) zöldnek látszana az AE-dashboardon. A ledger-sor +
         // CRITICAL riasztás elkapja, de az AE-nézet félrevezetne. (A jogos
         // consent-skip marad success:true — az a fan-out helyes működése.)
-        const notConfigured =
-          result.status === 'fulfilled' &&
-          result.value.skipped === true &&
-          result.value.skip_reason === 'not_configured';
-        const success =
-          result.status === 'fulfilled' && result.value.success && !notConfigured;
-        const errorCode =
-          result.status === 'fulfilled' ? result.value.error_code : undefined;
+        const settledOk = result.status === 'fulfilled';
+        const skipped = settledOk && result.value.skipped === true;
+        const skipReason = skipped ? result.value.skip_reason : undefined;
+        const notConfigured = skipReason === 'not_configured';
+        // A scaffold-láb átminősítése (nem konfigurált ÉS nem is elvárt ezen a
+        // site-on — pl. TikTok egy csak-Meta site-on) ELŐRE került, a metrika-írás
+        // elé. Korábban a metrika a minősítés ELŐTT futott, így minden ad-allowed
+        // event success=0 datapontot írt a három be nem kötött forwarderre: az AE-ben
+        // a tiktok/linkedin/msads hibarátája tartósan 100% volt. Egy ilyen, örökre
+        // piros sor pont azt a napot fedné el, amikor egy VALÓDI, bekötött forwarder
+        // kezd el bukni. A ledger már eddig is kiszűrte ezeket a sorokat (lásd
+        // isNotExpectedSkip lentebb) — a metrika most követi ugyanazt a szabályt.
+        const notExpected = notConfigured && !isExpectedPlatform(siteConfig, platform);
+        if (notExpected && settledOk) result.value.skip_reason = 'not_expected';
 
-        recordFanoutMetric(env, {
-          site_id: siteConfig.site_id,
-          event_name: payload.event_name,
-          platform,
-          success,
-          duration_ms: completedAt - platformStart,
-          error_code: errorCode
-        });
+        const success = settledOk && result.value.success && !notConfigured;
+        const errorCode = settledOk ? result.value.error_code : undefined;
+
+        if (!notExpected) {
+          recordFanoutMetric(env, {
+            site_id: siteConfig.site_id,
+            event_name: payload.event_name,
+            platform,
+            success,
+            duration_ms: completedAt - platformStart,
+            error_code: errorCode
+          });
+        }
 
         if (errorCode && ERROR_SEVERITY[errorCode] === 'critical') {
           alerts.push(
@@ -908,22 +937,18 @@ function fanOut(
         // önmagában NEM elég: 2026-07-15 és 07-20 között a lomtalan hiányzó Meta
         // configja pontosan úgy nézett ki, mint egy jogos consent-kihagyás, így
         // 3 valódi lead veszett el retry-rekord nélkül, zöld monitor mellett.
-        const skipped =
-          result.status === 'fulfilled' && result.value.skipped === true;
         if (skipped) {
-          const skipReason = result.value.skip_reason;
           // (a) consent_denied / no-identifier / scaffold → terminális, nincs DLQ.
+          //     (A `skipReason` a MINŐSÍTÉS ELŐTTI érték, tehát a not_configured
+          //     még not_configured-ként látszik itt — a not_expected ág külön van.)
           if (isTerminalSkip(skipReason)) return;
           // (b) not_configured, de a platform nem is elvárt ezen a site-on
           //     (pl. TikTok egy csak-Meta site-on) → szintén terminális. Az okot
-          //     `not_expected`-re minősítjük, hogy a ledger NE kapjon
+          //     fentebb már `not_expected`-re minősítettük, hogy a ledger NE kapjon
           //     PLATFORM_NOT_CONFIGURED hibakódot: egy sosem-bekötött platform
           //     nem hiba, és ha kódot kapna, a digest tele lenne álriasztással.
           //     A minősítés a normalizeDelivery ELŐTT történik (lásd lentebb).
-          if (!isExpectedPlatform(siteConfig, platform)) {
-            result.value.skip_reason = 'not_expected';
-            return;
-          }
+          if (notExpected) return;
           // (c) ELVÁRT platform + hiányzó config → retryable konfigurációs blokk.
           //     Ez az egyetlen skip, ami DLQ-rekordot és CRITICAL riasztást kap:
           //     magától soha nem javul meg, viszont a config helyreállítása után

@@ -346,7 +346,7 @@ export async function handleLeadStatus(
       has_consent_record: leadConsent !== null,
       consent_source: consentSource
     });
-  } else if (siteConfig.gads.customer_id) {
+  } else if (siteConfig.gads?.customer_id) {
     // Model 2: the server is Google-Ads-offline-only (Enhanced Conversions for
     // Leads), delivered via the Data Manager API. The email hash MUST use the
     // Google normalization (Gmail dot/plus strip), NOT the Meta rule.

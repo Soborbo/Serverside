@@ -122,7 +122,7 @@ export function normalizePhone(
     return undefined;
   }
 
-  if (countryCode === 'GB' || countryCode === 'EU') {
+  if (countryCode === 'GB') {
     if (cleaned.startsWith('0')) {
       cleaned = '+44' + cleaned.slice(1);
     } else if (cleaned.startsWith('44')) {
@@ -147,11 +147,17 @@ export function normalizePhone(
       cleaned = '+1' + cleaned;
     }
   } else {
-    // Ismeretlen országhoz (nem GB/HU/US/EU) nincs hívókód-szabályunk. Egy NEMZETI
+    // Ismeretlen országhoz (nem GB/HU/US) nincs hívókód-szabályunk. Egy NEMZETI
     // formátumú szám (trunk-`0`, pl. DE `0176…`) így `+0176…`-ként némán ROSSZ hash-t
     // adna, ami se a böngésző-Pixellel, se a Google EC-vel nem match-el. Csak a már
     // teljes nemzetközi (0-val NEM kezdődő) számot fogadjuk el; a nemzetit inkább
     // eldobjuk (a hiányzó telefon jobb, mint a megmérgezett — a match megy email/fbp-n).
+    //
+    // Az 'EU' SZÁNDÉKOSAN ide esik, NEM a GB-ágra. Korábban `GB || EU` volt egy
+    // ágon, vagyis egy EU-generikus site NÉMET nemzeti száma (`0176…`) `+44176…`-ként
+    // hash-elődött volna: szintaktikailag érvényes UK-szám, ami garantáltan senkivel
+    // nem match-el, és semmilyen hibát nem jelez. Az 'EU' régió-kód (nem ország),
+    // hívókódja nincs — a konzervatív ág a helyes viselkedés.
     if (cleaned.startsWith('0')) return undefined;
     cleaned = '+' + cleaned;
   }

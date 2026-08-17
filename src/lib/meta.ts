@@ -15,7 +15,12 @@ export interface MetaCAPIPayload {
   event_time: number;
   value?: number;
   currency?: string;
-  source?: string;
+  // A `source` (CTA-kontextus) mező TÖRÖLVE (2026-08-16 audit): a hívó kitöltötte,
+  // de a Meta-body építése SOHA nem olvasta — halott mező volt, ami azt a látszatot
+  // keltette, hogy a CTA-kontextus eljut a Metához. Nem jutott el. Ha kell,
+  // TUDATOS döntéssel `custom_data.cta_context`-ként vezethető be (a `source` NÉV
+  // szándékosan kerülendő — a GA4-ben foglalt kampány-kulcs, lásd lib/ga4.ts) —
+  // de az már viselkedés-változás, nem takarítás.
   event_source_url?: string;
   fbp?: string;
   fbc?: string;

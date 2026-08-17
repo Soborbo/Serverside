@@ -67,6 +67,12 @@ export enum TrackingErrorCode {
   // kódtól: egy admin-token brute-force NE a /lead-status alrendszer alatt jelenjen
   // meg a logokban/riasztásokban (rossz attribúció elrejtené a támadást).
   ADMIN_UNAUTHORIZED = 'TRK-400-020',
+  // A kérés-törzs olvasása MEGSZAKADT (a stream dobott) — NEM méret-túllépés.
+  // Korábban a readBoundedBody mindkettőre `null`-t adott, így egy megszakadt
+  // feltöltés BODY_TOO_LARGE-ként (413) logolódott: a hibakód azt állította, hogy
+  // a kliens túl nagy payloadot küldött, holott a kapcsolat szakadt meg. Külön kód,
+  // hogy egy hálózati romlás ne „nagy body" hullámnak látszódjon a riportban.
+  REQUEST_BODY_READ_FAILED = 'TRK-400-021',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -164,6 +170,13 @@ export enum TrackingErrorCode {
   EMQ_QUERY_FAILED = 'TRK-950-008',
   EMQ_COVERAGE_DROP = 'TRK-950-009',
   SITE_CONFIG_DRIFT = 'TRK-950-010',
+  // A cross-platform check MAGA nem fut: egyetlen site-on sincs `recon` blokk,
+  // vagy minden leg kimarad (hiányzó ga4_property_id / gads_onsite_actions,
+  // 403-as scope). Modell 2-ben ez az EGYETLEN monitor a böngésző/GTM-ágra,
+  // tehát az álló monitor nem lehet néma: e kód nélkül a napi riport üres
+  // finding-listája megkülönböztethetetlen a „nincs drift"-től (2026-08-16 audit:
+  // a check a bevezetése óta EGYETLEN napon sem futott le, és ez sehol nem látszott).
+  RECON_CROSS_CHECK_NOT_RUNNING = 'TRK-950-011',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -213,6 +226,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Browser conversion rejected: Origin is not the site own origin nor in allowed_origins',
   [TrackingErrorCode.BODY_TOO_LARGE]:
     'Request body exceeded the 16 KiB ingress cap (measured while streaming, not just Content-Length)',
+  [TrackingErrorCode.REQUEST_BODY_READ_FAILED]:
+    'Request body stream aborted mid-read (client disconnect / network fault) — distinct from the size cap',
   [TrackingErrorCode.CONVERSION_SPIKE]:
     'Accepted conversions for a site spiked far above its 7-day baseline — possible conversion spam on the tokenless browser path',
   [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]:
@@ -290,6 +305,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Ledger event count diverges from the platform-side (GA4 / Google Ads) daily conversion count beyond threshold',
   [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]:
     'Cross-platform reconciliation query failed (D1 / Google Ads API / GA4 Data API) — that leg skipped for the day',
+  [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]:
+    'Cross-platform reconciliation is not running (no recon config, or every leg skipped) — the Model 2 browser/GTM blind spot is unmonitored',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
     'Meta Event Match Quality below threshold for a monitored event (Dataset Quality API)',
   [TrackingErrorCode.EMQ_QUERY_FAILED]:
@@ -390,6 +407,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RECON_CROSS_PLATFORM_DRIFT]: 'warning',
   [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]: 'warning',
+  [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'warning',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
   // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)
   // tokennel dokumentáltan nem mindig kompatibilis — egy permanens token-
@@ -409,6 +427,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.ORIGIN_MISSING]: 'info',
   [TrackingErrorCode.ORIGIN_NOT_ALLOWED]: 'warning',
   [TrackingErrorCode.BODY_TOO_LARGE]: 'info',
+  [TrackingErrorCode.REQUEST_BODY_READ_FAILED]: 'info',
   // Warning (nem info): legitim forgalomból nem jöhet — vagy támadó próbálkozik,
   // vagy egy site kliens-kódja regressziósan a böngésző-útra tette a form-eventet.
   [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]: 'warning',
