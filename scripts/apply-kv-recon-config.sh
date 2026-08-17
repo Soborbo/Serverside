@@ -5,6 +5,12 @@ set -euo pipefail
 
 NS=edd34e28eee847c09c26f9d9e3ea04ab
 cd "$(git rev-parse --show-toplevel)"
+
+# A 4. lépés a MUNKAFÁD `src/site-manifest.json`-jához hasonlít. Ha nem a main-en
+# állsz (pl. azon az ágon, ahonnan ez a szkript jött), egy elavult manifesthez
+# mérnénk — a `pull --ff-only origin main` pedig itt vagy elhasal, vagy nem azt
+# csinálja, amit vársz.
+[ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] || { echo "!! nem a main-en állsz — válts át: git checkout main"; exit 1; }
 git pull --ff-only origin main            # HEAD legyen 5ece5f4 (a #59 merge)
 
 # A nyers configok TITKOT tartalmaznak (meta.access_token, ga4.api_secret).
@@ -34,7 +40,10 @@ SITES="painlessremovals.com lomtalan.hu beautyflow.pro olcsokontenerhaz.hu skinl
 # rossz flag már a hatodik hostnál tartana, apex-írt/www-íratlan párokkal.
 # Egy `--help` grep írás nélkül eldönti.
 for flag in --path --namespace-id --remote; do
-  npx wrangler kv key put --help 2>/dev/null | grep -q -- "$flag" \
+  # 2>&1, NEM 2>/dev/null: sok CLI a súgót a stderr-re írja. Eldobva a grep üres
+  # bemenetet kapna, és a szkript „elavult szintaxis" indoklással állna meg egy
+  # támogatott flagnél — helyes leállás, hamis ok.
+  npx wrangler kv key put --help 2>&1 | grep -q -- "$flag" \
     || { echo "!! a wrangler kv key put nem ismeri a $flag flaget ezen a verzión — állj meg, a szkript szintaxisa elavult"; exit 1; }
 done
 
@@ -133,17 +142,27 @@ node scripts/fetch-kv-configs.mjs "$NS" \
 # ── 4. lépés: egyezik-e a #59-ben lévővel? ───────────────────────────────────
 # A `source_commit` SZÁNDÉKOSAN kimarad az összevetésből: a #59-beli manifest
 # 8a5dbbd-vel készült, a mostani 5ece5f4-gyel. A `sites` blokknak kell egyeznie.
-node -e '
+SKIP_HOSTS="$SKIP_HOSTS" node -e '
   const fs = require("fs");
   const a = JSON.parse(fs.readFileSync("src/site-manifest.json", "utf8")).sites;
   const b = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).sites;
+  // A szándékosan kihagyott hostok KV-ja változatlan maradt, tehát jogosan
+  // térnek el — a riport mondja meg, ne az olvasónak kelljen emlékeznie rá.
+  const skipped = new Set();
+  for (const h of (process.env.SKIP_HOSTS || "").trim().split(/\s+/).filter(Boolean)) {
+    skipped.add(h); skipped.add("www." + h);
+  }
   const hosts = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
   const diffs = hosts.filter((h) => a[h] !== b[h]);
   if (!diffs.length) { console.log("✓ a KV és a #59 manifestje EGYEZIK (" + hosts.length + " host)"); process.exit(0); }
-  console.log("!! ELTÉRÉS " + diffs.length + " hoston — a KV még mindig más, mint amit a manifest elvár:");
-  for (const h of diffs) console.log("   " + h + "\n     manifest: " + (a[h] ?? "<hiányzik>") + "\n     élő KV:   " + (b[h] ?? "<hiányzik>"));
+  const real = diffs.filter((h) => !skipped.has(h));
+  console.log("!! ELTÉRÉS " + diffs.length + " hoston (ebből " + (diffs.length - real.length) + " szándékosan kihagyott):");
+  for (const h of diffs) {
+    console.log("   " + h + (skipped.has(h) ? "   ← SZÁNDÉKOSAN kihagyva, nem hiba" : "") +
+      "\n     manifest: " + (a[h] ?? "<hiányzik>") + "\n     élő KV:   " + (b[h] ?? "<hiányzik>"));
+  }
   console.log("   A friss manifest: site-manifest.generated.json (megmarad, gitignore-olt)");
-  process.exit(1);
+  process.exit(real.length ? 1 : 0);
 ' site-manifest.generated.json
 
 # Ha egyezik, a repóban semmit nem kell módosítani. Ha eltér, a friss manifest
