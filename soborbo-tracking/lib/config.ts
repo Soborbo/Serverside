@@ -28,6 +28,18 @@ function readEnv(key: string): string | undefined {
   }
 }
 
+/**
+ * A csomag verziója, ahogy MINDEN kimenő payload jelenti (`consent_sources
+ * .client_lib_version`). A gateway ebből tudja megmondani, MELYIK kliens-verzió
+ * fordítja rosszul a consentet — enélkül a Fázis D diagnosztikája nem tudja
+ * szétválasztani a „CookieYes küld rosszat" és a „mi fordítjuk rosszul" eseteket.
+ *
+ * KÉZZEL tartandó szinkronban a package.json `version` mezőjével (a lib
+ * böngészőbe másolódik, nincs bundler-injektálás). A gateway minimuma:
+ * Serverside `src/lib/consent.ts` MIN_CLIENT_LIB_VERSION.
+ */
+export const CLIENT_LIB_VERSION = '6.1.0';
+
 export const trackingConfig: TrackingConfig = {
   country: (readEnv('PUBLIC_TRACKING_COUNTRY') as Market) || 'GB',
   currency: readEnv('PUBLIC_TRACKING_CURRENCY') || 'GBP',

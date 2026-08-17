@@ -64,7 +64,9 @@ export async function sendToLinkedIn(
   }
   if (userIds.length === 0) {
     // Nincs egyetlen matchelhető azonosító sem → ne küldjünk üres konverziót.
-    return { success: true, skipped: true };
+    // A `no_identifiers` ok TERMINÁLIS, akárcsak a korábbi ok-nélküli skip —
+    // a viselkedés változatlan, csak a ledgerben megnevezi magát (Fázis D).
+    return { success: true, skipped: true, skip_reason: 'no_identifiers' };
   }
 
   const body: Record<string, unknown> = {

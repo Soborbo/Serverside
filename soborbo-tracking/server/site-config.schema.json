@@ -14,6 +14,10 @@
     "country_code": { "type": "string", "enum": ["GB", "HU", "EU", "US", "DE", "FR", "IT", "ES"] },
     "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
     "require_consent": { "type": "boolean" },
+    "consent_strict": {
+      "type": "boolean",
+      "description": "Phase D (2026-08): fail closed on UNCERTAIN consent (TRK-910-002 unparseable / -003 sources disagree / -005 signals internally inconsistent) — uncertain never becomes GRANTED; those deliveries are skipped with reason consent_uncertain_failclosed. Default false = log only, zero behaviour change. Flip to true per site within days of observing the volume: left false permanently it becomes a new legacy fail-open branch."
+    },
     "crm_token_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",

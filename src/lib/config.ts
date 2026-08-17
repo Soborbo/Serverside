@@ -54,6 +54,22 @@ export interface SiteConfig {
   // backward-compat, ad-platform engedett. EEA-site-okon ajánlott true-ra állítani.
   require_consent?: boolean;
 
+  // Fázis D (2026-08) — fail-closed BIZONYTALAN consent esetén. Default: FALSE.
+  //
+  // `false` (default): a TRK-910-002/003/005 kódok naplózódnak és a receiptre
+  //   kerülnek, a kézbesítés a MAI szabályok szerint megy tovább. NULLA
+  //   viselkedésváltozás — ezt teszt bizonyítja (tests/consent-strict-parity).
+  // `true`: bizonytalan consent (parse-olhatatlan / a források ellentmondanak /
+  //   a jelek belül inkonzisztensek) → az ad-platformok kimaradnak,
+  //   `consent_uncertain_failclosed` okkal. Bizonytalanból soha nem lesz GRANTED.
+  //
+  // MIÉRT NEM ALAPÉRTELMEZETTEN TRUE: ha a mismatch gyakori (a betöltési verseny
+  // hipotézis szerint lehet az), az azonnali fail-closed egy éjszaka alatt levinné
+  // a konverziós volument — pontosan az a csendes hibaosztály, ami ellen az egész
+  // terv szól. A kapcsoló site-onként állítandó true-ra a volumen megfigyelése
+  // után, NAPOKON belül: tartósan false-ként hagyva új legacy fail-open ág lesz belőle.
+  consent_strict?: boolean;
+
   // Extra engedélyezett böngésző-originek (`https://foo.example.com` vagy puszta
   // hostnév). A site SAJÁT hostja + az apex/www testvére MINDIG engedett — ez a
   // mező csak hozzáad. Csak akkor kell, ha a site egy MÁSIK hostról is küld

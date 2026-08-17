@@ -43,6 +43,21 @@ function getCookieYesConsent(): Record<ConsentCategory, boolean> | null {
   catch { return null; }
 }
 
+/**
+ * A CookieYes JS API NYERS olvasata — `null`, ha az API még nem elérhető
+ * (a szkript nem töltött be, vagy dobott).
+ *
+ * TELEMETRIA-CÉLÚ, additív export (Fázis D). A `hasMarketingConsent()` /
+ * `hasAnalyticsConsent()` viselkedése VÁLTOZATLAN: azok az API hiányában
+ * `isDevMode()`-ot adnak (prod-ban deny-all) — épp ez a fedés az, ami a
+ * betöltési verseny hipotézisét megkülönböztethetetlenné teszi egy valódi
+ * elutasítástól. Ez a függvény ezért NEM helyettesíti a hiányzó API-t semmivel:
+ * a `null` maga a mérendő jel.
+ */
+export function readCookieYesApiConsentRaw(): Record<ConsentCategory, boolean> | null {
+  return getCookieYesConsent();
+}
+
 function isDevMode(): boolean {
   try { return typeof import.meta !== 'undefined' && !!import.meta.env?.DEV; }
   catch { return false; }

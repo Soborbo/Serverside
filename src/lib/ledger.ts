@@ -1,7 +1,12 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
-import type { ConsentState } from './consent';
+import type {
+  ConsentState,
+  ConsentSourceSnapshot,
+  ConsentSourceName,
+  IngressKind
+} from './consent';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
@@ -42,6 +47,13 @@ interface DeliveryRecordBase {
   platform: Platform;
   error_code?: string;
   vendor_message?: string;
+  /**
+   * Fázis D: MIÉRT maradt ki a hívás (`deliveries.skip_reason`). Csak `skipped`
+   * soron értelmes. E nélkül a ledger csak annyit tudott, hogy „skipped", és a
+   * 30 napos adatban 9 GRANTED-consent melletti skip oka visszakereshetetlen
+   * maradt — nem lehetett eldönteni, melyik ágon keletkeztek.
+   */
+  skip_reason?: SkipReason;
   /**
    * Strukturált vendor-hibarészlet (Data Manager `error.details[]`,
    * benne a `fieldViolations` tömbbel). Külön oszlop, hogy a rövid
@@ -89,6 +101,27 @@ export interface VendorResult {
 }
 
 /**
+ * Vendor-hibakód → skip-ok, azoknak a skip-ágaknak, amik `skip_reason` NÉLKÜL,
+ * csak `error_code`-dal jeleznek (a Data Manager offline lába ilyen). Pure.
+ *
+ * Ami NEM szerepel benne, az szándékos: a DATAMANAGER_VALIDATE_ONLY nem a
+ * SkipReason-taxonómia egyik ága (nem „miért maradt ki", hanem „a Google csak
+ * validált"), az `error_code` oszlop ott az igazságforrás. Inkább maradjon NULL
+ * a skip_reason, mint hogy egy odaerőltetett ok félrevigye a Fázis D bontását.
+ */
+export function skipReasonFromErrorCode(code: string | undefined): SkipReason | undefined {
+  switch (code) {
+    case TrackingErrorCode.PLATFORM_NOT_CONFIGURED:
+    case TrackingErrorCode.MISSING_CONVERSION_ACTION:
+      return 'not_configured';
+    case TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS:
+      return 'no_identifiers';
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Vendor-válasz normalizálás (#9). A platformok különbözőképp válaszolnak; ez egy
  * közös DeliveryRecord-ba fordít. A skip EGYETLEN igazságforrása a vendor-eredmény
  * `skipped` flagje (consent-tiltás és nem-konfigurált platform egyaránt ezt hozza)
@@ -108,7 +141,8 @@ export function normalizeDelivery(
       return {
         platform,
         status: 'skipped',
-        error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED
+        error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
+        skip_reason: 'not_configured'
       };
     }
     // A vendor SAJÁT hibakódja is átjut, ha adott (a Data Manager offline lába
@@ -118,9 +152,16 @@ export function normalizeDelivery(
     // jogos consent-kihagyástól — pontosan az a vakfolt, ami a lomtalan Meta-
     // kiesését elrejtette, csak az offline lábon.
     if (settled.value.error_code) {
-      return { platform, status: 'skipped', error_code: settled.value.error_code };
+      return {
+        platform,
+        status: 'skipped',
+        error_code: settled.value.error_code,
+        // A `skip_reason` a vendor-eredményből elsődleges; ha nincs (a Data
+        // Manager offline lába csak error_code-dal jelez), a kódból vezetjük le.
+        skip_reason: settled.value.skip_reason ?? skipReasonFromErrorCode(settled.value.error_code)
+      };
     }
-    return { platform, status: 'skipped' };
+    return { platform, status: 'skipped', skip_reason: settled.value.skip_reason };
   }
   if (settled.status === 'rejected') {
     return {
@@ -377,15 +418,52 @@ export interface ConsentReceiptInput {
   consent?: ConsentState;
   require_consent: boolean;
   ad_allowed: boolean;
+  /**
+   * Fázis D — forrásonkénti, PARSE-OLT booleanok (NEM nyers stringek: azok
+   * kizárólag a consent_debug táblába mennek, és csak mismatch esetén).
+   * A `null` itt tartalmi állítás: az a forrás nem volt elérhető abban a
+   * pillanatban — ez a betöltési verseny bizonyítéka, nem hiányzó adat.
+   */
+  sources?: ConsentReceiptSources;
+}
+
+export interface ConsentReceiptSources {
+  cookie: ConsentSourceSnapshot;
+  api: ConsentSourceSnapshot;
+  server: ConsentSourceSnapshot;
+  source_used: ConsentSourceName;
+  source_consistent: 1 | 0 | null;
+  ingress_kind: IngressKind;
+  client_lib_version?: string;
+  consent_age_s?: number;
+  /**
+   * A TRK-910 megállapítások vesszős listája (pl. "TRK-910-003,TRK-910-005"),
+   * vagy undefined, ha az event tiszta. Enélkül a -005/-006 kód SEHOL nem lenne
+   * D1-ből lekérdezhető, pedig épp azok aránya dönti el, hogy a CookieYes vagy a
+   * saját bekötéseink hibáznak (a Fázis D döntési kapuja).
+   */
+  finding_codes?: string;
+}
+
+/** boolean|null → INTEGER|null (a NULL végig NULL marad). */
+function boolCol(v: boolean | null | undefined): 0 | 1 | null {
+  if (v === true) return 1;
+  if (v === false) return 0;
+  return null;
 }
 
 export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Promise<void> {
   if (!env.LEDGER) return;
+  const s = c.sources;
   try {
     await env.LEDGER.prepare(
+      // Az új oszlopok a 0004 migrációból, az oszloplista VÉGÉN (ALTER TABLE
+      // sorrend) — a meglévő pozíciófüggő olvasók így nem csúsznak el.
       `INSERT INTO consent_receipts
-         (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at,
+          src_cookie_analytics, src_cookie_marketing, src_api_analytics, src_api_marketing, src_server_analytics, src_server_marketing,
+          source_used, source_consistent, ingress_kind, client_lib_version, consent_age_s, finding_codes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -398,11 +476,65 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
         c.consent?.analytics_storage ?? null,
         c.require_consent ? 1 : 0,
         c.ad_allowed ? 1 : 0,
-        new Date().toISOString()
+        new Date().toISOString(),
+        boolCol(s?.cookie.analytics),
+        boolCol(s?.cookie.marketing),
+        boolCol(s?.api.analytics),
+        boolCol(s?.api.marketing),
+        boolCol(s?.server.analytics),
+        boolCol(s?.server.marketing),
+        s?.source_used ?? null,
+        s?.source_consistent ?? null,
+        s?.ingress_kind ?? null,
+        s?.client_lib_version ?? null,
+        // CookieYes alatt MINDIG NULL — a süti nem hordoz timestampet, és
+        // heurisztikát nem találunk ki rá.
+        s?.consent_age_s ?? null,
+        s?.finding_codes ?? null
       )
       .run();
   } catch (err) {
     ledgerError('recordConsentReceipt', err, { site_id: c.site_id });
+  }
+}
+
+export interface ConsentDebugInput {
+  event_id: string;
+  site_id: string;
+  error_code: string;
+  raw_cookie?: string;
+  raw_api?: string;
+  raw_server?: string;
+}
+
+/**
+ * Nyers consent-stringek — KIZÁRÓLAG mismatch/parse-hiba esetén (TRK-910-002 /
+ * TRK-910-003), és KIZÁRÓLAG ebbe a táblába. A `consent_receipts` sosem kap
+ * nyers sütit; ez a tábla 14 nap után purge-ölődik (lib/retention.ts).
+ *
+ * Sosem dob és sosem logolja ki a nyers tartalmat (CLAUDE.md 13.).
+ */
+export async function recordConsentDebug(env: Env, d: ConsentDebugInput): Promise<void> {
+  if (!env.LEDGER) return;
+  try {
+    await env.LEDGER.prepare(
+      `INSERT INTO consent_debug
+         (id, event_id, site_id, error_code, raw_cookie, raw_api, raw_server, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        id(),
+        d.event_id,
+        d.site_id,
+        d.error_code,
+        d.raw_cookie ?? null,
+        d.raw_api ?? null,
+        d.raw_server ?? null,
+        new Date().toISOString()
+      )
+      .run();
+  } catch (err) {
+    ledgerError('recordConsentDebug', err, { site_id: d.site_id });
   }
 }
 
@@ -448,9 +580,12 @@ export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<vo
   const records = d.records.map((r) => enforceVendorStatus(r, d.site_id));
   try {
     const stmt = env.LEDGER.prepare(
+      // A `skip_reason` SZÁNDÉKOSAN az oszloplista VÉGÉN van (0004 migráció):
+      // az ALTER TABLE hozzáfűzi, és így a meglévő pozíciófüggő olvasók
+      // (tesztek, ad-hoc lekérdezések) indexei érintetlenek maradnak.
       `INSERT INTO deliveries
-         (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, error_detail, attempt, origin, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, event_name, platform, status, http_status, error_code, vendor_message, error_detail, attempt, origin, created_at, skip_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const batch = records.map((r) =>
       stmt.bind(
@@ -467,7 +602,9 @@ export async function recordDeliveries(env: Env, d: DeliveriesInput): Promise<vo
         r.error_detail ?? null,
         0,
         origin,
-        now
+        now,
+        // Csak skipped soron van értelme; egyébként NULL (accepted/rejected).
+        r.status === 'skipped' ? (r.skip_reason ?? null) : null
       )
     );
     await env.LEDGER.batch(batch);

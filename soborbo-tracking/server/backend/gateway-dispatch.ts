@@ -112,6 +112,9 @@ export interface GatewayConversionInput {
   userData?: GatewayUserData;
   attribution?: Record<string, string | undefined>;
   consent?: ConsentState;
+  /** Phase D telemetry — see `buildConsentSources`. Diagnostic only; it does not
+   * influence any gate. Pass `buildConsentSources(request.headers.get('cookie'))`. */
+  consentSources?: ConsentSourcesPayload;
   eventSourceUrl?: string;
   /** The REAL end-user's IP/UA — without them the gateway would attribute the
    * conversion to our own Worker's egress IP/UA (wrong geo, worse Meta EMQ). */
@@ -202,6 +205,84 @@ export function readConsentFromCookie(cookieHeader: string | null): ConsentState
     ad_personalization: sig(adGranted),
     ad_storage: sig(adGranted),
     analytics_storage: sig(map.analytics === 'yes'),
+  };
+}
+
+/**
+ * Phase D (2026-08) consent-source telemetry — the version string every payload
+ * reports as `consent_sources.client_lib_version`. Keep in sync with the
+ * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
+ */
+export const BACKEND_LIB_VERSION = '6.1.0';
+
+export interface ConsentSourceSnapshot {
+  analytics: boolean | null;
+  marketing: boolean | null;
+}
+
+export interface ConsentSourcesPayload {
+  cookie: ConsentSourceSnapshot;
+  api: ConsentSourceSnapshot;
+  source_used: 'cookieyes_cookie' | 'cookieyes_api' | 'override' | 'server_cookie' | 'none';
+  client_lib_version: string;
+  raw_cookie?: string;
+}
+
+/**
+ * The site backend's OWN reading of the CookieYes cookie, reported to the
+ * gateway as telemetry (Phase D). It does NOT change what is sent or gated —
+ * `readConsentFromCookie` still produces the `consent` block exactly as before.
+ *
+ * WHY THE BACKEND MUST REPORT THIS: the gateway is reached over a service
+ * binding, so it never sees the end user's Cookie header — on the server ingress
+ * its own read is always NULL. Since every high-value conversion (and all nine
+ * of the unexplained GRANTED-but-skipped deliveries) travels this path, without
+ * this the measurement would be blind exactly where it matters.
+ *
+ * `null` = that source was not available. Never substitute a default: the NULL
+ * pattern is the evidence (a request with no CookieYes cookie at all is the
+ * signature of a decision that had not been made or stored yet).
+ */
+export function buildConsentSources(cookieHeader: string | null | undefined): ConsentSourcesPayload {
+  const unavailable: ConsentSourceSnapshot = { analytics: null, marketing: null };
+  let raw: string | undefined;
+  if (cookieHeader) {
+    for (const part of cookieHeader.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx < 0) continue;
+      if (part.slice(0, idx).trim() !== 'cookieyes-consent') continue;
+      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      break;
+    }
+  }
+  if (!raw) {
+    return {
+      cookie: unavailable,
+      // There is no browser here, so the CookieYes JS API can never be read.
+      api: unavailable,
+      source_used: 'none',
+      client_lib_version: BACKEND_LIB_VERSION,
+    };
+  }
+
+  const map: Record<string, string> = {};
+  for (const part of raw.split(',')) {
+    const idx = part.indexOf(':');
+    if (idx > 0) map[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }
+  const cookie: ConsentSourceSnapshot = {
+    analytics: map.analytics === undefined ? null : map.analytics === 'yes',
+    marketing: map.advertisement === undefined ? null : map.advertisement === 'yes',
+  };
+  const present = cookie.analytics !== null || cookie.marketing !== null;
+  return {
+    cookie,
+    api: unavailable,
+    source_used: present ? 'cookieyes_cookie' : 'none',
+    client_lib_version: BACKEND_LIB_VERSION,
+    // Raw string: the gateway keeps it ONLY when the sources disagree, in the
+    // short-lived consent_debug table (14-day purge). Never in consent_receipts.
+    raw_cookie: present ? raw : undefined,
   };
 }
 
@@ -344,6 +425,9 @@ export function buildGatewayPayload(input: GatewayConversionInput): Record<strin
     user_data: userData && Object.keys(userData).length > 0 ? userData : undefined,
     attribution: attribution && Object.keys(attribution).length > 0 ? attribution : undefined,
     consent: input.consent,
+    // Phase D telemetry (optional). Absent → the gateway records NULL sources
+    // for this event, which is itself a measurement, not an error.
+    consent_sources: input.consentSources,
     event_source_url: input.eventSourceUrl,
     client_ip_address: input.clientIpAddress,
     client_user_agent: input.clientUserAgent,

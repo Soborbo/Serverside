@@ -353,3 +353,97 @@ A teljes enum forrás: `src/lib/error-codes.ts`.
 **Severity**: Warning
 **Description**: Egy match-kulcs (em/ph/fbc/fbp) 24 órás jelenlét-lefedettsége ≥25 százalékponttal a 7 napos átlaga alá esett (élő baseline-nál, ≥5 eventes mintán) — az eltört identifier-forwarding klasszikus képe, miközben a kézbesítés zöld marad.
 **Action**: 1) MELYIK kulcs esett? fbp → a kliens `_fbp` cookie-olvasása/dispatch; fbc → `_fbc` cookie + fbclid-attribúció; em/ph → a form/backend user_data lánc. 2) Nézd a site legutóbbi front-end deployát — a regresszió jellemzően onnan jön. 3) A flag-ek az events_raw `*_present` oszlopai (PII nincs tárolva).
+
+---
+
+# TRK-910-* — Consent-diagnosztika (Fázis D, 2026-08)
+
+**Miért a 910-es sáv, és nem a 900-as**: a Fázis D briefje ezeket TRK-900-001…006-ként
+írja le, de a 900-as sávban a 001–008 FOGLALT (DLQ + Cron kódok, fentebb), élesben
+kibocsátva, ezzel a runbookkal és historikus log-találatokkal. Az újraszámozás néma
+diagnosztika-vesztés lenne — egy TRK-900-002 találat mást jelentene tegnap és ma.
+A consent-kódok ezért a szabad 910-es sávot kapták, 1:1 sorrendben: 910-001 ↔ 900-001,
+… 910-006 ↔ 900-006.
+
+**Közös háttér**: három párhuzamos consent-olvasás fut ugyanarra a döntésre — kliens
+`getCkyConsent()` JS API, kliens `cookieyes-consent` süti-parse, és a szerver HTTP
+Cookie header parse-a. A Fázis D ezek eltérését MÉRI (nem javítja): 30 nap adatból 9
+olyan `skipped` delivery van, aminek a receiptje GRANTED. Elsőszámú hipotézis:
+betöltési verseny. A per-event kódok INFO szintűek — az aggregált jel a napi
+keresztellenőrzésé (`scheduled/consent-check.ts`, cron 08:30 UTC).
+
+## TRK-910-001 — Consent object missing
+
+**Severity**: Info
+**Description**: A payloadban egyáltalán nincs `consent` blokk. Viselkedés VÁLTOZATLAN: a site
+`require_consent` szabálya dönt (fail-closed site-on skip `consent_missing_failclosed` okkal).
+**Action**: Ha egy site-on tömeges: a kliens-lib nem küld consentet (régi verzió), vagy a
+site-backend nem hívja a `readConsentFromCookie`-t. Nézd a `consent_receipts.source_used`
+és a NULL-forrás oszlopokat ugyanarra a site-ra.
+
+## TRK-910-002 — Consent unparseable
+
+**Severity**: Info (de a `consent_strict: true` site-on fail-closed)
+**Description**: Van `consent` objektum, de egyetlen érvényes Consent Mode v2 jel sem
+olvasható ki belőle. `consent_debug` sor íródik a nyers stringekkel (14 napos purge).
+**Action**: A `consent_debug.raw_cookie` / `raw_api` megmutatja, mit küldött a kliens.
+Jellemzően rossz kulcsnév (`marketing` a `advertisement` helyett) vagy elrontott
+signal-érték.
+
+## TRK-910-003 — Consent sources disagree
+
+**Severity**: Info (de a `consent_strict: true` site-on fail-closed)
+**Description**: Két consent-forrás ellentmond egymásnak (`source_consistent = 0`).
+`consent_debug` sor íródik. **Ez a Fázis D fő mérőszáma.**
+**Action**: 1) `consent_receipts`: melyik forráspár tér el (`src_cookie_*` vs `src_api_*` vs
+`src_server_*`)? 2) Ha az API mond DENY-t, miközben a süti GRANTED-et: betöltési verseny
+(A kimenetel — kliens-egységesítés kell, nem CMP). 3) Ha a süti maga hordoz rossz
+állapotot konzisztens lib-verzió mellett: B kimenetel (CookieYes a hibás).
+
+## TRK-910-004 — Consent expired
+
+**Severity**: Info
+**Description**: **DEFINIÁLVA, DE NEM ÉLESÍTVE.** CookieYes alatt SOHA nem tüzelhet: a
+`cookieyes-consent` süti nem hordoz timestampet, tehát a `consent_age_s` mindig NULL.
+Kizárólag az sbo_consent (saját CMP) korszakban aktiválható. Fail-closed viselkedést
+akkor sem kap — a `consent_strict` csak a 002/003/005 kódokra hat.
+**Action**: Ha valaha megjelenik CookieYes alatt: valaki heurisztikát tett a
+`consent_age_s`-be. Ne tegyen.
+
+## TRK-910-005 — Consent signals internally inconsistent
+
+**Severity**: Info (de a `consent_strict: true` site-on fail-closed)
+**Description**: Az ad-hármas (`ad_user_data` / `ad_personalization` / `ad_storage`) szétesik:
+az egyik GRANTED, a másik DENIED vagy hiányzik. A CookieYes-leképezésben ez a három EGYSÉG,
+tehát valami rosszul fordít.
+**Action**: A fordítási pont a kliens `getConsentState()` vagy a site-backend
+`readConsentFromCookie` — mindkettő az `advertisement` kategóriát képezi le mindhárom jelre.
+Részleges objektum jellemzően kézi `__trackingConsent` override-ból vagy saját site-kódból jön.
+
+## TRK-910-006 — Client lib version below minimum
+
+**Severity**: Info
+**Description**: A jelentett `client_lib_version` a `MIN_CLIENT_LIB_VERSION` (jelenleg 6.1.0)
+alatt van. A HIÁNYZÓ verzió NEM tüzeli a kódot (a régi libek nem is küldenek telemetriát) —
+azt a NULL-forrás mintázat mutatja meg.
+**Action**: Frissítsd a site `soborbo-tracking` package-ét. Amíg nem frissül, az adott site
+consent-diagnosztikája vak marad.
+
+## TRK-910-007 — Consent cross-check query failed
+
+**Severity**: Warning
+**Description**: A napi consent-keresztellenőrzés egyik D1-lekérdezése elbukott. A napi levél
+ilyenkor VAKFOLTKÉNT jelenti — nem „nincs jel".
+**Action**: D1 státusz + a `leg` mező a logban (granted_skips / findings / consistency_* /
+null_sources / debug_rows). Ellenőrizd, hogy a 0004 migráció lefutott-e (a hiányzó
+`skip_reason` / `finding_codes` oszlop pontosan ezt a hibát adja).
+
+## TRK-910-008 — GRANTED consent but delivery skipped
+
+**Severity**: Warning
+**Description**: GRANTED consent receipt MELLETT keletkezett `skipped` delivery — pontosan az
+a rejtély, amiért a Fázis D létezik (30 nap alatt 9 darab). Ilyen sornak nem szabadna léteznie.
+**Action**: A `skip_reason` bontás mondja meg az ágat: `consent_missing_failclosed` →
+a payload consentje nem GRANTED volt, miközben a receipt igen (verseny vagy két forrás);
+`not_configured` → config-vesztés (lomtalan-osztály), nem consent-ügy; `(unnamed)` → a
+0004 migráció ELŐTTI sor, ott csak az időbélyeg segít.

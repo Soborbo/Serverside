@@ -20,7 +20,8 @@
  *    rate limit is the browser-path control, server-side.
  */
 
-import { hasAnalyticsConsent, hasMarketingConsent } from './consent';
+import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
+import { CLIENT_LIB_VERSION } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
 import { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS } from './event-contract';
@@ -128,6 +129,119 @@ function getConsentState(): ConsentState | undefined {
     ad_personalization: sig(adGranted),
     ad_storage: sig(adGranted),
     analytics_storage: sig(map.analytics === 'yes')
+  };
+}
+
+// ── Fázis D · consent-forrás telemetria (2026-08) ───────────────────────────
+//
+// MÉR, NEM DÖNT. A `getConsentState()` fenti logikája és a lib consent-kapui
+// (hasMarketingConsent / hasAnalyticsConsent) VÁLTOZATLANOK — ez a blokk csak
+// JELENTI, mit látott az egyes forrásokból abban a pillanatban.
+//
+// Miért kell: ma HÁROM olvasat fut ugyanarra a döntésre, és nem tudjuk, hogy
+// eltérnek-e. (1) A dispatch-kapuk a CookieYes JS API-t nézik
+// (`getCkyConsent()`), ami betöltés ELŐTT prod-ban deny-all-t ad. (2) A payload
+// `consent` blokkja a `cookieyes-consent` SÜTIBŐL épül. (3) A gateway harmadszor
+// olvas, a HTTP Cookie headerből. 30 nap adatból 9 olyan `skipped` delivery van,
+// aminek a receiptje GRANTED — a legvalószínűbb magyarázat épp ez a verseny.
+//
+// `null` = a forrás nem volt elérhető abban a pillanatban. NE pótold semmivel:
+// a NULL-mintázat maga a bizonyíték.
+
+export interface ConsentSourceSnapshot {
+  analytics: boolean | null;
+  marketing: boolean | null;
+}
+
+export interface ConsentSourcesPayload {
+  cookie: ConsentSourceSnapshot;
+  api: ConsentSourceSnapshot;
+  source_used: 'cookieyes_cookie' | 'cookieyes_api' | 'override' | 'none';
+  client_lib_version: string;
+  /** Nyers stringek — a gateway CSAK mismatch esetén tárolja (consent_debug). */
+  raw_cookie?: string;
+  raw_api?: string;
+}
+
+const UNAVAILABLE_SOURCE: ConsentSourceSnapshot = { analytics: null, marketing: null };
+
+/** A `cookieyes-consent` süti nyers kategória-térképe (null, ha nincs süti). */
+function readCookieYesCookieRaw(): { raw: string; map: Record<string, string> } | null {
+  if (typeof document === 'undefined') return null;
+  const raw = getCookie('cookieyes-consent');
+  if (!raw) return null;
+  const map: Record<string, string> = {};
+  for (const part of raw.split(',')) {
+    const idx = part.indexOf(':');
+    if (idx > 0) map[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }
+  return { raw, map };
+}
+
+/**
+ * A consent-források pillanatfelvétele. SOHA nem dob: bármelyik forrás hibája
+ * csak annyit jelent, hogy az a forrás „nem elérhető". Egy telemetria-mező nem
+ * buktathat konverziót.
+ */
+export function collectConsentSources(): ConsentSourcesPayload {
+  let cookie: ConsentSourceSnapshot = { ...UNAVAILABLE_SOURCE };
+  let rawCookie: string | undefined;
+  let cookiePresent = false;
+  try {
+    const c = readCookieYesCookieRaw();
+    if (c) {
+      rawCookie = c.raw;
+      // Csak a TÉNYLEGESEN jelen lévő kulcsokat fordítjuk le; a hiányzó
+      // kategória null marad (nem `false` — az hazugság lenne).
+      cookie = {
+        analytics: c.map.analytics === undefined ? null : c.map.analytics === 'yes',
+        marketing: c.map.advertisement === undefined ? null : c.map.advertisement === 'yes'
+      };
+      cookiePresent = cookie.analytics !== null || cookie.marketing !== null;
+    }
+  } catch {
+    // marad UNAVAILABLE
+  }
+
+  let api: ConsentSourceSnapshot = { ...UNAVAILABLE_SOURCE };
+  let rawApi: string | undefined;
+  let apiPresent = false;
+  try {
+    const categories = readCookieYesApiConsentRaw();
+    if (categories) {
+      api = { analytics: categories.analytics === true, marketing: categories.advertisement === true };
+      apiPresent = true;
+      rawApi = JSON.stringify(categories);
+    }
+  } catch {
+    // marad UNAVAILABLE
+  }
+
+  // MELYIK forrásból épült a payload `consent` blokkja — ez a `getConsentState()`
+  // precedenciája (override → süti → semmi). FIGYELEM: ez SZÁNDÉKOSAN nem
+  // ugyanaz, mint amin a dispatch-kapu dönt (az a JS API) — a kettő eltérése a
+  // mérés tárgya, nem hiba a jelentésben.
+  const hasOverride =
+    typeof window !== 'undefined' &&
+    Boolean((window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent);
+  const sourceUsed: ConsentSourcesPayload['source_used'] = hasOverride
+    ? 'override'
+    : cookiePresent
+      ? 'cookieyes_cookie'
+      : apiPresent
+        ? 'cookieyes_api'
+        : 'none';
+
+  return {
+    cookie,
+    api,
+    source_used: sourceUsed,
+    client_lib_version: CLIENT_LIB_VERSION,
+    raw_cookie: rawCookie,
+    raw_api: rawApi
+    // `consent_age_s` SZÁNDÉKOSAN hiányzik: a `cookieyes-consent` süti nem
+    // hordoz timestampet, és heurisztikát nem találunk ki rá. A gateway
+    // receiptjén NULL marad, amíg nincs saját CMP.
   };
 }
 
@@ -307,6 +421,9 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     client_id: clientId,
     session_id: sessionId,
     consent: payload.consent || getConsentState(),
+    // Fázis D telemetria — a döntést NEM befolyásolja, csak jelenti, mit láttak
+    // a párhuzamos consent-források ebben a pillanatban.
+    consent_sources: collectConsentSources(),
     attribution: payload.attribution || collectAttribution(),
     event_source_url: payload.event_source_url || location.href
   });
