@@ -40,6 +40,19 @@ export interface FindingCountRow {
 export interface ConsistencyRow {
   inconsistent: number;
   comparable: number;
+  /**
+   * Az ablak ÖSSZES receiptje — nem csak az összevethetőké.
+   *
+   * Ettől válik megkülönböztethetővé a két, gyökeresen eltérő nulla:
+   *  - `total=0`     → nem jött forgalom (a mérés nem tud mit mondani)
+   *  - `total>0, comparable=0` → jött forgalom, de MINDEN receipt egyforrású,
+   *    tehát a konzisztencia-mérés szerkezetileg VAK. Ez a valós állapot addig,
+   *    amíg a 6.1.0-s kliens-lib nincs kint a site-okon: a szerver-süti az
+   *    egyetlen forrás, nincs mivel összevetni. A digest ezt KIMONDJA, mert egy
+   *    „n/a" úgy olvasódik, mint „rendben van", és pontosan az a hibaosztály,
+   *    amit ez az egész mérés kerülni akar.
+   */
+  total: number;
 }
 
 export interface NullSourceRow {
@@ -80,6 +93,16 @@ export interface ConsentCrossCheckSummary {
   inconsistent_rate: number | null;
   baseline_inconsistent_rate: number | null;
   inconsistent_rate_delta: number | null;
+  /**
+   * A konzisztencia-láb VAK-e: jött receipt, de egy sem volt összevethető
+   * (mind egyforrású). Nem riasztás — ez a várt állapot, amíg a 6.1.0-s lib
+   * nincs kint —, de a digestnek ki KELL mondania, hogy az `n/a` ne olvasódjon
+   * „rendben van"-ként. Lásd ConsistencyRow.total.
+   */
+  consistency_blind: boolean;
+  /** Az aznapi receiptek száma és az összevethetők száma (a vakság mértéke). */
+  consistency_total: number;
+  consistency_comparable: number;
   null_sources: NullSourceRow[];
   debug_rows: number;
   failed_legs: string[];
@@ -185,6 +208,11 @@ export function evaluateConsentCrossCheck(
     inconsistent_rate: todayRate,
     baseline_inconsistent_rate: baseRate,
     inconsistent_rate_delta: delta,
+    // Vak = jött forgalom, de egyetlen receipt sem volt összevethető. A
+    // `total === 0` NEM vakság, hanem csend (nincs mit mérni).
+    consistency_blind: input.today.total > 0 && input.today.comparable === 0,
+    consistency_total: input.today.total,
+    consistency_comparable: input.today.comparable,
     null_sources: input.nullSources,
     debug_rows: input.debugRows,
     failed_legs: input.failedLegs,
@@ -224,10 +252,15 @@ export const SQL_FINDINGS = `
   WHERE received_at >= ?1 AND received_at < ?2 AND finding_codes IS NOT NULL
   GROUP BY site_id, client_lib_version, finding_codes`;
 
-/** 3. source_consistent arány. A NULL (nincs összehasonlítható forrás) kimarad. */
+/**
+ * 3. source_consistent arány. A NULL (nincs összehasonlítható forrás) kimarad a
+ * nevezőből — de a `total` külön jön, hogy a „nincs forgalom" és a „van
+ * forgalom, de egyik receipt sem mérhető" eset ne mosódjon össze.
+ */
 export const SQL_CONSISTENCY = `
   SELECT SUM(CASE WHEN source_consistent = 0 THEN 1 ELSE 0 END) AS inconsistent,
-         SUM(CASE WHEN source_consistent IS NOT NULL THEN 1 ELSE 0 END) AS comparable
+         SUM(CASE WHEN source_consistent IS NOT NULL THEN 1 ELSE 0 END) AS comparable,
+         COUNT(*) AS total
   FROM consent_receipts
   WHERE received_at >= ?1 AND received_at < ?2`;
 
@@ -341,9 +374,11 @@ export async function runConsentCrossCheck(
     failedLegs
   );
 
-  const zero: ConsistencyRow = { inconsistent: 0, comparable: 0 };
+  const zero: ConsistencyRow = { inconsistent: 0, comparable: 0, total: 0 };
   const norm = (r: ConsistencyRow | undefined): ConsistencyRow =>
-    r ? { inconsistent: r.inconsistent ?? 0, comparable: r.comparable ?? 0 } : zero;
+    r
+      ? { inconsistent: r.inconsistent ?? 0, comparable: r.comparable ?? 0, total: r.total ?? 0 }
+      : zero;
 
   return evaluateConsentCrossCheck(
     {
