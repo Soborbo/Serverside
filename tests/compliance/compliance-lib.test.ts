@@ -48,10 +48,19 @@ describe('classifyRequest', () => {
 });
 
 describe('isFirstParty', () => {
-  it('a registrable domain szerint dönt (www és apex ugyanaz)', () => {
+  it('a site saját hostjához méri (www és apex ugyanaz, aldomain is az)', () => {
     expect(isFirstParty('https://www.lomtalan.hu/api/lead', 'https://lomtalan.hu/')).toBe(true);
-    expect(isFirstParty('https://lomtalan.hu/api/lead', 'https://lomtalan.hu/')).toBe(true);
+    expect(isFirstParty('https://lomtalan.hu/api/lead', 'https://www.lomtalan.hu/')).toBe(true);
+    expect(isFirstParty('https://shop.lomtalan.hu/api/lead', 'https://lomtalan.hu/')).toBe(true);
     expect(isFirstParty('https://www.google-analytics.com/g/collect', 'https://lomtalan.hu/')).toBe(false);
+  });
+
+  it('többcímkés public suffixnél NEM veszi első félnek az egész .co.uk-ot', () => {
+    // A régi „utolsó két címke" szabály `co.uk`-ra redukált, és minden *.co.uk
+    // hostot első félnek vett — a safety-net így IDEGEN harmadik felek kéréseit
+    // abortálta volna, ráadásul first-party írásként jelentve őket.
+    expect(isFirstParty('https://tracker.other.co.uk/collect', 'https://agykontroll.co.uk/')).toBe(false);
+    expect(isFirstParty('https://www.agykontroll.co.uk/x', 'https://agykontroll.co.uk/')).toBe(true);
   });
 });
 
@@ -71,6 +80,17 @@ describe('inspectPingForIdentifiers', () => {
   it('az URL-be ágyazott click ID-t is megtalálja a `dl` paraméterben', () => {
     const r = inspectPingForIdentifiers('https://www.google-analytics.com/g/collect?dl=https%3A%2F%2Fx.hu%2F%3Fgclid%3DZ');
     expect(r.hasClickId).toBe(true);
+  });
+
+  it('a POST-TÖRZSBEN utazó azonosítót is megtalálja', () => {
+    // GA4/Meta POST-nál az azonosítók a törzsben vannak; csak az URL-t nézve a
+    // „reject után nincs azonosító" ellenőrzés hamis PASS-t adna.
+    const r = inspectPingForIdentifiers(
+      'https://www.google-analytics.com/g/collect?v=2',
+      'en=page_view&uid=user-9&ep.email=a%40b.com'
+    );
+    expect(r.params).toEqual(expect.arrayContaining(['body:uid', 'body:ep.email']));
+    expect(r.hasEmailLike).toBe(true);
   });
 
   it('tiszta ping → nincs találat', () => {

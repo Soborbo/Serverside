@@ -1,11 +1,15 @@
 # Consent compliance baseline
 
 **Futás:** `npm run compliance -- --browser=chromium --relay`  
-**Kezdet:** 2026-08-17T07:02:58.471Z · **Vége:** 2026-08-17T07:08:12.263Z  
+**Kezdet:** 2026-08-17T07:20:01.436Z · **Vége:** 2026-08-17T07:25:21.493Z  
 **Böngészők:** chromium  
 **Teszt-IP országa:** US — a banner megjelenése geo-függő lehet.
 
 > **Relay-mód volt bekapcsolva.** A böngésző kéréseit a futtató Node HTTP-stackje szolgálta ki (a mérés környezetében a böngésző közvetlenül nem jut ki a hálózatra). Minden kérés ugyanúgy megjelenik a felvételben — csak a válasz jön máshonnan. Ami emiatt NEM mérhető pontosan: a HTTP/2–3 és TLS-szintű viselkedés, valamint a böngésző saját protokoll-optimalizációi.
+
+> ## ⚠️ A BASELINE ÉRVÉNYESSÉGE KORLÁTOZOTT
+> - **A mérés `US` IP-ről futott, miközben minden site `eea_uk` szabályrendszerű.** A CMP-megjelenítés és a tag-viselkedés geo-függő lehet, ezért ez a futás NEM alkalmas az EEA/UK viselkedés megállapítására: a hiányzó banner vagy kontroll itt N-A-ként jelenik meg, nem hibaként. A baseline-t HU/UK kilépőpontról meg kell ismételni.
+> - **Hiányzó böngésző: webkit.** A Safari ITP a first-party storage-ot eltérően kezeli, ezért a storage-hoz kötődő ellenőrzések csak a mért böngészőre érvényesek (`npx playwright install webkit && npm run compliance -- --browser=webkit`).
 
 > Ez MÉRÉS, nem javítás. A harness kizárólag olvas és megfigyel: egyetlen űrlapot sem küld be, egyetlen konverziót sem vált ki (a first-party nem-GET kéréseket hálózati szinten abortálja, a submit-eseményeket a DOM-ban blokkolja, és csak a consent-banner gombjaira kattint).
 
@@ -75,32 +79,40 @@ Call log:
 ```json
 [
   {
-    "t": 1786950180416,
+    "t": 1786951203654,
     "category": "ga4",
     "method": "POST",
     "url": "painlessremovals.com/f807/ga/g/c",
-    "full_url_len": 810
+    "full_url_len": 826,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950180416,
+    "t": 1786951203655,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 158
+    "full_url_len": 158,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950180418,
+    "t": 1786951203657,
     "category": "google_ads",
     "method": "POST",
     "url": "painlessremovals.com/f807/gs/ccm/collect",
-    "full_url_len": 523
+    "full_url_len": 539,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950180422,
+    "t": 1786951203662,
     "category": "google_ads",
     "method": "GET",
     "url": "painlessremovals.com/f807/gs/ccm/collect",
-    "full_url_len": 523
+    "full_url_len": 539,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -113,11 +125,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950179865,
+    "t": 1786951203114,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 68
+    "full_url_len": 68,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -132,7 +146,7 @@ Call log:
   {
     "name": "CLID",
     "domain": "www.clarity.ms",
-    "expires": "2027-08-17T07:03:00.088Z"
+    "expires": "2027-08-17T07:20:03.385Z"
   }
 ]
 ```
@@ -163,11 +177,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950179865,
+  "gtm_request_t": 1786951203114,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950179337,
+      "t": 1786951202537,
       "pre": false,
       "args": [
         {
@@ -178,7 +192,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950179338,
+      "t": 1786951202539,
       "pre": false,
       "args": [
         {
@@ -198,17 +212,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950179338,
+      "t": 1786951202539,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950179338,
+          "gtm.start": 1786951202539,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950179867,
+      "t": 1786951203108,
       "pre": false,
       "args": [
         {
@@ -217,7 +231,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950180228,
+      "t": 1786951203612,
       "pre": false,
       "args": [
         {
@@ -228,7 +242,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950180229,
+      "t": 1786951203613,
       "pre": false,
       "args": [
         {
@@ -247,7 +261,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950180237,
+      "t": 1786951203654,
       "pre": false,
       "args": [
         {
@@ -357,7 +371,7 @@ Call log:
   {
     "name": "CLID",
     "domain": "www.clarity.ms",
-    "expires": "2027-08-17T07:03:11.801Z"
+    "expires": "2027-08-17T07:20:15.124Z"
   }
 ]
 ```
@@ -386,32 +400,40 @@ Call log:
 ```json
 [
   {
-    "t": 1786950212884,
+    "t": 1786951236441,
     "category": "ga4",
     "method": "POST",
     "url": "lomtalan.hu/meres/ga/g/c",
-    "full_url_len": 831
+    "full_url_len": 808,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950212885,
+    "t": 1786951236441,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 157
+    "full_url_len": 155,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950212886,
+    "t": 1786951236443,
     "category": "google_ads",
     "method": "POST",
     "url": "lomtalan.hu/meres/gs/ccm/collect",
-    "full_url_len": 485
+    "full_url_len": 464,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950212889,
+    "t": 1786951236446,
     "category": "google_ads",
     "method": "GET",
     "url": "lomtalan.hu/meres/gs/ccm/collect",
-    "full_url_len": 485
+    "full_url_len": 464,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -424,11 +446,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950212088,
+    "t": 1786951235480,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -468,11 +492,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950212088,
+  "gtm_request_t": 1786951235480,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950212038,
+      "t": 1786951235420,
       "pre": false,
       "args": [
         {
@@ -483,7 +507,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950212078,
+      "t": 1786951235469,
       "pre": false,
       "args": [
         {
@@ -503,17 +527,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950212078,
+      "t": 1786951235470,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950212078,
+          "gtm.start": 1786951235470,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950212349,
+      "t": 1786951235719,
       "pre": false,
       "args": [
         {
@@ -524,7 +548,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950212349,
+      "t": 1786951235719,
       "pre": false,
       "args": [
         {
@@ -543,7 +567,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950212349,
+      "t": 1786951235719,
       "pre": false,
       "args": [
         {
@@ -552,7 +576,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950212563,
+      "t": 1786951236058,
       "pre": false,
       "args": [
         {
@@ -687,46 +711,58 @@ Call log:
 ```json
 [
   {
-    "t": 1786950243770,
+    "t": 1786951267279,
     "category": "google_ads",
     "method": "POST",
     "url": "www.google.com/ccm/collect",
-    "full_url_len": 548
+    "full_url_len": 565,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950243771,
+    "t": 1786951267280,
     "category": "google_ads",
     "method": "POST",
     "url": "ad.doubleclick.net/ccm/s/collect",
-    "full_url_len": 119
+    "full_url_len": 117,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950244183,
+    "t": 1786951267659,
     "category": "ga4",
     "method": "POST",
     "url": "beautyflow.pro/i9xo/ga/g/c",
-    "full_url_len": 839
+    "full_url_len": 860,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950244184,
+    "t": 1786951267659,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 156
+    "full_url_len": 156,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950244185,
+    "t": 1786951267661,
     "category": "google_ads",
     "method": "POST",
     "url": "beautyflow.pro/i9xo/gs/ccm/collect",
-    "full_url_len": 488
+    "full_url_len": 506,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950244188,
+    "t": 1786951267663,
     "category": "google_ads",
     "method": "GET",
     "url": "beautyflow.pro/i9xo/gs/ccm/collect",
-    "full_url_len": 488
+    "full_url_len": 506,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -739,11 +775,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950243395,
+    "t": 1786951266752,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -758,7 +796,7 @@ Call log:
   {
     "name": "_gcl_au",
     "domain": ".beautyflow.pro",
-    "expires": "2026-11-15T07:04:03.000Z"
+    "expires": "2026-11-15T07:21:07.000Z"
   }
 ]
 ```
@@ -789,11 +827,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950243395,
+  "gtm_request_t": 1786951266752,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950243343,
+      "t": 1786951266697,
       "pre": false,
       "args": [
         {
@@ -804,17 +842,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950243343,
+      "t": 1786951266698,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950243343,
+          "gtm.start": 1786951266698,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950243344,
+      "t": 1786951266698,
       "pre": false,
       "args": [
         {
@@ -834,17 +872,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950243384,
+      "t": 1786951266742,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950243384,
+          "gtm.start": 1786951266742,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950243616,
+      "t": 1786951266986,
       "pre": false,
       "args": [
         {
@@ -855,7 +893,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950243616,
+      "t": 1786951266986,
       "pre": false,
       "args": [
         {
@@ -874,7 +912,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950243616,
+      "t": 1786951266986,
       "pre": false,
       "args": [
         {
@@ -883,7 +921,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950243766,
+      "t": 1786951267277,
       "pre": false,
       "args": [
         {
@@ -1020,18 +1058,22 @@ Call log:
 ```json
 [
   {
-    "t": 1786950277253,
+    "t": 1786951300917,
     "category": "ga4",
     "method": "POST",
     "url": "skinlabhungary.hu/meres/ga/g/c",
-    "full_url_len": 830
+    "full_url_len": 820,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950277253,
+    "t": 1786951300918,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 156
+    "full_url_len": 156,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1044,11 +1086,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950274493,
+    "t": 1786951298092,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1088,11 +1132,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950274493,
+  "gtm_request_t": 1786951298092,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950274444,
+      "t": 1786951298041,
       "pre": false,
       "args": [
         {
@@ -1103,7 +1147,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950274482,
+      "t": 1786951298081,
       "pre": false,
       "args": [
         {
@@ -1123,17 +1167,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950274482,
+      "t": 1786951298081,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950274482,
+          "gtm.start": 1786951298081,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950274893,
+      "t": 1786951298537,
       "pre": false,
       "args": [
         {
@@ -1142,7 +1186,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950275235,
+      "t": 1786951298903,
       "pre": false,
       "args": [
         {
@@ -1203,32 +1247,40 @@ Call log:
 ```json
 [
   {
-    "t": 1786950294352,
+    "t": 1786951318113,
     "category": "ga4",
     "method": "POST",
     "url": "szelloztessokosan.hu/fdok/ga/g/c",
-    "full_url_len": 876
+    "full_url_len": 892,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950294353,
+    "t": 1786951318113,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 156
+    "full_url_len": 158,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950294354,
+    "t": 1786951318114,
     "category": "google_ads",
     "method": "POST",
     "url": "szelloztessokosan.hu/fdok/gs/ccm/collect",
-    "full_url_len": 530
+    "full_url_len": 540,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950294359,
+    "t": 1786951318121,
     "category": "google_ads",
     "method": "GET",
     "url": "szelloztessokosan.hu/fdok/gs/ccm/collect",
-    "full_url_len": 530
+    "full_url_len": 540,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1241,17 +1293,19 @@ Call log:
 ```json
 [
   {
-    "t": 1786950293905,
+    "t": 1786951317417,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 68
+    "full_url_len": 68,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
 
 </details>
-- ❌ **A_no_nonessential_cookies** — 3 nem-esszenciális süti döntés ELŐTT.
+- ❌ **A_no_nonessential_cookies** — 5 nem-esszenciális süti döntés ELŐTT.
 
 <details><summary>bizonyíték</summary>
 
@@ -1260,7 +1314,12 @@ Call log:
   {
     "name": "CLID",
     "domain": "www.clarity.ms",
-    "expires": "2027-08-17T07:04:53.981Z"
+    "expires": "2027-08-17T07:21:57.823Z"
+  },
+  {
+    "name": "_clck",
+    "domain": ".szelloztessokosan.hu",
+    "expires": "2027-08-17T07:21:58.000Z"
   },
   {
     "name": "SM",
@@ -1270,7 +1329,12 @@ Call log:
   {
     "name": "MUID",
     "domain": ".clarity.ms",
-    "expires": "2027-09-11T07:04:54.609Z"
+    "expires": "2027-09-11T07:21:58.464Z"
+  },
+  {
+    "name": "_clsk",
+    "domain": ".szelloztessokosan.hu",
+    "expires": "2026-08-18T07:21:58.000Z"
   }
 ]
 ```
@@ -1301,11 +1365,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950293905,
+  "gtm_request_t": 1786951317417,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950293084,
+      "t": 1786951316814,
       "pre": false,
       "args": [
         {
@@ -1316,17 +1380,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950293084,
+      "t": 1786951316814,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950293084,
+          "gtm.start": 1786951316814,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950293901,
+      "t": 1786951317320,
       "pre": false,
       "args": [
         {
@@ -1335,7 +1399,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950294216,
+      "t": 1786951318074,
       "pre": false,
       "args": [
         {
@@ -1346,7 +1410,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950294216,
+      "t": 1786951318074,
       "pre": false,
       "args": [
         {
@@ -1365,7 +1429,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950294228,
+      "t": 1786951318114,
       "pre": false,
       "args": [
         {
@@ -1374,7 +1438,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950294358,
+      "t": 1786951318264,
       "pre": false,
       "args": [
         {
@@ -1383,11 +1447,11 @@ Call log:
       ]
     },
     {
-      "t": 1786950295086,
+      "t": 1786951318815,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950295085,
+          "gtm.start": 1786951318815,
           "event": "gtm.js"
         }
       ]
@@ -1408,7 +1472,7 @@ Call log:
 ```
 
 </details>
-- ℹ️ **A_document_cookie_reads** — 34 db `document.cookie` olvasás döntés előtt (a CMP saját olvasásait is tartalmazza — kontextus, nem ítélet).
+- ℹ️ **A_document_cookie_reads** — 30 db `document.cookie` olvasás döntés előtt (a CMP saját olvasásait is tartalmazza — kontextus, nem ítélet).
 - ✅ **UI_reject_button_present** — Van elutasító gomb az első rétegen: "Elutasít"
 
 <details><summary>bizonyíték</summary>
@@ -1496,7 +1560,7 @@ Call log:
   {
     "name": "CLID",
     "domain": "www.clarity.ms",
-    "expires": "2027-08-17T07:05:05.867Z"
+    "expires": "2027-08-17T07:22:09.747Z"
   },
   {
     "name": "SM",
@@ -1506,7 +1570,7 @@ Call log:
   {
     "name": "MUID",
     "domain": ".clarity.ms",
-    "expires": "2027-09-11T07:05:06.059Z"
+    "expires": "2027-09-11T07:22:09.962Z"
   }
 ]
 ```
@@ -1535,46 +1599,58 @@ Call log:
 ```json
 [
   {
-    "t": 1786950325677,
+    "t": 1786951349450,
     "category": "google_ads",
     "method": "POST",
     "url": "www.google.com/ccm/collect",
-    "full_url_len": 573
+    "full_url_len": 552,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950325678,
+    "t": 1786951349451,
     "category": "google_ads",
     "method": "POST",
     "url": "ad.doubleclick.net/ccm/s/collect",
-    "full_url_len": 118
+    "full_url_len": 118,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950326003,
+    "t": 1786951349779,
     "category": "ga4",
     "method": "POST",
     "url": "olcsokontenerhaz.hu/analitika/ga/g/c",
-    "full_url_len": 857
+    "full_url_len": 840,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950326003,
+    "t": 1786951349780,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 156
+    "full_url_len": 156,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950326052,
+    "t": 1786951349818,
     "category": "google_ads",
     "method": "POST",
     "url": "olcsokontenerhaz.hu/analitika/gs/ccm/collect",
-    "full_url_len": 527
+    "full_url_len": 506,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950326056,
+    "t": 1786951349820,
     "category": "google_ads",
     "method": "GET",
     "url": "olcsokontenerhaz.hu/analitika/gs/ccm/collect",
-    "full_url_len": 527
+    "full_url_len": 506,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1587,11 +1663,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950325313,
+    "t": 1786951349125,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1631,11 +1709,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950325313,
+  "gtm_request_t": 1786951349125,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950325248,
+      "t": 1786951349075,
       "pre": false,
       "args": [
         {
@@ -1646,17 +1724,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950325248,
+      "t": 1786951349075,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950325248,
+          "gtm.start": 1786951349075,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950325292,
+      "t": 1786951349116,
       "pre": false,
       "args": [
         {
@@ -1676,17 +1754,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950325292,
+      "t": 1786951349116,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950325292,
+          "gtm.start": 1786951349116,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950325674,
+      "t": 1786951349447,
       "pre": false,
       "args": [
         {
@@ -1695,7 +1773,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950325725,
+      "t": 1786951349561,
       "pre": false,
       "args": [
         {
@@ -1706,7 +1784,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950325725,
+      "t": 1786951349561,
       "pre": false,
       "args": [
         {
@@ -1725,7 +1803,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950325726,
+      "t": 1786951349562,
       "pre": false,
       "args": [
         {
@@ -1860,18 +1938,22 @@ Call log:
 ```json
 [
   {
-    "t": 1786950356963,
+    "t": 1786951380807,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/collect",
-    "full_url_len": 765
+    "full_url_len": 755,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950356963,
+    "t": 1786951380809,
     "category": "google_ads",
     "method": "POST",
     "url": "pagead2.googlesyndication.com/ccm/collect",
-    "full_url_len": 437
+    "full_url_len": 415,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1884,11 +1966,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950356557,
+    "t": 1786951380365,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 54
+    "full_url_len": 54,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -1928,11 +2012,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950356557,
+  "gtm_request_t": 1786951380365,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950356552,
+      "t": 1786951380359,
       "pre": false,
       "args": [
         {
@@ -1952,17 +2036,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950356553,
+      "t": 1786951380360,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950356553,
+          "gtm.start": 1786951380360,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950356657,
+      "t": 1786951380457,
       "pre": false,
       "args": [
         {
@@ -1971,7 +2055,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950356801,
+      "t": 1786951380729,
       "pre": false,
       "args": [
         {
@@ -1980,7 +2064,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950356937,
+      "t": 1786951380782,
       "pre": false,
       "args": [
         {
@@ -1991,7 +2075,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950356939,
+      "t": 1786951380786,
       "pre": false,
       "args": [
         {
@@ -2010,7 +2094,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950356962,
+      "t": 1786951380807,
       "pre": false,
       "args": [
         {
@@ -2145,32 +2229,40 @@ Call log:
 ```json
 [
   {
-    "t": 1786950388636,
+    "t": 1786951412985,
     "category": "ga4",
     "method": "POST",
     "url": "trapezlemezes.hu/iddq/ga/g/c",
-    "full_url_len": 861
+    "full_url_len": 889,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950388637,
+    "t": 1786951412989,
     "category": "ga4",
     "method": "POST",
     "url": "www.google-analytics.com/g/s/collect",
-    "full_url_len": 158
+    "full_url_len": 156,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950388639,
+    "t": 1786951412991,
     "category": "google_ads",
     "method": "POST",
     "url": "trapezlemezes.hu/iddq/gs/ccm/collect",
-    "full_url_len": 520
+    "full_url_len": 547,
+    "has_body": false,
+    "body_len": 0
   },
   {
-    "t": 1786950388649,
+    "t": 1786951412995,
     "category": "google_ads",
     "method": "GET",
     "url": "trapezlemezes.hu/iddq/gs/ccm/collect",
-    "full_url_len": 520
+    "full_url_len": 547,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -2183,11 +2275,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950387456,
+    "t": 1786951412196,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -2202,7 +2296,7 @@ Call log:
   {
     "name": "CLID",
     "domain": "www.clarity.ms",
-    "expires": "2027-08-17T07:06:28.234Z"
+    "expires": "2027-08-17T07:23:32.705Z"
   },
   {
     "name": "SM",
@@ -2212,7 +2306,7 @@ Call log:
   {
     "name": "MUID",
     "domain": ".clarity.ms",
-    "expires": "2027-09-11T07:06:28.910Z"
+    "expires": "2027-09-11T07:23:33.286Z"
   }
 ]
 ```
@@ -2243,11 +2337,11 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950387456,
+  "gtm_request_t": 1786951412196,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950387434,
+      "t": 1786951412185,
       "pre": false,
       "args": [
         {
@@ -2258,17 +2352,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950387434,
+      "t": 1786951412185,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950387434,
+          "gtm.start": 1786951412185,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950387435,
+      "t": 1786951412186,
       "pre": false,
       "args": [
         {
@@ -2288,17 +2382,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950387435,
+      "t": 1786951412186,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950387435,
+          "gtm.start": 1786951412186,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950388155,
+      "t": 1786951412598,
       "pre": false,
       "args": [
         {
@@ -2307,7 +2401,16 @@ Call log:
       ]
     },
     {
-      "t": 1786950388372,
+      "t": 1786951412925,
+      "pre": false,
+      "args": [
+        {
+          "event": "gtm.load"
+        }
+      ]
+    },
+    {
+      "t": 1786951412946,
       "pre": false,
       "args": [
         {
@@ -2318,7 +2421,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950388372,
+      "t": 1786951412947,
       "pre": false,
       "args": [
         {
@@ -2333,15 +2436,6 @@ Call log:
             "personalization_storage": "denied",
             "security_storage": "granted"
           }
-        }
-      ]
-    },
-    {
-      "t": 1786950388379,
-      "pre": false,
-      "args": [
-        {
-          "event": "cookie_consent_update"
         }
       ]
     }
@@ -2449,7 +2543,7 @@ Call log:
   {
     "name": "CLID",
     "domain": "www.clarity.ms",
-    "expires": "2027-08-17T07:06:39.452Z"
+    "expires": "2027-08-17T07:23:44.129Z"
   },
   {
     "name": "SM",
@@ -2459,7 +2553,7 @@ Call log:
   {
     "name": "MUID",
     "domain": ".clarity.ms",
-    "expires": "2027-09-11T07:06:39.713Z"
+    "expires": "2027-09-11T07:23:44.779Z"
   }
 ]
 ```
@@ -2513,11 +2607,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950435696,
+    "t": 1786951460604,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -2557,21 +2653,21 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950435696,
+  "gtm_request_t": 1786951460604,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950435694,
+      "t": 1786951460603,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950435694,
+          "gtm.start": 1786951460603,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950435866,
+      "t": 1786951460687,
       "pre": false,
       "args": [
         {
@@ -2580,7 +2676,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950435967,
+      "t": 1786951460814,
       "pre": false,
       "args": [
         {
@@ -2684,7 +2780,7 @@ Call log:
   "gtm_url": null,
   "datalayer_sample": [
     {
-      "t": 1786950454043,
+      "t": 1786951479213,
       "pre": false,
       "args": [
         {
@@ -2748,11 +2844,13 @@ Call log:
 ```json
 [
   {
-    "t": 1786950472954,
+    "t": 1786951497587,
     "category": "gtm",
     "method": "GET",
     "url": "www.googletagmanager.com/gtm.js",
-    "full_url_len": 55
+    "full_url_len": 55,
+    "has_body": false,
+    "body_len": 0
   }
 ]
 ```
@@ -2792,21 +2890,21 @@ Call log:
 ```json
 {
   "default_push_t": null,
-  "gtm_request_t": 1786950472954,
+  "gtm_request_t": 1786951497587,
   "gtm_url": "www.googletagmanager.com/gtm.js",
   "datalayer_sample": [
     {
-      "t": 1786950472937,
+      "t": 1786951497570,
       "pre": false,
       "args": [
         {
           "0": "js",
-          "1": "2026-08-17T07:07:52.937Z"
+          "1": "2026-08-17T07:24:57.570Z"
         }
       ]
     },
     {
-      "t": 1786950472937,
+      "t": 1786951497571,
       "pre": false,
       "args": [
         {
@@ -2816,17 +2914,17 @@ Call log:
       ]
     },
     {
-      "t": 1786950472937,
+      "t": 1786951497571,
       "pre": false,
       "args": [
         {
-          "gtm.start": 1786950472937,
+          "gtm.start": 1786951497571,
           "event": "gtm.js"
         }
       ]
     },
     {
-      "t": 1786950473138,
+      "t": 1786951497740,
       "pre": false,
       "args": [
         {
@@ -2835,7 +2933,7 @@ Call log:
       ]
     },
     {
-      "t": 1786950473353,
+      "t": 1786951498188,
       "pre": false,
       "args": [
         {

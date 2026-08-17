@@ -204,7 +204,9 @@ export function evaluateAfterReject(capture) {
   } else {
     const leaks = [];
     for (const p of pings) {
-      const found = inspectPingForIdentifiers(p.url);
+      // A törzset IS átadjuk: a GA4/Meta ping azonosítói POST-nál a body-ban
+      // utaznak, és csak az URL-t nézve a check hamis PASS-t adna.
+      const found = inspectPingForIdentifiers(p.url, p.body);
       if (found.params.length || found.hasEmailLike) {
         leaks.push({ url: summarizeRequest(p).url, params: found.params, email_like: found.hasEmailLike });
       }

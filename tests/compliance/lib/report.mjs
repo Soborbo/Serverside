@@ -10,6 +10,12 @@ import { FAIL, INFO, NA, PASS, TABLE_COLUMNS } from './checks.mjs';
 
 const MARK = { [PASS]: '✅', [FAIL]: '❌', [NA]: '–', [INFO]: 'ℹ️', ERROR: '⚠️' };
 
+/**
+ * Azok az országkódok, ahonnan egy `eea_uk` szabályrendszerű site mérése
+ * érvényes. Nem teljes EEA-lista: a flotta piacai + a fő EEA-kilépőpontok.
+ */
+const EEA_UK_COUNTRIES = new Set(['HU', 'GB', 'IE', 'DE', 'AT', 'FR', 'NL', 'BE', 'SK', 'RO', 'PL', 'CZ', 'ES', 'IT']);
+
 export function statusMark(status) {
   // A hiányzó státusz „nem mérhető" — sosem `?`. Egy értelmezhetetlen jel a
   // táblázatban rosszabb, mint a bevallott hiány.
@@ -65,6 +71,31 @@ export function buildMarkdown(run) {
         'megjelenik a felvételben — csak a válasz jön máshonnan. Ami emiatt NEM mérhető pontosan: a ' +
         'HTTP/2–3 és TLS-szintű viselkedés, valamint a böngésző saját protokoll-optimalizációi.'
     );
+  }
+  // A baseline ÉRVÉNYESSÉGI korlátai a lap tetejére kerülnek, nem a lábjegyzetbe:
+  // egy hiányos mérésből levont következtetés rosszabb, mint a hiányzó mérés.
+  const limitations = [];
+  const expectedRegions = [...new Set(results.map((r) => r.site?.expected_ruleset).filter(Boolean))];
+  if (test_country && expectedRegions.includes('eea_uk') && !EEA_UK_COUNTRIES.has(test_country)) {
+    limitations.push(
+      `**A mérés \`${test_country}\` IP-ről futott, miközben minden site \`eea_uk\` szabályrendszerű.** ` +
+        'A CMP-megjelenítés és a tag-viselkedés geo-függő lehet, ezért ez a futás NEM alkalmas az EEA/UK ' +
+        'viselkedés megállapítására: a hiányzó banner vagy kontroll itt N-A-ként jelenik meg, nem hibaként. ' +
+        'A baseline-t HU/UK kilépőpontról meg kell ismételni.'
+    );
+  }
+  const missingBrowsers = ['chromium', 'webkit'].filter((b) => !browsers.includes(b));
+  if (missingBrowsers.length) {
+    limitations.push(
+      `**Hiányzó böngésző: ${missingBrowsers.join(', ')}.** A Safari ITP a first-party storage-ot eltérően ` +
+        'kezeli, ezért a storage-hoz kötődő ellenőrzések csak a mért böngészőre érvényesek ' +
+        '(`npx playwright install webkit && npm run compliance -- --browser=webkit`).'
+    );
+  }
+  if (limitations.length) {
+    lines.push('');
+    lines.push('> ## ⚠️ A BASELINE ÉRVÉNYESSÉGE KORLÁTOZOTT');
+    for (const l of limitations) lines.push(`> - ${l}`);
   }
   lines.push('');
   lines.push(

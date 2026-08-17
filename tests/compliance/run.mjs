@@ -144,12 +144,25 @@ async function relayRequest(route, req) {
   }
 }
 
+/** A ping-törzsből ennyit tartunk meg (azonosító-kereséshez bőven elég). */
+const POST_BODY_MAX = 4_000;
+
 function recordRequests(context, requests) {
   context.on('request', (req) => {
+    // A GA4 `/g/collect` és a Meta `/tr` gyakran POST: az azonosítók (uid,
+    // user property, PII) ilyenkor a TÖRZSBEN utaznak, nem a query-ben. Az URL
+    // önmagában vizsgálva hamis PASS-t adna a „reject után nincs azonosító"
+    // ellenőrzésre.
+    let body = null;
+    try {
+      const raw = req.postData();
+      if (raw) body = raw.slice(0, POST_BODY_MAX);
+    } catch { /* nem olvasható törzs */ }
     requests.push({
       t: Date.now(),
       method: req.method(),
       url: req.url(),
+      body,
       category: classifyRequest(req.url())
     });
   });
@@ -229,25 +242,40 @@ async function probeBanner(page) {
  * vagy a szöveg-mintát fogadja el — semmi mást. `null`-t ad, ha nincs ilyen gomb.
  */
 async function clickBannerButton(page, kind) {
-  for (const sel of SELECTORS[kind] || []) {
-    const el = page.locator(sel).first();
-    if (await el.count().then((n) => n > 0).catch(() => false)) {
-      if (await el.isVisible().catch(() => false)) {
-        await el.click({ timeout: 8_000 }).catch(() => {});
-        return sel;
-      }
+  // A kattintás EREDMÉNYE számít, nem az, hogy találtunk-e gombot. Egy látható,
+  // de letakart/leváló gombon a click() timeoutol — ha ezt elnyelnénk és mégis
+  // „sikert" adnánk vissza, a C forgatókönyv a VÁLTOZATLAN, döntés előtti
+  // állapotot értékelné „elutasítás utániként", és hamis PASS-t adna. Inkább
+  // legyen a forgatókönyv bevallottan nem-elérhető.
+  const attempt = async (locator, label) => {
+    if (!(await locator.count().then((n) => n > 0).catch(() => false))) return null;
+    if (!(await locator.isVisible().catch(() => false))) return null;
+    try {
+      await locator.click({ timeout: 8_000 });
+      return label;
+    } catch (err) {
+      return { failed: label, error: String(err && err.message ? err.message : err).slice(0, 200) };
     }
+  };
+
+  let lastFailure = null;
+  for (const sel of SELECTORS[kind] || []) {
+    const r = await attempt(page.locator(sel).first(), sel);
+    if (typeof r === 'string') return r;
+    if (r) lastFailure = r;
   }
   const pattern = TEXT_PATTERNS[kind];
-  if (!pattern) return null;
-  const byText = page.getByRole('button', { name: pattern }).first();
-  if (await byText.count().then((n) => n > 0).catch(() => false)) {
-    if (await byText.isVisible().catch(() => false)) {
-      await byText.click({ timeout: 8_000 }).catch(() => {});
-      return `role=button[name=${pattern}]`;
-    }
+  if (pattern) {
+    const r = await attempt(page.getByRole('button', { name: pattern }).first(), `role=button[name=${pattern}]`);
+    if (typeof r === 'string') return r;
+    if (r) lastFailure = r;
   }
-  return null;
+  return lastFailure; // objektum = volt gomb, de a kattintás elbukott; null = nem volt gomb
+}
+
+/** `clickBannerButton` eredménye → sikerült-e ténylegesen kattintani. */
+function clickSucceeded(result) {
+  return typeof result === 'string';
 }
 
 /** Hány kattintás az elutasításig a leggyorsabb úton (1 = első rétegen ott van). */
@@ -360,7 +388,9 @@ async function runSite(browserName, browser, site, args, outDir) {
         // A C-blokk MINDEN ellenőrzését kiadjuk N-A-ként, ugyanazzal az okkal —
         // különben a táblázatban üres cellák maradnának, és nem lehetne
         // megkülönböztetni a „nem mértük"-et a „nincs baj"-tól.
-        const reason = 'Nem volt elutasító gomb, amire kattinthattunk volna — a C forgatókönyv nem futott le.';
+        const reason = c.click_error
+          ? `Az elutasító gombra nem sikerült kattintani (${c.click_error.error}) — a C forgatókönyv nem futott le.`
+          : 'Nem volt elutasító gomb, amire kattinthattunk volna — a C forgatókönyv nem futott le.';
         for (const id of [
           'C_no_consent_bound_requests',
           'C_no_nonessential_cookies',
@@ -408,8 +438,9 @@ async function runDecisionScenario(browser, site, args, kind, blocked) {
     // buktatta először.
     const boundary = Date.now();
     const clicked = await clickBannerButton(page, kind);
-    out.clicked = clicked;
-    if (clicked) {
+    out.clicked = clickSucceeded(clicked) ? clicked : null;
+    if (clicked && !clickSucceeded(clicked)) out.click_error = clicked;
+    if (clickSucceeded(clicked)) {
       await page.waitForTimeout(SETTLE_MS);
       const cap = await capture(context, page, requests, boundary);
       Object.assign(out, cap);
@@ -437,8 +468,10 @@ async function runWithdrawalScenario(browser, site, args, blocked) {
     await page.goto(site.url, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(SETTLE_MS);
     const accepted = await clickBannerButton(page, 'accept');
-    if (!accepted) {
-      out.reason = 'NO_ACCEPT_BUTTON — nem tudtunk consentet adni, tehát visszavonni sem.';
+    if (!clickSucceeded(accepted)) {
+      out.reason = accepted
+        ? `ACCEPT_CLICK_FAILED — ${accepted.error}`
+        : 'NO_ACCEPT_BUTTON — nem tudtunk consentet adni, tehát visszavonni sem.';
       return out;
     }
     await page.waitForTimeout(SETTLE_MS);
@@ -447,7 +480,7 @@ async function runWithdrawalScenario(browser, site, args, blocked) {
 
     const beforeCookies = await context.cookies();
     const revisit = await clickBannerButton(page, 'revisit');
-    if (!revisit) {
+    if (!clickSucceeded(revisit)) {
       out.reason = 'NO_REVISIT_UI — nincs elérhető visszavonó felület.';
       out.cookies_after_accept = beforeCookies.map((c) => c.name);
       return out;
@@ -455,8 +488,10 @@ async function runWithdrawalScenario(browser, site, args, blocked) {
     await page.waitForTimeout(1_000);
     const boundary = Date.now();
     const rejected = await clickBannerButton(page, 'reject');
-    if (!rejected) {
-      out.reason = 'REVISIT_WITHOUT_REJECT — a visszavonó felületen nem találtunk elutasító gombot.';
+    if (!clickSucceeded(rejected)) {
+      out.reason = rejected
+        ? `REVISIT_REJECT_CLICK_FAILED — ${rejected.error}`
+        : 'REVISIT_WITHOUT_REJECT — a visszavonó felületen nem találtunk elutasító gombot.';
       return out;
     }
     await page.waitForTimeout(SETTLE_MS);

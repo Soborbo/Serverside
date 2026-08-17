@@ -55,8 +55,15 @@ export function isFirstParty(url, siteUrl) {
   try {
     const a = new URL(url).hostname.toLowerCase();
     const b = new URL(siteUrl).hostname.toLowerCase();
-    const reg = (h) => h.split('.').slice(-2).join('.');
-    return a === b || reg(a) === reg(b);
+    // NEM „utolsó két címke": többcímkés public suffixnél (`agykontroll.co.uk`)
+    // az `co.uk`-ra redukálna, és MINDEN *.co.uk hostot első félnek venne — a
+    // safety-net így idegen harmadik felek kéréseit abortálná, ráadásul
+    // first-party írásként jelentené őket. Publiksuffix-lista nélkül a helyes
+    // szabály a site SAJÁT hostjához való viszony: azonos, vagy annak aldomainje
+    // (a www/apex párt külön kezelve).
+    const base = b.replace(/^www\./, '');
+    const host = a.replace(/^www\./, '');
+    return host === base || host.endsWith(`.${base}`);
   } catch {
     return false;
   }
@@ -69,30 +76,52 @@ export function isFirstParty(url, siteUrl) {
  *
  * @returns {{ params: string[], hasEmailLike: boolean, hasClickId: boolean }}
  */
-export function inspectPingForIdentifiers(url) {
+export function inspectPingForIdentifiers(url, body = null) {
   const found = new Set();
   let hasEmailLike = false;
   let hasClickId = false;
+
+  /**
+   * Egy kulcs/érték pár vizsgálata (query-ből VAGY törzsből). A `source` CSAK a
+   * jelentésben jelenik meg — az ILLESZTÉS mindig a nyers kulcson fut, különben
+   * egy „body:" prefix minden mintát elrontana (és a törzs-vizsgálat csendben
+   * semmit nem találna).
+   */
+  const inspectPair = (key, value, source = null) => {
+    const k = key.toLowerCase();
+    const label = source ? `${source}:${key}` : key;
+    if (k === 'uid' || k === 'user_id' || k.startsWith('up.') || k.startsWith('upn.') || k.startsWith('ep.')) {
+      found.add(label);
+    }
+    if (/^ud\[|^em$|^ph$|^pii$|^cd\[/i.test(key)) found.add(label);
+    if (k === 'gclid' || k === 'gbraid' || k === 'wbraid' || k === 'gclaw' || k === 'gcldc') {
+      found.add(label);
+      hasClickId = true;
+    }
+    if (/@/.test(value) || /%40/i.test(value)) hasEmailLike = true;
+    if ((k === 'dl' || k === 'dr' || k === 'u') && /gclid=|fbclid=|gbraid=|wbraid=/i.test(value)) {
+      found.add(`${label}(url-embedded click id)`);
+      hasClickId = true;
+    }
+  };
+
+  // A GA4 POST-törzse soronként `k=v&k=v` (event-batch); a Meta form-encoded.
+  // URL nélkül vizsgálva ez a tartalom láthatatlan maradna, és a „reject után
+  // nincs azonosító" ellenőrzés hamis PASS-t adna.
+  if (typeof body === 'string' && body.length > 0) {
+    for (const line of body.split(/\r?\n/)) {
+      if (!line) continue;
+      try {
+        for (const [k, v] of new URLSearchParams(line).entries()) inspectPair(k, v, 'body');
+      } catch { /* nem kulcs/érték alakú törzs */ }
+    }
+    if (/@/.test(body) || /%40/i.test(body)) hasEmailLike = true;
+  }
+
   try {
     const u = new URL(url);
     for (const [key, value] of u.searchParams.entries()) {
-      const k = key.toLowerCase();
-      // GA4: `uid` = user_id, `up.*`/`upn.*` = user property, `ep.*` = event param.
-      if (k === 'uid' || k === 'user_id' || k.startsWith('up.') || k.startsWith('upn.') || k.startsWith('ep.')) {
-        found.add(key);
-      }
-      // Meta: `ud[em]`, `ud[ph]`; Ads: `em`, `pii`.
-      if (/^ud\[|^em$|^ph$|^pii$|^cd\[/i.test(key)) found.add(key);
-      if (k === 'gclid' || k === 'gbraid' || k === 'wbraid' || k === 'gclaw' || k === 'gcldc') {
-        found.add(key);
-        hasClickId = true;
-      }
-      if (/@/.test(value) || /%40/i.test(value)) hasEmailLike = true;
-      // A `dl` (document location) tartalmazhat továbbadott click ID-t.
-      if ((k === 'dl' || k === 'dr' || k === 'u') && /gclid=|fbclid=|gbraid=|wbraid=/i.test(value)) {
-        found.add(`${key}(url-embedded click id)`);
-        hasClickId = true;
-      }
+      inspectPair(key, value);
     }
     if (/@/.test(decodeURIComponent(u.hash || ''))) hasEmailLike = true;
   } catch {
@@ -113,6 +142,10 @@ export function summarizeRequest(entry) {
     category: entry.category,
     method: entry.method,
     url: short,
-    full_url_len: entry.url.length
+    full_url_len: entry.url.length,
+    // A törzs jelenléte önmagában is információ: egy POST-ping tartalmát az URL
+    // nem mutatja meg, tehát a bizonyítékban látszania kell, hogy néztük.
+    has_body: Boolean(entry.body),
+    body_len: entry.body ? entry.body.length : 0
   };
 }
