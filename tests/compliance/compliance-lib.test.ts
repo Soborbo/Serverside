@@ -32,6 +32,15 @@ describe('classifyRequest', () => {
     expect(classifyRequest('https://lomtalan.hu/api/event/conversion')).toBe('gateway');
   });
 
+  it('az ELSŐ FÉLEN proxyzott Google-mérést is felismeri (Tag Gateway)', () => {
+    // A flotta fele saját domainen proxyzza a GA4-et; enélkül a „megy-e mérés
+    // consent előtt" ellenőrzés pont ott adna hamis PASS-t.
+    expect(classifyRequest('https://lomtalan.hu/meres/ga/g/c?v=2&tid=G-68EJ2V86V6&gtm=45')).toBe('ga4');
+    expect(classifyRequest('https://painlessremovals.com/f807/gs/ccm/collect?tid=AW-123&en=page_view')).toBe(
+      'google_ads'
+    );
+  });
+
   it('a semleges kérés `other` — nem gyártunk hamis találatot', () => {
     expect(classifyRequest('https://lomtalan.hu/styles.css')).toBe('other');
     expect(classifyRequest('https://fonts.gstatic.com/s/x.woff2')).toBe('other');

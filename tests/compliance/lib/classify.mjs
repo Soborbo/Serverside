@@ -8,6 +8,14 @@
 /** @typedef {'ga4'|'gtm'|'google_ads'|'meta'|'cmp'|'gateway'|'other'} RequestCategory */
 
 const RULES = [
+  // ELSŐ FÉLEN PROXYZOTT Google-mérés (Google Tag Gateway / server-side tagging):
+  // a hit a site SAJÁT domainjén megy, egyedi útvonal-prefixszel
+  // (`/meres/ga/g/c`, `/f807/gs/ccm/collect`), tehát sem a domain-, sem az
+  // útvonal-minta nem fogja meg. A `tid=G-|GT-|AW-` query viszont egyértelmű.
+  // Enélkül a legfontosabb ellenőrzés (megy-e mérés consent ELŐTT) pont a
+  // proxyzott site-okon adna hamis PASS-t — a flotta felén.
+  { category: 'google_ads', re: /[?&]tid=AW-/i },
+  { category: 'ga4', re: /[?&]tid=(G|GT)-/i },
   // SORREND SZÁMÍT: a DOMAIN-találat erősebb, mint az útvonal-minta. A
   // `stats.g.doubleclick.net/j/collect` a GA4→Ads híd (Google Signals /
   // remarketing) — mindkét minta illik rá, de HIRDETÉSI végpont, és a riportban
