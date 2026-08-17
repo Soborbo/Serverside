@@ -7,13 +7,15 @@
 
 > ## ⚠️ A BASELINE ÉRVÉNYESSÉGE KORLÁTOZOTT
 > - **A mérés `US` IP-ről futott, miközben minden site `eea_uk` szabályrendszerű.** A CMP-megjelenítés és a tag-viselkedés geo-függő lehet, ezért ez a futás NEM alkalmas az EEA/UK viselkedés megállapítására: a hiányzó banner vagy kontroll itt N-A-ként jelenik meg, nem hibaként. A baseline-t HU/UK kilépőpontról meg kell ismételni.
-> - **Hiányzó böngésző: chromium.** A Safari ITP a first-party storage-ot eltérően kezeli, ezért a storage-hoz kötődő ellenőrzések csak a mért böngészőre érvényesek (`npx playwright install webkit && npm run compliance -- --browser=webkit`).
+> - **Csak WebKit futott — a süti-ellenőrzések ✅-jai NEM megbízhatóak.** A Safari ITP a sütit eldobja vagy particionálja, tehát a harness PASS-t ír ott is, ahol a site MEGPRÓBÁLTA letenni. Az érintett oszlopok a táblázatban ⁽ᴵᵀᴾ⁾-jelölést kapnak: `A: nincs süti`, `C: nincs süti reject után` — ebben a futásban **17** ilyen ✅ van, és egyikből sem következik, hogy az az oldal tiszta. (A storage-ellenőrzéseket ez NEM érinti: azokat a `Storage.prototype`-on figyeljük, a hívás az ITP alatt is látszik.) Ugyanezt Chromiumon is le kell mérni (`npm run compliance -- --browser=chromium`), és a SZIGORÚBB eredmény az igaz.
+
+> **A műszer optimista irányba téved — a ✅ gyengébb állítás, mint a ❌.** A harness eddig kétszer adott hamis PASS-t (első félen proxyzott Google-mérés; Safari ITP által eldobott süti), és mindkettőt a nyers bizonyíték emberi átolvasása fogta meg, nem az ellenőrzés. Mielőtt egy ✅-ra döntést építesz, nyisd ki alatta a bizonyíték-blokkot.
 
 > Ez MÉRÉS, nem javítás. A harness kizárólag olvas és megfigyel: egyetlen űrlapot sem küld be, egyetlen konverziót sem vált ki (a first-party nem-GET kéréseket hálózati szinten abortálja, a submit-eseményeket a DOM-ban blokkolja, és csak a consent-banner gombjaira kattint).
 
 ## Áttekintés
 
-| Site | A: nincs tag consent előtt | A: GTM nem tölt | A: nincs süti | A: nincs storage-írás | A: nincs storage-olvasás | A: nincs noscript iframe | UI: van reject | UI: egyenrangú | UI: 1 kattintás | C: nincs tag reject után | C: nincs süti reject után | C: ping azonosító nélkül | D: visszavonás töröl |
+| Site | A: nincs tag consent előtt | A: GTM nem tölt | A: nincs süti ⁽ᴵᵀᴾ⁾ | A: nincs storage-írás | A: nincs storage-olvasás | A: nincs noscript iframe | UI: van reject | UI: egyenrangú | UI: 1 kattintás | C: nincs tag reject után | C: nincs süti reject után ⁽ᴵᵀᴾ⁾ | C: ping azonosító nélkül | D: visszavonás töröl |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `painless` (webkit) | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | – | – |
 | `lomtalan` (webkit) | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ | ✅ | – | – |
@@ -30,6 +32,8 @@
 | `bristolcleaningheroes` (webkit) | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | – | – | – | – | – | – | – |
 
 ✅ megfelel · ❌ bukik · – nem értelmezhető / nem mérhető · ⚠️ a site mérése hibára futott
+
+⁽ᴵᵀᴾ⁾ **Ebben az oszlopban a ✅ nem bizonyíték.** Csak WebKit futott; a Safari ITP eldobja a sütit, amit a site letenni próbált, tehát a harness nem lát semmit ott sem, ahol Chromiumon ❌ lenne. Chromium-méréssel kell összevetni.
 
 ## Hány oldal bukik melyik ponton
 

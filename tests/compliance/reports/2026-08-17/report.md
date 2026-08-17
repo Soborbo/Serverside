@@ -9,7 +9,9 @@
 
 > ## ⚠️ A BASELINE ÉRVÉNYESSÉGE KORLÁTOZOTT
 > - **A mérés `US` IP-ről futott, miközben minden site `eea_uk` szabályrendszerű.** A CMP-megjelenítés és a tag-viselkedés geo-függő lehet, ezért ez a futás NEM alkalmas az EEA/UK viselkedés megállapítására: a hiányzó banner vagy kontroll itt N-A-ként jelenik meg, nem hibaként. A baseline-t HU/UK kilépőpontról meg kell ismételni.
-> - **Hiányzó böngésző: webkit.** A Safari ITP a first-party storage-ot eltérően kezeli, ezért a storage-hoz kötődő ellenőrzések csak a mért böngészőre érvényesek (`npx playwright install webkit && npm run compliance -- --browser=webkit`).
+> - **Hiányzó böngésző: webkit.** A Safari ITP a first-party storage-ot eltérően kezeli, ezért a storage-hoz kötődő ellenőrzések csak Chromiumra érvényesek (`npx playwright install webkit && npm run compliance -- --browser=webkit`).
+
+> **A műszer optimista irányba téved — a ✅ gyengébb állítás, mint a ❌.** A harness eddig kétszer adott hamis PASS-t (első félen proxyzott Google-mérés; Safari ITP által eldobott süti), és mindkettőt a nyers bizonyíték emberi átolvasása fogta meg, nem az ellenőrzés. Mielőtt egy ✅-ra döntést építesz, nyisd ki alatta a bizonyíték-blokkot.
 
 > Ez MÉRÉS, nem javítás. A harness kizárólag olvas és megfigyel: egyetlen űrlapot sem küld be, egyetlen konverziót sem vált ki (a first-party nem-GET kéréseket hálózati szinten abortálja, a submit-eseményeket a DOM-ban blokkolja, és csak a consent-banner gombjaira kattint).
 

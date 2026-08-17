@@ -100,3 +100,35 @@ böngészőt: `PW_CHROMIUM_EXECUTABLE=/path/to/chrome`, `PW_WEBKIT_EXECUTABLE=�
 
 **A WebKit nem elhagyható**: a Safari ITP a first-party storage-ot eltérően
 kezeli, tehát egy csak-Chromium mérés nem mond semmit a flotta Safari-forgalmáról.
+
+## Ismert hiba — a mérés nem determinisztikus (JAVÍTANDÓ)
+
+Ugyanaz a flotta, ugyanaz a böngésző, három egymás utáni futás: **55 / 51 / 53
+FAIL**. Az ingadozás nem egyenletes — a `nemesventilatorhaz` és a
+`szelloztetes` oldalakon koncentrálódik (`nemesventilatorhaz` 8 / 5 / 6).
+
+Az oszlop-összesítés stabil, tehát a riport fő táblázata használható; **egyetlen
+site FAIL-számára viszont nem szabad következtetést építeni.**
+
+A gyanú: időzítési verseny a megfigyelési ablakban — a döntés előtti szakasz
+fix várakozással zárul, és a lassabban induló tagek hol beleesnek, hol nem.
+
+**Ez a következő kör legfontosabb javítása.** Egy determinisztikusnak szánt
+megfigyelő eszköz nem ingadozhat 8%-ot: egy műszer, ami zajt ad, egy ponton
+hazudni fog — és a harness ismert torzítása alapján optimista irányba fog.
+
+## A műszer torzítása: OPTIMISTA
+
+Eddig **két** különböző mechanizmus adott hamis PASS-t, és **mindkettőt ember
+fogta meg a nyers bizonyíték átolvasásával, nem az ellenőrzés**:
+
+1. **Első félen proxyzott Google-mérés** (Google Tag Gateway): a hit a site saját
+   domainjén, egyedi útvonalon ment, tehát sem a domain-, sem az útvonal-minta
+   nem fogta meg → `other`. Javítva a `tid=G-|GT-|AW-` szabállyal.
+2. **Safari ITP által eldobott süti**: a site megpróbálta letenni, a böngésző
+   eldobta, a süti-tárban nem volt semmi → PASS. Nem javítható a harness-ben —
+   ezért jelöli meg a `report.md` a WebKit-only futásnál az érintett oszlopokat.
+
+Ebből következik a riport állandó fejléc-sora: **a ✅ gyengébb állítás, mint a
+❌.** Új ellenőrzés írásakor mindig azt kérdezd meg először, hogy mitől adhat
+hamis PASS-t — a hamis FAIL magától kiderül, a hamis PASS nem.
