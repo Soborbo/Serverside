@@ -263,24 +263,35 @@ export function parseConsentCookieHeader(cookieHeader: string | null | undefined
 /**
  * Minden NEM-NULL forrás egyezik-e.
  *
- *  1    = igen (vagy csak egyetlen forrás volt elérhető — nincs mivel ütköznie)
+ *  1    = MÉRVE, egyezik: legalább egy kategóriában ≥2 nem-NULL forrás volt,
+ *         és egyik összevethető kategóriában sincs eltérés
  *  0    = legalább két forrás ELTÉR ugyanarra a kategóriára
- *  null = EGYETLEN forrás sem volt elérhető → nincs mit összevetni
+ *  null = nincs kategória legalább KÉT nem-NULL forrással → nincs mit összevetni
  *
  * A két kategóriát (analytics / marketing) külön hasonlítjuk: elég az egyikben
  * eltérni. Pure, D1 nélkül tesztelhető.
+ *
+ * MIÉRT NULL az egy-forrásos eset (2026-08-17 javítás): egyetlen nem-NULL
+ * forrásnál a „minden nem-NULL forrás egyezik" ÜRESEN IGAZ — a korábbi kód itt
+ * 1-et adott, mérés nélkül. Amíg a 6.1.0-s kliens-lib nincs kint a site-okon és
+ * csak a szerveroldali süti-parse jelent, MINDEN receipt ebbe az ágba esik,
+ * vagyis az oszlop csupa 1-es lett volna — „nincs eltérés"-nek látszik, holott
+ * „nincs mit összehasonlítani". A NULL választja el a „nem mérhető"-t a
+ * „mérve, egyezik"-től; a cross-check (consent-crosscheck.ts) a NULL-t eddig
+ * is kihagyta a nevezőből, így ott nincs teendő.
  */
 export function computeSourceConsistency(
   sources: readonly ConsentSourceSnapshot[]
 ): 1 | 0 | null {
-  let seenAny = false;
+  let comparable = false;
   let consistent = true;
   for (const key of ['analytics', 'marketing'] as const) {
     const values = sources.map((s) => s[key]).filter((v): v is boolean => v !== null);
-    if (values.length > 0) seenAny = true;
+    if (values.length >= 2) comparable = true;
+    // Eltérés csak ≥2 értéknél lehetséges, tehát consistent=false ⇒ comparable=true.
     if (values.some((v) => v !== values[0])) consistent = false;
   }
-  if (!seenAny) return null;
+  if (!comparable) return null;
   return consistent ? 1 : 0;
 }
 
