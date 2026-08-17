@@ -16,6 +16,56 @@ const MARK = { [PASS]: '✅', [FAIL]: '❌', [NA]: '–', [INFO]: 'ℹ️', ERRO
  */
 const EEA_UK_COUNTRIES = new Set(['HU', 'GB', 'IE', 'DE', 'AT', 'FR', 'NL', 'BE', 'SK', 'RO', 'PL', 'CZ', 'ES', 'IT']);
 
+/**
+ * Azok az ellenőrzések, amiknek az eredménye a BÖNGÉSZŐ tárolási politikájától
+ * függ, nem csak a site viselkedésétől. Safari/WebKit ITP alatt a site ugyanúgy
+ * megpróbálja letenni a sütit, de a böngésző eldobja vagy particionálja — a
+ * megfigyelő ekkor PASS-t lát ott, ahol Chromiumon FAIL van.
+ */
+/**
+ * CSAK a süti-ellenőrzések. A storage-műveleteket a beinjektált szkript a
+ * `Storage.prototype`-on figyeli, tehát a `setItem`/`getItem` hívás akkor is
+ * látszik, ha az ITP később eldobja az adatot — ott nincs elfedés. A sütiket
+ * viszont a böngésző süti-tárából olvassuk vissza: amit az ITP eldobott vagy
+ * particionált, az egyszerűen NINCS ott, és a harness PASS-t ír.
+ */
+export const ITP_MASKED_CHECK_IDS = ['A_no_nonessential_cookies', 'C_no_nonessential_cookies'];
+
+/** A táblázat-fejlécben az érintett oszlopokra tett jelölés. */
+const ITP_MASKED_SUFFIX = '⁽ᴵᵀᴾ⁾';
+
+const ITP_MASKED_LABELS = ITP_MASKED_CHECK_IDS.map(
+  (id) => TABLE_COLUMNS.find((c) => c.id === id)?.label || id
+);
+
+/** Hány site kapott ✅-t egy ITP-vel elfedhető ellenőrzésen. */
+function itpMaskedPassCount(results) {
+  let n = 0;
+  for (const r of results) {
+    if (r.status === 'ERROR') continue;
+    const idx = indexChecks(r);
+    n += ITP_MASKED_CHECK_IDS.filter((id) => idx[id] === PASS).length;
+  }
+  return n;
+}
+
+/**
+ * ÁLLANDÓ figyelmeztetés — nem futásfüggő, és szándékosan a lap tetején van.
+ *
+ * A harness eddigi két üzemi köre alatt KÉT külön mechanizmus adott hamis
+ * PASS-t, és MINDKETTŐT a bizonyíték-lista emberi átolvasása fogta meg, nem a
+ * teszt: (1) a site saját domainjén proxyzott GA4/Ads hit (Google Tag Gateway)
+ * `other`-nek látszott, (2) a Safari ITP eldobta a sütit, amit a site letenni
+ * próbált. A műszer hibája nem véletlenszerű: OPTIMISTA irányba téved. Egy ❌
+ * ezért erős állítás, egy ✅ viszont csak annyit jelent, hogy EBBEN a
+ * futásban, EZZEL a böngészővel nem láttunk semmit.
+ */
+const OPTIMISTIC_BIAS_NOTE =
+  '> **A műszer optimista irányba téved — a ✅ gyengébb állítás, mint a ❌.** ' +
+  'A harness eddig kétszer adott hamis PASS-t (első félen proxyzott Google-mérés; Safari ITP által ' +
+  'eldobott süti), és mindkettőt a nyers bizonyíték emberi átolvasása fogta meg, nem az ellenőrzés. ' +
+  'Mielőtt egy ✅-ra döntést építesz, nyisd ki alatta a bizonyíték-blokkot.';
+
 export function statusMark(status) {
   // A hiányzó státusz „nem mérhető" — sosem `?`. Egy értelmezhetetlen jel a
   // táblázatban rosszabb, mint a bevallott hiány.
@@ -85,10 +135,27 @@ export function buildMarkdown(run) {
     );
   }
   const missingBrowsers = ['chromium', 'webkit'].filter((b) => !browsers.includes(b));
-  if (missingBrowsers.length) {
+  if (missingBrowsers.includes('chromium') && browsers.includes('webkit')) {
+    // Ez a KOCKÁZATOS irány, ezért kap saját, konkrét szöveget: WebKit alatt a
+    // süti- és storage-ellenőrzések PASS-ra fordulhatnak ATTÓL, hogy az ITP
+    // eldobta a sütit — nem attól, hogy a site nem próbálta letenni. Egy
+    // WebKit-only riportot különben úgy olvas a jövőbeli olvasó, hogy azok az
+    // oldalak rendben vannak.
     limitations.push(
-      `**Hiányzó böngésző: ${missingBrowsers.join(', ')}.** A Safari ITP a first-party storage-ot eltérően ` +
-        'kezeli, ezért a storage-hoz kötődő ellenőrzések csak a mért böngészőre érvényesek ' +
+      `**Csak WebKit futott — a süti-ellenőrzések ✅-jai NEM megbízhatóak.** A Safari ITP a sütit eldobja ` +
+        'vagy particionálja, tehát a harness PASS-t ír ott is, ahol a site MEGPRÓBÁLTA letenni. Az érintett ' +
+        `oszlopok a táblázatban ${ITP_MASKED_SUFFIX}-jelölést kapnak: ` +
+        `${ITP_MASKED_LABELS.map((c) => `\`${c}\``).join(', ')} — ebben a futásban **${itpMaskedPassCount(results)}** ` +
+        'ilyen ✅ van, és egyikből sem következik, hogy az az oldal tiszta. ' +
+        '(A storage-ellenőrzéseket ez NEM érinti: azokat a `Storage.prototype`-on figyeljük, a hívás az ITP ' +
+        'alatt is látszik.) Ugyanezt Chromiumon is le kell mérni ' +
+        '(`npm run compliance -- --browser=chromium`), és a SZIGORÚBB eredmény az igaz.'
+    );
+  }
+  if (missingBrowsers.includes('webkit') && browsers.includes('chromium')) {
+    limitations.push(
+      '**Hiányzó böngésző: webkit.** A Safari ITP a first-party storage-ot eltérően kezeli, ezért a ' +
+        'storage-hoz kötődő ellenőrzések csak Chromiumra érvényesek ' +
         '(`npx playwright install webkit && npm run compliance -- --browser=webkit`).'
     );
   }
@@ -97,6 +164,8 @@ export function buildMarkdown(run) {
     lines.push('> ## ⚠️ A BASELINE ÉRVÉNYESSÉGE KORLÁTOZOTT');
     for (const l of limitations) lines.push(`> - ${l}`);
   }
+  lines.push('');
+  lines.push(OPTIMISTIC_BIAS_NOTE);
   lines.push('');
   lines.push(
     '> Ez MÉRÉS, nem javítás. A harness kizárólag olvas és megfigyel: egyetlen űrlapot sem küld be, ' +
@@ -108,7 +177,12 @@ export function buildMarkdown(run) {
   // ── Fő táblázat ─────────────────────────────────────────────────────────
   lines.push('## Áttekintés');
   lines.push('');
-  lines.push(`| Site | ${TABLE_COLUMNS.map((c) => c.label).join(' | ')} |`);
+  // WebKit-only futásnál a süti-oszlopok fejléce megjelöli magát. A korlátozás
+  // a lap tetején is ott van, de a félreolvasás ITT történik — a táblázatban.
+  const itpMasked = browsers.includes('webkit') && !browsers.includes('chromium');
+  const columnLabel = (c) =>
+    itpMasked && ITP_MASKED_CHECK_IDS.includes(c.id) ? `${c.label} ${ITP_MASKED_SUFFIX}` : c.label;
+  lines.push(`| Site | ${TABLE_COLUMNS.map(columnLabel).join(' | ')} |`);
   lines.push(`|---|${TABLE_COLUMNS.map(() => '---').join('|')}|`);
   for (const r of results) {
     if (r.status === 'ERROR') {
@@ -122,6 +196,14 @@ export function buildMarkdown(run) {
   }
   lines.push('');
   lines.push('✅ megfelel · ❌ bukik · – nem értelmezhető / nem mérhető · ⚠️ a site mérése hibára futott');
+  if (itpMasked) {
+    lines.push('');
+    lines.push(
+      `${ITP_MASKED_SUFFIX} **Ebben az oszlopban a ✅ nem bizonyíték.** Csak WebKit futott; a Safari ITP ` +
+        'eldobja a sütit, amit a site letenni próbált, tehát a harness nem lát semmit ott sem, ahol Chromiumon ' +
+        '❌ lenne. Chromium-méréssel kell összevetni.'
+    );
+  }
   lines.push('');
 
   // ── Oszlop-összesítés ───────────────────────────────────────────────────

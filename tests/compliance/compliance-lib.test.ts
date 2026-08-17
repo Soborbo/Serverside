@@ -8,6 +8,8 @@ import { contrastRatio, parseRgb, compareButtonProminence } from './lib/banner.m
 import { isNonEssentialCookie, isNonEssentialStorageKey } from './lib/instrument.mjs';
 // @ts-expect-error — lásd fent.
 import { evaluateBeforeDecision, evaluateAfterReject, evaluateBannerUi } from './lib/checks.mjs';
+// @ts-expect-error — lásd fent.
+import { buildMarkdown } from './lib/report.mjs';
 
 /**
  * A compliance-harness TISZTA magja. Hálózat nélkül fut, ezért a normál
@@ -155,6 +157,68 @@ describe('nem-esszenciális besorolás', () => {
     }
     expect(isNonEssentialCookie('_ga')).toBe(true);
     expect(isNonEssentialCookie('_fbp')).toBe(true);
+  });
+});
+
+describe('riport-fejléc — a hamis PASS bevallása', () => {
+  /** Egy minimális futás-objektum: egy site, tiszta süti- és storage-ellenőrzésekkel. */
+  const run = (browsers: string[]) => ({
+    started_at: 'x',
+    finished_at: 'y',
+    browsers,
+    test_country: 'HU',
+    run_command: 'npm run compliance',
+    relay_mode: false,
+    results: [
+      {
+        site_id: 'painless',
+        browser: browsers[0],
+        url: 'https://painlessremovals.com/',
+        site: { expected_ruleset: 'eea_uk' },
+        checks: [
+          { id: 'A_no_nonessential_cookies', status: 'PASS', detail: '', evidence: null },
+          { id: 'C_no_nonessential_cookies', status: 'PASS', detail: '', evidence: null }
+        ]
+      }
+    ]
+  });
+
+  it('az „optimista irányba téved" figyelmeztetés MINDIG ott van', () => {
+    // Állandó sor, nem futásfüggő: a jövőbeli olvasó ne azzal kezdje, hogy
+    // megbízik a ✅-okban. Két hamis PASS-mechanizmus volt eddig — mindkettőt
+    // ember fogta meg, nem a teszt.
+    for (const b of [['chromium'], ['webkit'], ['chromium', 'webkit']]) {
+      expect(buildMarkdown(run(b))).toMatch(/optimista irányba téved/);
+    }
+  });
+
+  it('WebKit-only futásnál MEGNEVEZI az ITP-elfedést és az érintett oldalakat', () => {
+    // Ez a kockázatos irány: az ITP eldobja a sütit, amit a site letenni
+    // próbált, és a táblázat ✅-t mutat. Enélkül a riport pont úgy olvasódik,
+    // mintha azok az oldalak rendben lennének.
+    const md = buildMarkdown(run(['webkit']));
+    expect(md).toMatch(/Csak WebKit futott/);
+    expect(md).toMatch(/egyikből sem következik, hogy az az oldal tiszta/);
+    // A félreolvasás a TÁBLÁZATBAN történik, ezért az érintett oszlopok
+    // fejléce is megjelöli magát, nem csak a lap teteje.
+    expect(md).toMatch(/A: nincs süti ⁽ᴵᵀᴾ⁾/);
+    expect(md).toMatch(/C: nincs süti reject után ⁽ᴵᵀᴾ⁾/);
+    expect(md).toMatch(/Ebben az oszlopban a ✅ nem bizonyíték/);
+    // A storage-oszlopok NEM kapnak jelölést: azokat a Storage.prototype-on
+    // figyeljük, oda az ITP nem lát bele.
+    expect(md).not.toMatch(/storage-írás ⁽ᴵᵀᴾ⁾/);
+  });
+
+  it('Chromium-only futásnál a hiányzó ITP-mérést jelzi, nem ITP-elfedést', () => {
+    const md = buildMarkdown(run(['chromium']));
+    expect(md).toMatch(/Hiányzó böngésző: webkit/);
+    expect(md).not.toMatch(/Csak WebKit futott/);
+  });
+
+  it('mindkét böngésző mérve → nincs böngésző-korlátozás', () => {
+    const md = buildMarkdown(run(['chromium', 'webkit']));
+    expect(md).not.toMatch(/Csak WebKit futott/);
+    expect(md).not.toMatch(/Hiányzó böngésző/);
   });
 });
 
