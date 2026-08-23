@@ -8,6 +8,7 @@ import {
 } from '../lib/deadletter';
 import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
+import { isGa4AllowedForSite } from '../lib/consent-log';
 import { type GAdsPayload } from '../lib/gads';
 import { sendToDataManager } from '../lib/datamanager';
 import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
@@ -215,7 +216,22 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
   if (record.platform === 'ga4') {
     // Az offline GA4 láb kikapcsolt (Run 6), de a korábban DLQ-ba került ga4-
     // rekordok leürítéséhez a retry-út megmarad.
-    return sendToGA4MP(siteConfig, eventPayload as unknown as GA4Payload);
+    //
+    // CMP Fázis 1: `provider='sbo'` site-on a GA4 `analytics_storage='GRANTED'`-hez
+    // kötött (a DUAA statisztikai kivétel a GA4-et nem menti meg — lásd
+    // consent-log.ts isGa4AllowedForSite). A CookieYes-site-okon a mai szabály áll,
+    // tehát ez az ág ott bitre változatlan. A DLQ-rekord a capture-kori jeleket
+    // hordozza; ha akkor nem volt analytics-consent, ma sem küldjük fel.
+    const ga4Payload = eventPayload as unknown as GA4Payload;
+    if (!isGa4AllowedForSite(siteConfig, ga4Payload.consent)) {
+      return {
+        success: true,
+        skipped: true,
+        skip_reason: 'consent_denied',
+        error: 'GA4 skipped: analytics consent not granted (provider=sbo)'
+      };
+    }
+    return sendToGA4MP(siteConfig, ga4Payload);
   }
   if (record.platform === 'gads') {
     // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager

@@ -18,8 +18,8 @@ import {
 const EMPTY: ConsentCrossCheckInput = {
   grantedSkips: [],
   findings: [],
-  today: { inconsistent: 0, comparable: 0 },
-  baseline: { inconsistent: 0, comparable: 0 },
+  today: { inconsistent: 0, comparable: 0, total: 0 },
+  baseline: { inconsistent: 0, comparable: 0, total: 0 },
   nullSources: [],
   debugRows: 0,
   failedLegs: []
@@ -59,8 +59,8 @@ describe('evaluateConsentCrossCheck', () => {
   it('a source_consistent arány elmozdulása riaszt (küszöb felett, elég mintán)', () => {
     const s = evaluateConsentCrossCheck({
       ...EMPTY,
-      today: { inconsistent: 30, comparable: 100 },
-      baseline: { inconsistent: 35, comparable: 700 }
+      today: { inconsistent: 30, comparable: 100, total: 120 },
+      baseline: { inconsistent: 35, comparable: 700, total: 800 }
     });
     expect(s.inconsistent_rate).toBe(0.3);
     expect(s.baseline_inconsistent_rate).toBe(0.05);
@@ -71,8 +71,8 @@ describe('evaluateConsentCrossCheck', () => {
   it('kis minta → nincs arány-riasztás (zajvédelem)', () => {
     const s = evaluateConsentCrossCheck({
       ...EMPTY,
-      today: { inconsistent: 2, comparable: 3 },
-      baseline: { inconsistent: 0, comparable: 700 }
+      today: { inconsistent: 2, comparable: 3, total: 10 },
+      baseline: { inconsistent: 0, comparable: 700, total: 800 }
     });
     expect(s.inconsistent_rate).toBeGreaterThan(0.5);
     expect(s.alert).toBe(false);
@@ -81,8 +81,8 @@ describe('evaluateConsentCrossCheck', () => {
   it('küszöb alatti elmozdulás → nincs riasztás', () => {
     const s = evaluateConsentCrossCheck({
       ...EMPTY,
-      today: { inconsistent: 12, comparable: 100 },
-      baseline: { inconsistent: 70, comparable: 700 }
+      today: { inconsistent: 12, comparable: 100, total: 120 },
+      baseline: { inconsistent: 70, comparable: 700, total: 800 }
     });
     expect(Math.abs(s.inconsistent_rate_delta!)).toBeLessThan(
       DEFAULT_CONSENT_CROSS_CHECK_THRESHOLDS.inconsistentRateDelta
@@ -93,8 +93,8 @@ describe('evaluateConsentCrossCheck', () => {
   it('a hirtelen JAVULÁS is riaszt — rendszerint egy forrás némult el', () => {
     const s = evaluateConsentCrossCheck({
       ...EMPTY,
-      today: { inconsistent: 0, comparable: 100 },
-      baseline: { inconsistent: 210, comparable: 700 }
+      today: { inconsistent: 0, comparable: 100, total: 120 },
+      baseline: { inconsistent: 210, comparable: 700, total: 800 }
     });
     expect(s.inconsistent_rate_delta).toBe(-0.3);
     expect(s.alert).toBe(true);
@@ -104,6 +104,44 @@ describe('evaluateConsentCrossCheck', () => {
     const s = evaluateConsentCrossCheck({ ...EMPTY, failedLegs: ['granted_skips'] });
     expect(s.alert).toBe(true);
     expect(s.alert_reasons[0]).toContain('vakfolt');
+  });
+
+  // ── A konzisztencia-láb vaksága (2026-08-17) ─────────────────────────────
+  // Amíg a 6.1.0-s kliens-lib nincs kint, MINDEN receipt egyforrású, tehát a
+  // source_consistent mindenütt NULL, a nevező 0, és az arány `n/a`. Egy `n/a`
+  // úgy olvasódik, mint „rendben van" — ezért a vakságot ki kell mondani.
+  it('van forgalom, de egy sor sem összevethető → VAK (nem „rendben")', () => {
+    const s = evaluateConsentCrossCheck({
+      ...EMPTY,
+      today: { inconsistent: 0, comparable: 0, total: 40 }
+    });
+    expect(s.consistency_blind).toBe(true);
+    expect(s.consistency_total).toBe(40);
+    expect(s.consistency_comparable).toBe(0);
+    expect(s.inconsistent_rate).toBeNull();
+    // De NEM riaszt: ez a VÁRT állapot a lib-kitelepítésig, napi riasztásként
+    // hetekig csak zaj lenne, és a zajra az ember leszokik figyelni.
+    expect(s.alert).toBe(false);
+  });
+
+  it('nincs forgalom → CSEND, nem vakság (a két nulla nem ugyanaz)', () => {
+    const s = evaluateConsentCrossCheck({
+      ...EMPTY,
+      today: { inconsistent: 0, comparable: 0, total: 0 }
+    });
+    expect(s.consistency_blind).toBe(false);
+    expect(s.inconsistent_rate).toBeNull();
+  });
+
+  it('van összevethető sor → nem vak, és az arány értelmezhető', () => {
+    const s = evaluateConsentCrossCheck({
+      ...EMPTY,
+      today: { inconsistent: 3, comparable: 30, total: 100 },
+      baseline: { inconsistent: 3, comparable: 300, total: 900 }
+    });
+    expect(s.consistency_blind).toBe(false);
+    expect(s.consistency_comparable).toBe(30);
+    expect(s.inconsistent_rate).toBe(0.1);
   });
 });
 
@@ -180,7 +218,7 @@ describe('runConsentCrossCheck', () => {
                     };
                   }
                   if (sql.includes('AS comparable')) {
-                    return { results: [{ inconsistent: 1, comparable: 10 }] };
+                    return { results: [{ inconsistent: 1, comparable: 10, total: 12 }] };
                   }
                   if (sql.includes('cookie_null')) {
                     return {

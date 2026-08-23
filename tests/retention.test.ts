@@ -36,18 +36,51 @@ describe('cutoffIso', () => {
 });
 
 describe('buildRetentionPolicies', () => {
-  it('purges only operational tables (+ consent_debug) by default', () => {
+  it('purges only operational tables (+ consent_debug/log/metrics) by default', () => {
     const tables = buildRetentionPolicies({}).map((p) => p.table);
-    expect(tables).toEqual(['events_raw', 'deliveries', 'idempotency', 'consent_debug']);
-    // A consent-PROOF és az üzleti érték marad; a nyers debug-string nem.
+    expect(tables).toEqual([
+      'events_raw',
+      'deliveries',
+      'idempotency',
+      'consent_debug',
+      // Soborbo CMP: saját, HOSSZABB ablakkal — nem az operatív 90 nappal.
+      'consent_log',
+      'consent_metrics'
+    ]);
+    // A consent-PROOF (receipts) és az üzleti érték marad; a nyers debug-string nem.
     expect(tables).not.toContain('consent_receipts');
     expect(tables).not.toContain('lead_status');
   });
 
   it('uses RETENTION_DAYS for the operational tables', () => {
     const policies = buildRetentionPolicies({ RETENTION_DAYS: '30' });
-    const operational = policies.filter((p) => p.table !== 'consent_debug');
+    // A consent-táblák SAJÁT ablakot kapnak (debug 14 nap, log 3 év, metrics 12
+    // hónap) — ha a RETENTION_DAYS-t követnék, a consent-proof 30 nap múlva
+    // eltűnne, a nyers debug-string pedig hónapokig állna.
+    const operational = policies.filter((p) => !p.table.startsWith('consent_'));
+    expect(operational.map((p) => p.table)).toEqual(['events_raw', 'deliveries', 'idempotency']);
     expect(operational.every((p) => p.days === 30)).toBe(true);
+  });
+
+  it('consent_log: 3 év, a server_received_at-en — proof, de nem végtelen', () => {
+    const log = buildRetentionPolicies({ RETENTION_DAYS: '30' }).find((p) => p.table === 'consent_log');
+    expect(log?.days).toBe(3 * 365);
+    expect(deleteSql(log!)).toBe('DELETE FROM consent_log WHERE server_received_at < ?1');
+  });
+
+  it('consent_metrics: 12 hónap (ID-mentes UX-mérés, nem bizonyíték)', () => {
+    const metrics = buildRetentionPolicies({}).find((p) => p.table === 'consent_metrics');
+    expect(metrics?.days).toBe(365);
+    expect(deleteSql(metrics!)).toBe('DELETE FROM consent_metrics WHERE shown_at < ?1');
+  });
+
+  it('a consent_log/metrics ablak env-vel felülírható', () => {
+    const policies = buildRetentionPolicies({
+      CONSENT_LOG_RETENTION_DAYS: '400',
+      CONSENT_METRICS_RETENTION_DAYS: '90'
+    });
+    expect(policies.find((p) => p.table === 'consent_log')?.days).toBe(400);
+    expect(policies.find((p) => p.table === 'consent_metrics')?.days).toBe(90);
   });
 
   it('purges consent_debug after 14 days — NOT opt-in, NOT the 90-day window', () => {

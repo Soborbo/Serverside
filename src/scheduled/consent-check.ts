@@ -76,7 +76,10 @@ export async function handleConsentCrossCheck(env: Env): Promise<void> {
 
   await sendAdminEmail(
     env,
-    `Consent cross-check (${date}): ${summary.granted_but_skipped_total} GRANTED-but-skipped, source_consistent=0 rate ${fmtRate(summary.inconsistent_rate)}`,
+    `Consent cross-check (${date}): ${summary.granted_but_skipped_total} GRANTED-but-skipped, ` +
+      (summary.consistency_blind
+        ? `konzisztencia-mérés VAK (${summary.consistency_total} receipt, 0 összevethető)`
+        : `source_consistent=0 rate ${fmtRate(summary.inconsistent_rate)}`),
     buildConsentEmail(date, summary),
     summary.granted_but_skipped_total > 0 ? 'critical' : 'warning'
   );
@@ -121,9 +124,19 @@ function buildConsentEmail(date: string, s: ConsentCrossCheckSummary): string {
     )}
 
     <h3>3. Forrás-konzisztencia</h3>
-    <p>Ma: <strong>${fmtRate(s.inconsistent_rate)}</strong> ·
-       7 napos átlag: ${fmtRate(s.baseline_inconsistent_rate)} ·
-       eltérés: ${s.inconsistent_rate_delta === null ? 'n/a' : (s.inconsistent_rate_delta * 100).toFixed(1) + ' pp'}</p>
+    ${
+      s.consistency_blind
+        ? `<p><strong>⚠ A mérés VAK.</strong> ${s.consistency_total} receipt érkezett, de
+             <strong>egy sem volt összevethető</strong>: mindegyiknél egyetlen consent-forrás
+             volt elérhető, tehát nincs mit mivel egyeztetni. Ez NEM „minden rendben" —
+             a konzisztencia-mérés el sem indult. Várható ok: a 6.1.0-s kliens-lib még nincs
+             kint a site-okon, így csak a szerveroldali süti-olvasat jelent. A számok
+             addig lesznek értelmezhetők, amíg a lib flottakörét be nem fejeztük.</p>`
+        : `<p>Ma: <strong>${fmtRate(s.inconsistent_rate)}</strong> ·
+             7 napos átlag: ${fmtRate(s.baseline_inconsistent_rate)} ·
+             eltérés: ${s.inconsistent_rate_delta === null ? 'n/a' : (s.inconsistent_rate_delta * 100).toFixed(1) + ' pp'} ·
+             összevethető: ${s.consistency_comparable}/${s.consistency_total}</p>`
+    }
 
     <h3>4. NULL-forrás mintázat (betöltési verseny trendje)</h3>
     <p>A NULL azt jelenti, hogy az a forrás NEM VOLT ELÉRHETŐ. Ha az API-oszlop

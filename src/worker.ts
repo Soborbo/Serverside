@@ -1,6 +1,7 @@
 import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
 import { handleLeadStatus } from './routes/lead-status';
+import { handleConsent } from './routes/consent';
 import { handleAdmin } from './routes/admin';
 import { handleAdminUI } from './routes/admin-ui';
 import { handleHealth } from './routes/health';
@@ -87,6 +88,16 @@ export default {
       // Leads (admin-auth, server-to-server). Lásd routes/lead-status.ts.
       if (request.method === 'POST' && url.pathname === '/api/event/lead-status') {
         return await handleLeadStatus(request, env, ctx);
+      }
+
+      // Soborbo CMP (Fázis 1) — a saját consent-modul szerveroldala:
+      //   POST /api/consent          döntés (append-only consent_log)
+      //   POST /api/consent/shown    banner-megjelenés (ID-mentes UX-mérés)
+      //   GET  /api/consent/:id      az aktuális állapot (legmagasabb revision)
+      // INERT: minden site `consent.provider`-e alapból 'cookieyes', ott 403.
+      // Lásd routes/consent.ts.
+      if (url.pathname === '/api/consent' || url.pathname.startsWith('/api/consent/')) {
+        return await handleConsent(request, env);
       }
 
       // Admin UI — önálló dashboard-váz (nincs benne secret), a 4 admin-endpointot

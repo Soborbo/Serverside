@@ -27,6 +27,26 @@ export const DEFAULT_RETENTION_DAYS = 90;
  */
 export const CONSENT_DEBUG_RETENTION_DAYS = 14;
 
+/**
+ * A `consent_log` megőrzési ablaka (Soborbo CMP). ALAPBÓL BE VAN KAPCSOLVA, de
+ * HOSSZÚ: 3 év. Ez consent-PROOF (GDPR Art. 7(1)) — a bizonyítási teher a
+ * miénk, tehát nem törölhetjük gyorsan; viszont a jogi audit 7. pontja szerint
+ * egy örökké növő, törlési szabály NÉLKÜLI append-only tábla maga is
+ * minimalizálási hiányosság. A vágás a `server_received_at`-en megy.
+ *
+ * FONTOS: az EGY consent_id-hez tartozó RÉGEBBI revisionök is ide esnek — a
+ * legfrissebb állapotot a MAX(revision) adja, és azt csak akkor veszítjük el, ha
+ * maga a legutolsó döntés is 3 évnél régebbi (vagyis a lánc rég inaktív).
+ */
+export const CONSENT_LOG_RETENTION_DAYS = 3 * 365;
+
+/**
+ * A `consent_metrics` (banner-megjelenések) ablaka: 12 hónap. Ez UX-mérés, nem
+ * bizonyíték — és ID-mentes, tehát a kockázata alacsony; a hosszú megőrzés
+ * viszont semmit nem adna hozzá.
+ */
+export const CONSENT_METRICS_RETENTION_DAYS = 365;
+
 export interface RetentionPolicy {
   table: string;
   /** ISO 8601 text timestamp oszlop, ami alapján vágunk. */
@@ -63,6 +83,8 @@ export function buildRetentionPolicies(env: {
   RETENTION_DAYS?: string;
   CONSENT_RETENTION_DAYS?: string;
   CONSENT_DEBUG_RETENTION_DAYS?: string;
+  CONSENT_LOG_RETENTION_DAYS?: string;
+  CONSENT_METRICS_RETENTION_DAYS?: string;
   LEAD_RETENTION_DAYS?: string;
 }): RetentionPolicy[] {
   const days = resolveRetentionDays(env.RETENTION_DAYS);
@@ -79,6 +101,21 @@ export function buildRetentionPolicies(env: {
       table: 'consent_debug',
       column: 'created_at',
       days: resolveRetentionDays(env.CONSENT_DEBUG_RETENTION_DAYS, CONSENT_DEBUG_RETENTION_DAYS)
+    },
+    // Soborbo CMP: a consent-proof HOSSZÚ, de nem végtelen (3 év); a banner-
+    // megjelenés-mérés rövid (12 hónap). Mindkettő alapból BE van kapcsolva — a
+    // jogi audit szerint a törlési szabály hiánya maga is minimalizálási hiba.
+    // A táblák üresek, amíg egyetlen site sem fut `provider='sbo'`-val, tehát a
+    // policy jelenléte nem jár semmilyen hatással.
+    {
+      table: 'consent_log',
+      column: 'server_received_at',
+      days: resolveRetentionDays(env.CONSENT_LOG_RETENTION_DAYS, CONSENT_LOG_RETENTION_DAYS)
+    },
+    {
+      table: 'consent_metrics',
+      column: 'shown_at',
+      days: resolveRetentionDays(env.CONSENT_METRICS_RETENTION_DAYS, CONSENT_METRICS_RETENTION_DAYS)
     }
   ];
 
