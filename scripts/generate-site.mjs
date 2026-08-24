@@ -42,6 +42,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { argv, exit } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { toSiteConfig, SITE_CONFIG_FIELDS, INPUT_ONLY_FIELDS } from './lib/site-config.mjs';
+import { integrationChecklist } from './lib/integration-checklist.mjs';
 
 // A wrangler.toml-ban rögzített SITE_CONFIG KV namespace (alapértelmezett).
 const DEFAULT_SITE_CONFIG_NS = 'edd34e28eee847c09c26f9d9e3ea04ab';
@@ -51,15 +52,9 @@ const DEFAULT_SITE_CONFIG_NS = 'edd34e28eee847c09c26f9d9e3ea04ab';
 const EVENTS = JSON.parse(
   readFileSync(fileURLToPath(new URL('../src/events.json', import.meta.url)), 'utf8')
 );
-// A kliens által küldhető (ingress) event-nevek: server-csatornás, NEM offline.
-const INGRESS_EVENTS = EVENTS.filter((e) => e.channels.includes('server') && e.kind !== 'offline');
-// Run 6 gate: a high-value (server_ingress_only) eventeket a böngésző-út 403-mal
-// dobja — CSAK a site backendje küldheti, per-site tokennel, a
-// /api/event/conversion-server útvonalon. A checklist külön sorolja őket, hogy
-// egy új site bekötése ne a böngésző-útra huzalozza a form-konverziókat
-// (TRK-400-017 + néma konverzióvesztés lenne).
-const BROWSER_EVENT_NAMES = INGRESS_EVENTS.filter((e) => e.server_ingress_only !== true).map((e) => e.name);
-const SERVER_ONLY_EVENT_NAMES = INGRESS_EVENTS.filter((e) => e.server_ingress_only === true).map((e) => e.name);
+// A checklist (és a benne felsorolt böngésző-/szerver-only event-nevek) a
+// scripts/lib/integration-checklist.mjs-ben él — onnan a check-doc-truth kapu is
+// importálni tudja, és a GENERÁLT kimenetre futtatja a tiltó szabályokat.
 // gads.conversion_actions kulcsai CSAK kanonikus event-nevek lehetnek (Modell
 // 2-ben jellemzően az offline CRM-eventek: lead_qualified, booking_confirmed, …).
 // A legacy GA4 aliasokat SZÁNDÉKOSAN nem fogadjuk el: az ingress a lookup előtt
@@ -356,44 +351,6 @@ function kvPutCommands(hostnames, json, nsId) {
         `wrangler kv key put --namespace-id ${nsId} "${h}" '${compact.replace(/'/g, "'\\''")}'`
     )
     .join('\n');
-}
-
-function integrationChecklist(cfg) {
-  const host = cfg.hostnames[0];
-  return `# Integrációs ellenőrzőlista — ${cfg.site_id} (${host})
-
-## Worker oldal
-- [ ] KV-bejegyzés(ek) feltöltve (lásd kv-put.sh / a fenti parancsok)
-- [ ] wrangler.toml: route-blokk hozzáadva (lásd routes.toml) → \`wrangler deploy\`
-- [ ] (ha Google Ads) OAuth elvégezve a customer_id-ra: GET /api/event/oauth-init (X-Admin-Token)
-${cfg.meta?.test_event_code ? '- [ ] ⛔ test_event_code JELEN VAN — ez a kimenet NEM production-config (lásd a fájl tetején a bannert)' : ''}
-
-## CRM offline-loop (server-to-server)
-- [ ] CRM-deploy secretjei beállítva a crm-secret.env-ből: \`TRACKING_WORKER_URL\` + \`TRACKING_ADMIN_TOKEN\`
-- [ ] A KV site-config tartalmazza a \`crm_token_sha256\`-ot (a kv-put.sh ezt felteszi) → a globális
-      ADMIN_API_TOKEN MÁR NEM ír ehhez a site-hoz (tenant-izoláció)
-- [ ] Teszt: a CRM \`lezart_nyert\` → POST /api/event/lead-status → 200; ROSSZ tokennel → 401
-
-## Astro site oldal
-- [ ] client-lib/ (worker-tracking.ts + uuid.ts) bemásolva az Astro projekt src/lib/-jébe
-- [ ] Böngésző-út: a gateway Origin allow-listtel kapuz — Turnstile NEM kell a tracking
-      miatt (Run 6 kivette a gateway-ből). Ha a site a saját formját védi Turnstile-lal,
-      az független ettől.
-- [ ] CookieYes (GTM-ből) aktív → a consent automatikusan a cookieyes-consent cookie-ból jön
-- [ ] BÖNGÉSZŐ konverziós pontokon (klikk-eventek): \`trackConversion('<event_name>', { value, currency, user_data })\`
-      Böngésző-úton engedett event-nevek: ${BROWSER_EVENT_NAMES.join(', ')}
-- [ ] SZERVER-ONLY konverziók (form/lead/purchase) a SITE BACKENDJÉBŐL mennek:
-      POST /api/event/conversion-server + X-Admin-Token (per-site token, lásd crm-secret.env),
-      a böngésző event_id-jét újrahasznosítva (Pixel↔CAPI dedup). Böngésző-úton ezek 403-at
-      kapnak (TRK-400-017): ${SERVER_ONLY_EVENT_NAMES.join(', ')}
-
-## Ellenőrzés (deploy után)
-- [ ] curl https://${host}/api/event/health → {"status":"ok"}
-- [ ] Meta Events Manager → Test Events: a böngésző + szerver event AZONOS event_id-vel (dedup)
-- [ ] GA4 DebugView: a konverzió + (ha UTM) campaign_details látszik
-- [ ] Google Ads → Conversions: a feltöltés megjelenik (gclid match vagy Enhanced Conversions)
-- [ ] Cloudflare Workers Logs: nincs TRK-* error 24h-n át
-`;
 }
 
 // P0.4 — a teszt-build kimenetének kapuja. NEM „figyelmeztetés": a script exit 1-gyel

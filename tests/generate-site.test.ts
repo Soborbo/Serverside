@@ -300,3 +300,69 @@ describe('generate-site.mjs — test_event_code bypass nem termel production-kim
     expect(readFileSync(join(r.out, 'INTEGRATION.md'), 'utf8')).not.toContain('TESZT-BUILD');
   });
 });
+
+/**
+ * 2026-08-24 review #4 — a GENERÁLT INTEGRATION.md provider-aware.
+ *
+ * RED TEST: a fix előtt a checklist minden site-nak ugyanazt írta — köztük
+ * „CookieYes (GTM-ből) aktív" és „client-lib/ … bemásolva". Az első egy
+ * `consent.provider: 'sbo'` confignál egyenesen HAMIS (ott nincs CookieYes-szkript,
+ * a consent-boot szinkron, és a TrackingNoscript-et KI kell venni), a második pedig
+ * MÁR MA is hamis: a flat `client-lib/` F2-2 óta törölve.
+ *
+ * Ez azért drágább hiba, mint egy elavult doksi-sor: a checklist minden új site
+ * bekötésekor ÚJRATERMELŐDIK, és az onboardoló ember ebből dolgozik.
+ */
+describe('generate-site.mjs — a generált checklist provider-aware (review #4)', () => {
+  const sboConfig = (): Record<string, any> => ({ ...baseConfig(), consent: { provider: 'sbo' } });
+
+  it('sbo config → NINCS CookieYes-bekötés a checklistben', () => {
+    const r = runGen(sboConfig());
+    expect(r.status).toBe(0);
+    const md = readFileSync(join(r.out, 'INTEGRATION.md'), 'utf8');
+    expect(md).not.toContain('cookieYesId');
+    expect(md).not.toContain('cookieyes-consent');
+    expect(md).not.toContain('CookieYes aktív');
+  });
+
+  it('sbo config → a pilot-specifikus lépések MIND ott vannak', () => {
+    const md = readFileSync(join(runGen(sboConfig()).out, 'INTEGRATION.md'), 'utf8');
+    expect(md).toContain('PUBLIC_TRACKING_CONSENT_PROVIDER=sbo');
+    expect(md).toContain('PUBLIC_TRACKING_POLICY_VERSION');
+    expect(md).toContain('ConsentBanner');
+    expect(md).toContain('consentId');
+    // A noscript KIVÉTELE a lépés — nem a bekötése.
+    expect(md).toContain('KIVÉVE');
+    expect(md).not.toContain('<TrackingNoscript gtmId');
+  });
+
+  it('sbo config → a checklist FIGYELMEZTET, hogy ez pilot, nem onboarding-lépés', () => {
+    const md = readFileSync(join(runGen(sboConfig()).out, 'INTEGRATION.md'), 'utf8');
+    expect(md).toContain('PILOT');
+    expect(md).toContain('cmp-fazis2-pilot-runbook');
+  });
+
+  it('provider nélküli (default) config → VÁLTOZATLANUL a CookieYes-ág', () => {
+    const md = readFileSync(join(runGen(baseConfig()).out, 'INTEGRATION.md'), 'utf8');
+    expect(md).toContain('CookieYes aktív');
+    expect(md).toContain('TrackingNoscript');
+    expect(md).not.toContain('PUBLIC_TRACKING_CONSENT_PROVIDER=sbo');
+  });
+
+  it('a törölt client-lib/ MÁR NEM telepítési lépés (mindkét providernél)', () => {
+    for (const cfg of [baseConfig(), sboConfig()]) {
+      const md = readFileSync(join(runGen(cfg).out, 'INTEGRATION.md'), 'utf8');
+      expect(md).not.toMatch(/client-lib\/[^\n]{0,80}bemásolva/i);
+      expect(md).toContain('soborbo-tracking');
+    }
+  });
+
+  it('a provider a checklist FEJLÉCÉBEN is látszik (ne kelljen végigolvasni)', () => {
+    expect(readFileSync(join(runGen(sboConfig()).out, 'INTEGRATION.md'), 'utf8')).toContain(
+      '**Consent-provider:** `sbo`'
+    );
+    expect(readFileSync(join(runGen(baseConfig()).out, 'INTEGRATION.md'), 'utf8')).toContain(
+      '**Consent-provider:** `cookieyes`'
+    );
+  });
+});

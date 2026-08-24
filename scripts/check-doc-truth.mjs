@@ -27,6 +27,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exit, stdout } from 'node:process';
+import { integrationChecklist } from './lib/integration-checklist.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -34,9 +35,23 @@ const EXCLUDED_DIRS = ['node_modules', '.git', 'docs/archive', 'tests/compliance
 const EXCLUDED_FILES = ['VNEXT-TERV.md', 'CROSSCHECK-vnext-A-H-2026-08-24.md', 'FAZIS-0-MUNKACSOMAG.md'];
 
 /** Extra, nem-.md fájlok, amikre a tiltó szabályok szintén állnak (operátornak szóló szöveg). */
+// A checklist-SABLON (scripts/lib/integration-checklist.mjs) SZÁNDÉKOSAN nincs itt.
+// A prózára illesztett grep nem tudja megkülönböztetni az UTASÍTÁST az ELLENE SZÓLÓ
+// figyelmeztetéstől: a modul docstringje idézi a régi hibás sort (azért létezik), a
+// cookieyes-ág pedig épp TILTJA a Custom HTML consent-default taget. Mindkettő hamis
+// pozitívot adna. A checklistet ezért ott ellenőrizzük, ahol számít: a GENERÁLT
+// kimeneten (GENERATED_CHECKLIST_RULES) — azt kapja meg az onboardoló.
 const EXTRA_FILES = ['scripts/generate-site.mjs'];
 
 const FORBIDDEN = [
+  {
+    id: 'deleted-client-lib-as-install-step',
+    pattern: /client-lib\/[^\n]{0,80}bemásolva/i,
+    reason:
+      'A flat `client-lib/` (worker-tracking.ts + uuid.ts) F2-2 óta TÖRÖLVE — a kanonikus Astro kliens a ' +
+      '`soborbo-tracking` package (lib/ + components/). Telepítési lépésként hivatkozni rá olyan mappába ' +
+      'küldi az onboardolót, ami nem létezik.'
+  },
   {
     id: 'tag-gateway-enable-instruction',
     pattern: /(Google Tag Gateway\s*(?:→|->)\s*Enable|Enable\s+(?:the\s+)?Google Tag Gateway|Google tag gateway\s*(?:→|->)\s*Sign in)/i,
@@ -96,6 +111,100 @@ const ANCHORS = [
   }
 ];
 
+/**
+ * GENERÁLT kimenetre vonatkozó szabályok (2026-08-24 review #4).
+ *
+ * Egy generált dokumentum ugyanúgy sodródhat, mint egy kézzel írt — csak rosszabbul,
+ * mert minden új site bekötésekor újratermelődik, és az onboardoló EBBŐL dolgozik. A
+ * kapu ezért nem a sablon SZÖVEGÉRE illeszkedik, hanem arra, amit a site tényleg kap:
+ * legeneráljuk mindkét provider-változatot, és azon futtatjuk az állításokat.
+ *
+ * `mustNotMatch` — konkrét WIRING-utasítás, ami az adott providernél hamis.
+ * `mustContain`  — az adott providernél elhagyhatatlan lépés.
+ */
+const GENERATED_CHECKLIST_RULES = [
+  {
+    id: 'sbo-checklist-must-not-wire-cookieyes',
+    provider: 'sbo',
+    mustNotMatch: [
+      { re: /client-lib\/[^\n]{0,80}bemásolva/i, why: 'a flat client-lib/ F2-2 óta TÖRÖLVE — a kanonikus kliens a soborbo-tracking package' },
+      { re: /cookieYesId/, why: 'sbo site-on nincs CookieYes-szkript — a Tracking.astro a szinkron consent-bootot rendereli' },
+      { re: /cookieyes-consent/, why: 'sbo site-on a gateway a saját sbo_consent sütiből olvas, nem a cookieyes-consentből' },
+      { re: /CookieYes aktív/i, why: 'egyenesen hamis utasítás egy sbo site-on' },
+      { re: /<TrackingNoscript gtmId/, why: 'sbo site-on a TrackingNoscript-et KI kell venni: noscript alatt nincs consent-döntés, a GTM-iframe consent előtt futna' }
+    ],
+    mustContain: [
+      { s: 'PUBLIC_TRACKING_CONSENT_PROVIDER=sbo', why: 'a provider env nélkül a kliens a cookieyes-ágra esik vissza' },
+      { s: 'PUBLIC_TRACKING_POLICY_VERSION', why: 'kötelező mező minden consent-log soron' },
+      { s: 'ConsentBanner', why: 'sbo-n a banner a döntés egyetlen felülete' },
+      { s: 'consentId', why: 'a backend-dispatch consentId nélkül az offline/replay láb nem tudja feloldani a consent_log revisionjét' }
+    ]
+  },
+  {
+    id: 'cookieyes-checklist-must-still-wire-cookieyes',
+    provider: 'cookieyes',
+    mustNotMatch: [
+      { re: /client-lib\/[^\n]{0,80}bemásolva/i, why: 'a flat client-lib/ F2-2 óta TÖRÖLVE — a kanonikus kliens a soborbo-tracking package' },
+      { re: /PUBLIC_TRACKING_CONSENT_PROVIDER=sbo/, why: 'a default (cookieyes) checklist nem kapcsolhat sbo-ra' }
+    ],
+    mustContain: [
+      { s: 'CookieYes aktív', why: 'a mai default provider tényleges bekötési lépése' },
+      { s: 'TrackingNoscript', why: 'cookieyes-ágon a noscript GTM-iframe kell' }
+    ]
+  }
+];
+
+function checkGeneratedChecklists() {
+  const violations = [];
+  const base = {
+    site_id: 'gate-fixture',
+    hostnames: ['gate-fixture.example.com'],
+    country_code: 'HU',
+    currency: 'HUF',
+    require_consent: true,
+    meta: { pixel_id: '123456', access_token: 'T' },
+    gads: { customer_id: null }
+  };
+
+  for (const rule of GENERATED_CHECKLIST_RULES) {
+    const cfg = rule.provider === 'sbo' ? { ...base, consent: { provider: 'sbo' } } : base;
+    let text;
+    try {
+      text = integrationChecklist(cfg);
+    } catch (e) {
+      violations.push({
+        kind: 'GENERATED',
+        rule: rule.id,
+        where: `integrationChecklist(provider=${rule.provider})`,
+        line: '(a generálás dobott)',
+        reason: e instanceof Error ? e.message : String(e)
+      });
+      continue;
+    }
+    for (const m of rule.mustNotMatch) {
+      if (m.re.test(text))
+        violations.push({
+          kind: 'GENERATED',
+          rule: rule.id,
+          where: `integrationChecklist(provider=${rule.provider})`,
+          line: `TILTOTT minta jelen van: ${m.re}`,
+          reason: m.why
+        });
+    }
+    for (const c of rule.mustContain) {
+      if (!text.includes(c.s))
+        violations.push({
+          kind: 'GENERATED',
+          rule: rule.id,
+          where: `integrationChecklist(provider=${rule.provider})`,
+          line: `HIÁNYZÓ kötelező lépés: ${c.s}`,
+          reason: c.why
+        });
+    }
+  }
+  return violations;
+}
+
 function walk(dir, acc = []) {
   for (const entry of readdirSync(dir)) {
     const abs = join(dir, entry);
@@ -135,13 +244,18 @@ export function checkDocTruth() {
       violations.push({ kind: 'ANCHOR', rule: a.id, where: a.file, line: '(hiányzó horgony)', reason: a.reason });
   }
 
+  violations.push(...checkGeneratedChecklists());
+
   return violations;
 }
 
 function main() {
   const violations = checkDocTruth();
   if (violations.length === 0) {
-    stdout.write('✅ DOC_TRUTH_OK — nincs cáfolt utasítás, minden kanonikus állítás a helyén.\n');
+    stdout.write(
+      '✅ DOC_TRUTH_OK — nincs cáfolt utasítás, minden kanonikus állítás a helyén, ' +
+        'és a GENERÁLT checklist mindkét provider-változata helyes.\n'
+    );
     return;
   }
   stdout.write('DOC_TRUTH_FAIL\n\n');
