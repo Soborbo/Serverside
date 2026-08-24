@@ -73,10 +73,16 @@ skippel. Ha egy customer refresh tokenje 2026-07-16 ELŐTTI, a GA4-recon lába v
    újrafuttatása NEM segít** — a régi üzenet („no access token (run OAuth flow)")
    misdiagnózis volt, és a hiba valódi helyétől terelte el az operátort.
 2. **`gads_developer_token` health-check** — WARN, a fenti indoklással.
-3. **„OFFLINE MONEY PATH DOWN" jelölés** — ha a site-nak van `conversion_actions`-je
-   VAGY az `expected_platforms.offline` nevesíti a `gads`-ot, a törött OAuth
-   üzenete ezt explicit kiírja. Ez a terv hard health rule-ja: nem warning, nem
-   silent skip.
+3. **„OFFLINE MONEY PATH DOWN" jelölés ÉS a severity kapuja** — ha a site-nak van
+   `conversion_actions`-je VAGY az `expected_platforms.offline` nevesíti a `gads`-ot,
+   a törött OAuth **FAIL** (a terv hard health rule-ja: nem warning, nem silent skip),
+   és az üzenet ezt explicit kiírja.
+   **A puszta `customer_id` viszont NEM elég a piroshoz** (2026-08-24 review): egy
+   site futhat úgy, hogy a Google Ads konverziói böngésző-oldaliak (AWCT + Enhanced
+   Conversions a GTM-ből) és nincs CRM/offline lifecycle-lába — ott a gateway OAuth-ja
+   a pénzút szempontjából irreleváns, csak a recon GAQL-lábát érinti, tehát **WARN**.
+   Az ilyen site-ot pirosra festeni riasztás-fáradtságot termelne, ami pont azt a néma
+   hibát fedné el, amiért a lánc létezik. Webshop/paywall profilon ez lesz a jellemző.
 4. **`/oauth-init` fail-fast** — hiányzó worker-secret esetén **503** a megnevezett
    secrettel, ahelyett hogy `client_id=undefined`-dal redirectelne a Google
    hibaoldalára (ahol az operátor a saját Google-fiókjában kezdi keresni a hibát).
@@ -115,7 +121,8 @@ Olvasat:
 
 | Amit látsz | Mit jelent | Mit csinálj |
 |---|---|---|
-| `gads_oauth_secrets: FAIL` | worker-secret hiányzik | **2.2** (OAuth újrafuttatása itt NEM segít) |
+| `gads_oauth_secrets: FAIL` | worker-secret hiányzik, ÉS a site offline Google-lábat vár | **2.2** (OAuth újrafuttatása itt NEM segít) |
+| `gads_oauth_secrets: WARN` + „browser-owned" | worker-secret hiányzik, de a site Ads-konverziói BÖNGÉSZŐ-oldaliak (AWCT+EC), offline lába nincs | **2.2** ráér — a pénzút nem függ tőle, csak a recon GAQL-lába |
 | `gads_oauth_secrets: PASS` + `gads_oauth: FAIL` | nincs refresh token EHHEZ a customerhez | **2.3** |
 | `gads_developer_token: WARN` | a Data Manager upload MEGY, a recon GAQL-lába vak | **2.4** (nem sürgős) |
 | `gads_conversion_actions: WARN` | van customer_id, de nincs action-térkép — az offline láb nem tud hova tölteni | Ads-fiókban hozd létre az offline actiont, majd `scripts/patch-site-config.mjs` |
