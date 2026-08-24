@@ -155,8 +155,11 @@ a szerver-ingress per-site tokent kíván (`X-Admin-Token` ↔ KV `crm_token_sha
 
 9 kulcs-pár (site + `www.`) + a `event-gateway.golaxo.workers.dev` debug-host.
 **A `femkeriteslec.hu` NEM bérlő** — nincs KV-configja, nincs route-ja.
-A `trapezlemezes.hu` **hiányzik a `src/site-manifest.json`-ból**, pedig élő
-route-ja és KV-configja van (a compliance-riport is jelzi).
+~~A `trapezlemezes.hu` hiányzik a `src/site-manifest.json`-ból~~ — **KORREKCIÓ
+(2026-08-24 esti ellenőrzés):** a manifest a `ba01d86` (2026-08-16) óta
+TARTALMAZZA a `trapezlemezes.hu` + `www.` kulcsokat; az állítás a 08-17-i
+compliance-riport elavult site-listájából öröklődött. A P2-2.4/P5-ös teendő
+okafogyott.
 
 | site | site_id | meta | gads.customer_id | gads.conversion_actions | require_consent | expected_platforms |
 |---|---|---|---|---|---|---|
@@ -486,3 +489,63 @@ nem javasolunk változtatást** — a mérés szerint az a rendszer működő r�
 5. **Az Ads költség-adatot nem értelmeztük.** Az API `costMicros=28 524 022`-t
    ad 526 klikkre az olcsokontenerhaz PMaxon; ez a fiók pénznemében nem
    plauzibilis, ezért a klikk- és konverziószámot használtuk, a költséget nem.
+
+---
+
+## Addendum 2026-08-24 — beautyflow felület-audit (élő böngészős mérés)
+
+Teljes leltár: `Beautyflow_website/tracking/AUDIT-conversion-surfaces-20260824.md`.
+A §4.4 beautyflow-sor kiegészítése mért tényekkel:
+
+- **A gads-láb megerősítve élőnek e2e-ben is**: konszentelt teszt lead → GA4
+  `generate_lead` (key, event_id) → GA4-import primary akciók érintetlenek; Meta
+  Pixel + CAPI Lead AZONOS event_id-vel, ledger `accepted`/200. A soborbo-tracking
+  szerver-oldali konverzió beautyflow-n bizonyított.
+- 🔴 ÚJ: **Meta „Automatic events" duplázza a Leadet** (`es=automatic`, event_id
+  nélkül, nem dedupolható) — Events Manager-oldali kikapcsolás kell.
+- 🔴 ÚJ: `WhatsAppButton` árva komponens (felület nem létezik → whatsapp_click 0);
+  `callback_click` GTM+Ads vezeték felület nélkül; EN szalon-oldalakon nincs
+  kontakt űrlap.
+- §P5-5.2-höz mért adalék: a beautyflow.pro-n a zóna-injektált GTM pre-consent
+  `ccm/collect` page_view-t küld `gcd=13l3l3l3l1l1` + `npa=0` paraméterekkel
+  (2026-08-24-i trace). Konténer-példány valóban egy (duplamérés nincs), de a
+  consent-default-sorrend bizonyítottan sérül — a döntésnél ez is súlyozandó.
+- A brief „gads OAuth halott 08-09 óta" állítását a §3 már cáfolta (javítva
+  08-11); az Ads-architektúra döntés (GA4-import marad primary, offline upload
+  secondary) az audit-doksi §3-ában rögzítve.
+
+## Addendum 2026-08-24 — olcsokontenerhaz Ads-állapotváltás + döntések
+
+A §4.5/2. pont („a GA4-importált akciók HIDDEN → nincs másodlagos út") **elavult**:
+a P2-agent még aznap átállította az Ads-fiókot (API-mutate, visszaolvasva):
+
+| akció | előtte | utána |
+|---|---|---|
+| 7723013941 `…quote_calculator_submitted` (GA4-import) | HIDDEN / primary=false | **ENABLED / SUBMIT_LEAD_FORM / primary=true** |
+| 7722756926 `…callback_request_submitted` (GA4-import) | HIDDEN / primary=false | **ENABLED / SUBMIT_LEAD_FORM / primary=true** |
+| 6939855020 legacy WEBPAGE | primary=true | **primary=false / include=false** |
+
+Dupla-count nincs (a legacy egyazon mutate-ban lefokozva). Indok: a GA4-tag
+analytics consenttel tüzel, az AWCT-tag `ad_storage`+`ad_user_data`-t kíván —
+a közvetlen láb 30 nap alatt 0-t rögzített, a GA4 8 nap alatt 23 kulcseseményt.
+
+További P2-leletek (trace-doksi: `olcsokontenerhaz/docs/2026-08-24-conversion-signal-trace.md`):
+- 🔴 **Turnstile-fantom:** a konverzió (dataLayer + Ads-tag + gateway-beacon) a
+  beküldés *kísérletére* tüzel, nem a `/api/submit` *sikerére* — Turnstile-bukásnál
+  lead nélküli konverzió keletkezik (2 fantom key event 2026-08-24-én, KV-vel
+  igazoltan lead nélkül).
+- A „dupla GTM" pontosítva: két loader, de EGY konténer-példány (a GTM azonos
+  ID-ra összeolvaszt) → a GA4 page_view nem duplázódik; az Ads page_view igen,
+  két ellentmondó consent-állapottal. A javítás a zóna-injektálás kikapcsolása,
+  nem „a második konténer eltávolítása".
+- A £28,52 / 526 klikk (5p CPC) költség-értelmezés a §6/5. fenntartását feloldja:
+  a PMax filléres Discover-junkot vesz (64% költés, 72% klikk), ilyen forgalmon
+  a 0 konverzió önmagában nem bizonyít mérési hibát.
+
+**Döntések (Laszlo, 2026-08-24):** Tag Gateway injektálás KI, fokozatosan (először
+olcso); GA4-import primary MARAD; lomtalan 3 hiányzó GTM-tag felvétele MEHET;
+beautyflow árva felületek HALASZTVA. A konszolidált javítási terv fázisai a
+jóváhagyott terv-fájlban; a P1.1 (olcso kettős consent-kapu átírása) a tanácsadói
+felülvizsgálat nyomán **teszt-kapu mögé került**: előbb hirdetés-kattintó
+szimuláció (gclid → accept → teszt-lead → AWCT tüzel? → 48h Ads), kód csak akkor,
+ha a teszt bukik.

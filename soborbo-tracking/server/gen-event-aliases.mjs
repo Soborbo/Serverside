@@ -24,14 +24,33 @@ for (const e of EVENTS) {
   if (e.legacy_datalayer) aliases[e.legacy_datalayer] = e.name;
 }
 
+// Per-site cutover: az ISO dátum, amikor a site kliense KANONIKUS neveket kezdett
+// kibocsátani ÉS a legacy nevek le is álltak. null = a cutover még nem teljes
+// (a legacy nevek MA IS tüzelnek a GA4-ben — riportban tovább kell unionálni).
+// A dátumok bizonyítéka a 2026-08-24-i flotta-felmérés (Serverside
+// docs/2026-08-fleet-conformance.md §2.3-2.4): ledger első kanonikus kézbesítés
+// + a GA4-ben az elmúlt 14 napban KIZÁRÓLAG kanonikus nevek tüzelnek.
+// Ezt a mapet ITT tartsd karban (a JSON generált — oda kézzel írni tilos).
+const CUTOVER_DATES = {
+  painless: null, //           GA4-ben ma is él: quote_calculator_conversion + bespoke nevek
+  beautyflow: null, //         GA4-ben ma is él: booking_click/phone_click/calculator_* legacy készlet
+  lomtalan: '2026-07-14', //   első ledger-kézbesítés; GA4-ben csak kanonikus nevek tüzelnek
+  trapezlemezes: null, //      szerver-láb kanonikus (2026-08-11), de a GA4 bespoke neveken mér
+  olcsokontenerhaz: '2026-07-31', // az új Astro-site élesedése; GA4 teljesen kanonikus
+  skinlab: null, //            a 08-17-i regresszió tisztázásáig nem állapítható meg
+  agykontroll: '2026-07-16', // onboard; a repo kezdettől kizárólag kanonikus neveket használ
+  szelloztetes: null //        a site nincs bekötve a gateway-be
+};
+
 const aliasOut = {
   _comment:
-    'GENERATED from events.json by server/gen-event-aliases.mjs — do not hand-edit. ' +
+    'GENERATED from events.json by server/gen-event-aliases.mjs — do not hand-edit ' +
+    '(a cutover_dates forrása is a generátor CUTOVER_DATES konstansa). ' +
     'Legacy GA4 + dataLayer names -> canonical. A reporting tool unions old+new into ONE ' +
-    'canonical metric; set cutover_date PER SITE (ISO date the site switched its client to ' +
-    'canonical) to mark where the legacy names stop.',
+    'canonical metric; cutover_dates[site_id] = ISO date the site switched its client to ' +
+    'canonical (null = cutover incomplete, keep unioning legacy names).',
   generated_from: 'events.json',
-  cutover_date: null,
+  cutover_dates: CUTOVER_DATES,
   aliases,
   canonical: EVENTS.map((e) => e.name)
 };

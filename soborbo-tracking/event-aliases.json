@@ -1,7 +1,16 @@
 {
-  "_comment": "GENERATED from events.json by server/gen-event-aliases.mjs — do not hand-edit. Legacy GA4 + dataLayer names -> canonical. A reporting tool unions old+new into ONE canonical metric; set cutover_date PER SITE (ISO date the site switched its client to canonical) to mark where the legacy names stop.",
+  "_comment": "GENERATED from events.json by server/gen-event-aliases.mjs — do not hand-edit (a cutover_dates forrása is a generátor CUTOVER_DATES konstansa). Legacy GA4 + dataLayer names -> canonical. A reporting tool unions old+new into ONE canonical metric; cutover_dates[site_id] = ISO date the site switched its client to canonical (null = cutover incomplete, keep unioning legacy names).",
   "generated_from": "events.json",
-  "cutover_date": null,
+  "cutover_dates": {
+    "painless": null,
+    "beautyflow": null,
+    "lomtalan": "2026-07-14",
+    "trapezlemezes": null,
+    "olcsokontenerhaz": "2026-07-31",
+    "skinlab": null,
+    "agykontroll": "2026-07-16",
+    "szelloztetes": null
+  },
   "aliases": {
     "quote_calculator_conversion": "quote_calculator_submitted",
     "calculator_complete": "quote_calculator_submitted",
