@@ -115,6 +115,10 @@ export interface GatewayConversionInput {
   /** Phase D telemetry — see `buildConsentSources`. Diagnostic only; it does not
    * influence any gate. Pass `buildConsentSources(request.headers.get('cookie'))`. */
   consentSources?: ConsentSourcesPayload;
+  /** CMP Fázis 2 (1.3): a döntés-lánc azonosítója (readSboConsentCookieHeader
+   * `.consentId`). Az offline/replay ág ezen keresztül oldja fel a consent_log
+   * AKTUÁLIS állapotát. CookieYes-site-on hagyd ki — a receipten NULL, nem hiba. */
+  consentId?: string;
   eventSourceUrl?: string;
   /** The REAL end-user's IP/UA — without them the gateway would attribute the
    * conversion to our own Worker's egress IP/UA (wrong geo, worse Meta EMQ). */
@@ -180,6 +184,21 @@ export function isGatewayConfigured(env: GatewayEnv): boolean {
 export function readConsentFromCookie(cookieHeader: string | null): ConsentState | undefined {
   if (!cookieHeader) return undefined;
 
+  // CMP Fázis 2: ha a kérésen ott a SAJÁT `sbo_consent` süti (provider='sbo'
+  // site), az a döntés forrása — a párhuzamos mérési ablakban a CookieYes sütije
+  // is jelen lehet, de a site-ot már a saját CMP hajtja. CookieYes-site-okon a
+  // süti nem létezik → az ág bitre a mai.
+  const sbo = readSboConsentCookieHeader(cookieHeader);
+  if (sbo) {
+    const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
+    return {
+      ad_user_data: sig(sbo.marketing),
+      ad_personalization: sig(sbo.marketing),
+      ad_storage: sig(sbo.marketing),
+      analytics_storage: sig(sbo.analytics),
+    };
+  }
+
   let raw: string | undefined;
   for (const part of cookieHeader.split(';')) {
     const idx = part.indexOf('=');
@@ -209,11 +228,58 @@ export function readConsentFromCookie(cookieHeader: string | null): ConsentState
 }
 
 /**
+ * CMP Fázis 2 — a saját `sbo_consent` süti szerveroldali olvasata a form-POST
+ * Cookie headeréből. A böngésző-lib `consent-sbo-state.ts` parserének párja
+ * (formátum: `v1.<a>.<m>.<revision>.<decision>.<consent_id>.<decidedAtSec>`);
+ * azért külön implementáció, mert ez a modul önállóan másolódik a site-okra.
+ * Bármely mező hibája → null — consentet nem találunk ki.
+ */
+export interface SboCookieConsent {
+  consentId: string;
+  analytics: boolean;
+  marketing: boolean;
+  revision: number;
+  decidedAtSec: number;
+}
+
+export function readSboConsentCookieHeader(
+  cookieHeader: string | null | undefined
+): SboCookieConsent | null {
+  if (!cookieHeader) return null;
+  let raw: string | undefined;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() === 'sbo_consent') {
+      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      break;
+    }
+  }
+  if (!raw) return null;
+  const p = raw.split('.');
+  if (p.length !== 7 || p[0] !== 'v1') return null;
+  if ((p[1] !== '0' && p[1] !== '1') || (p[2] !== '0' && p[2] !== '1')) return null;
+  const revision = parseInt(p[3], 10);
+  if (!Number.isInteger(revision) || revision < 1) return null;
+  if (!['accept_all', 'reject_all', 'custom', 'withdrawn'].includes(p[4])) return null;
+  if (!/^[A-Za-z0-9_:-]{8,64}$/.test(p[5])) return null;
+  const decidedAtSec = parseInt(p[6], 10);
+  if (!Number.isInteger(decidedAtSec) || decidedAtSec <= 0) return null;
+  return {
+    consentId: p[5],
+    analytics: p[1] === '1',
+    marketing: p[2] === '1',
+    revision,
+    decidedAtSec,
+  };
+}
+
+/**
  * Phase D (2026-08) consent-source telemetry — the version string every payload
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.1.0';
+export const BACKEND_LIB_VERSION = '6.2.0';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
@@ -223,8 +289,16 @@ export interface ConsentSourceSnapshot {
 export interface ConsentSourcesPayload {
   cookie: ConsentSourceSnapshot;
   api: ConsentSourceSnapshot;
-  source_used: 'cookieyes_cookie' | 'cookieyes_api' | 'override' | 'server_cookie' | 'none';
+  source_used:
+    | 'cookieyes_cookie'
+    | 'cookieyes_api'
+    | 'override'
+    | 'server_cookie'
+    | 'sbo_cookie'
+    | 'none';
   client_lib_version: string;
+  /** A döntés kora másodpercben — CSAK `sbo_consent` alatt (a süti timestampet hordoz). */
+  consent_age_s?: number;
   raw_cookie?: string;
 }
 
@@ -245,6 +319,13 @@ export interface ConsentSourcesPayload {
  */
 export function buildConsentSources(cookieHeader: string | null | undefined): ConsentSourcesPayload {
   const unavailable: ConsentSourceSnapshot = { analytics: null, marketing: null };
+  // CMP Fázis 2: `sbo_consent` alatt a döntést a saját süti hajtja (source_used
+  // + consent_age_s), de a CookieYes-snapshot VÁLTOZATLANUL kitöltődik, ha a
+  // sütije jelen van — a párhuzamos mérési ablak (2.4) receipt-oldali evidenciája.
+  const sbo = readSboConsentCookieHeader(cookieHeader);
+  const sboAge = sbo
+    ? Math.max(0, Math.floor(Date.now() / 1000) - sbo.decidedAtSec)
+    : undefined;
   let raw: string | undefined;
   if (cookieHeader) {
     for (const part of cookieHeader.split(';')) {
@@ -260,8 +341,9 @@ export function buildConsentSources(cookieHeader: string | null | undefined): Co
       cookie: unavailable,
       // There is no browser here, so the CookieYes JS API can never be read.
       api: unavailable,
-      source_used: 'none',
+      source_used: sbo ? 'sbo_cookie' : 'none',
       client_lib_version: BACKEND_LIB_VERSION,
+      consent_age_s: sboAge,
     };
   }
 
@@ -278,8 +360,9 @@ export function buildConsentSources(cookieHeader: string | null | undefined): Co
   return {
     cookie,
     api: unavailable,
-    source_used: present ? 'cookieyes_cookie' : 'none',
+    source_used: sbo ? 'sbo_cookie' : present ? 'cookieyes_cookie' : 'none',
     client_lib_version: BACKEND_LIB_VERSION,
+    consent_age_s: sboAge,
     // Raw string: the gateway keeps it ONLY when the sources disagree, in the
     // short-lived consent_debug table (14-day purge). Never in consent_receipts.
     raw_cookie: present ? raw : undefined,
@@ -428,6 +511,8 @@ export function buildGatewayPayload(input: GatewayConversionInput): Record<strin
     // Phase D telemetry (optional). Absent → the gateway records NULL sources
     // for this event, which is itself a measurement, not an error.
     consent_sources: input.consentSources,
+    // CMP Fázis 2: a consent-lánc azonosítója → consent_receipts.consent_id.
+    consent_id: input.consentId,
     event_source_url: input.eventSourceUrl,
     client_ip_address: input.clientIpAddress,
     client_user_agent: input.clientUserAgent,
