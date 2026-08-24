@@ -314,10 +314,29 @@ A hívónak tudnia kell javítani, ezért minden elutasítás megnevezi az okot
 |---|---|
 | ismeretlen / nem-offline `event_name` | a kanonikus `events.json` az egyetlen forrás; egy elgépelt név csendben egy soha nem egyeztetett sort hozna létre |
 | jövőbeli `date` | majdnem biztosan időzóna-hiba a hívónál; elfogadva egy örökre üres napot hozna létre |
+| nem létező naptári nap (`2025-02-30`, `2026-13-01`) | a regex csak az ALAKOT nézi; ezek átmennének, 200-at kapnának, és egy olyan nap alá íródnának, amit a recon soha nem kérdez le — a monitor arra a payloadra csendben megszűnne |
 | duplikált `event_name` | különben az utolsó csendben felülírná az elsőt |
 | negatív / tört / abszurd `count` | cardinality- és hibavédelem |
 
 `count: 0` **érvényes** — a „ma nulla lead" valós, mérendő információ.
+
+**Jelzősor (heartbeat).** Minden sikeres beküldés kiír egy `event_name =
+'__report__'`, `count = 0` sort. Enélkül egy nulla-lifecycle-es nap (amikor a CRM
+dokumentált `GROUP BY` lekérdezése ÜRES tömböt ad) nem hagyna nyomot, és a
+`findSilentBusinessSources` „a CRM-cron leállt"-ot jelentene — holott a cron lefutott
+és sikeresen hívott. A jelzősor a drift-számításból **explicit ki van hagyva**: életjel,
+nem üzleti darabszám.
+
+**A nap-hozzárendelés oszlopa `occurred_at`, nem `created_at`.** A CRM aggregátuma az
+esemény IDEJÉRE csoportosít; a gateway oldalán ugyanannak a napnak kell kijönnie. A
+felvétel idejét (`created_at`) használva egy UTC-éjfélen átnyúló outbox-retry az
+eredeti napot hiányosnak, a következőt figyelmen kívül hagyott többletnek mutatná — és
+a 3-as minimum mellett már EGY késve érkezett kérés hamis CRITICAL-t adna. Az outbox
+lease/retry miatt ez nem elméleti eset.
+
+> A **P1.1** offline láb SZÁNDÉKOSAN marad `created_at`-en: ott a `lead_status`
+> beérkezést a SAJÁT kézbesítéseivel vetjük össze, tehát mindkét oldal gateway-oldali
+> idő — ott az `occurred_at` vinné el a két oldalt egymástól.
 
 A válasz **soha nem 204**: nincs LEDGER → 503, D1-írás hibája → 500. A
 „nyugtázom, de eldobom" pont az a néma adatvesztés, amit a P1.2 mérni hivatott
@@ -358,7 +377,10 @@ npx wrangler d1 execute event-gateway-ledger --remote \
 ```
 
 Amíg a tábla nincs kint, a `/business-counts` 500-at ad (a CRM retry-ol, nem veszít
-adatot), a recon business-lába pedig `null`-t kap és kimarad — **nem** „nincs eltérés".
+adatot), a recon business-lába pedig `null`-t kap. Ez **nem** „nincs eltérés": a napi
+riport `business_check_failed: true`-t ír, a levél tárgya `+ business-source NOT
+RUNNING`, és a levélben ott a teendő. Egy bukott monitor SOHA nem látszhat tisztának —
+`?? []`-vel pontosan az történne.
 
 ### 3.7 Amit a v1 SZÁNDÉKOSAN nem csinál
 

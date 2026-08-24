@@ -3,6 +3,8 @@ import {
   validateBusinessCounts,
   computeBusinessSourceDrift,
   findSilentBusinessSources,
+  storeBusinessCounts,
+  BUSINESS_REPORT_HEARTBEAT,
   DEFAULT_BUSINESS_SOURCE_THRESHOLDS,
   type BusinessCountRow
 } from '../src/lib/business-counts';
@@ -156,6 +158,87 @@ describe('P1.2 — a gateway-ledger vakfoltja: a CRM > gateway eltérés', () =>
   });
 });
 
+/**
+ * 2026-08-24 Codex-review — négy valós találat javítása.
+ * Mindegyik ugyanabba a hibaosztályba tartozik: a monitor tisztának LÁTSZIK, miközben
+ * vagy hamisan riaszt, vagy el sem indult.
+ */
+describe('Codex #4 — nem létező naptári nap elutasítása', () => {
+  it('a regexet átúszó, de NEM LÉTEZŐ dátum → 400', () => {
+    // Ezek mind illeszkednek a YYYY-MM-DD alakra és a múltban vannak, tehát a korábbi
+    // ellenőrzéseken átmentek volna — és egy olyan nap alá íródtak volna, amit a napi
+    // recon soha nem kérdez le (a monitor arra a payloadra csendben megszűnik).
+    for (const date of ['2025-02-30', '2026-00-15', '2026-13-01', '2025-04-31']) {
+      const r = validateBusinessCounts(
+        { date, counts: [{ event_name: 'lead_qualified', count: 3 }] },
+        OFFLINE_NAMES
+      );
+      expect(r.ok, `date=${date}`).toBe(false);
+      if (!r.ok) expect(r.error).toContain('calendar');
+    }
+  });
+
+  it('valódi szökőnap ÁTMEGY (nem túl szigorú)', () => {
+    const r = validateBusinessCounts(
+      { date: '2024-02-29', counts: [{ event_name: 'lead_qualified', count: 3 }] },
+      OFFLINE_NAMES
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('Codex #3 — az eseménytelen nap NEM „elhallgatott CRM"', () => {
+  it('minden sikeres beküldés ír JELZŐSORT, üres counts esetén is', async () => {
+    const written: unknown[][] = [];
+    const env: any = {
+      LEDGER: {
+        prepare: () => ({ bind: (...args: unknown[]) => { written.push(args); return {}; } }),
+        batch: async () => []
+      }
+    };
+    // A CRM dokumentált GROUP BY lekérdezése egy nulla-lifecycle-es napon ÜRES tömböt ad.
+    const ok = await storeBusinessCounts(env, 'painless', { date: '2026-08-23', counts: [] });
+    expect(ok).toBe(true);
+    expect(written).toHaveLength(1);
+    expect(written[0][2]).toBe(BUSINESS_REPORT_HEARTBEAT);
+    expect(written[0][3]).toBe(0);
+  });
+
+  it('a jelzősor NEM-üres beküldésnél is megy (egységes „jelentkezett-e ma" kérdés)', async () => {
+    const written: unknown[][] = [];
+    const env: any = {
+      LEDGER: {
+        prepare: () => ({ bind: (...args: unknown[]) => { written.push(args); return {}; } }),
+        batch: async () => []
+      }
+    };
+    await storeBusinessCounts(env, 'painless', {
+      date: '2026-08-23',
+      counts: [{ event_name: 'lead_qualified', count: 4 }]
+    });
+    expect(written.map((w) => w[2])).toEqual([BUSINESS_REPORT_HEARTBEAT, 'lead_qualified']);
+  });
+
+  it('a jelzősor miatt az eseménytelen nap NEM ad business_source_missing-et', () => {
+    const prior: BusinessCountRow[] = [
+      { site_id: 'painless', date: '2026-08-20', event_name: 'lead_qualified', count: 5 }
+    ];
+    // Ma csak a jelzősor van (nulla lifecycle-esemény) — a cron LEFUTOTT.
+    const today: BusinessCountRow[] = [
+      { site_id: 'painless', date: YESTERDAY, event_name: BUSINESS_REPORT_HEARTBEAT, count: 0 }
+    ];
+    expect(findSilentBusinessSources(prior, today, YESTERDAY)).toEqual([]);
+  });
+
+  it('a jelzősor SOHA nem termel driftet (életjel, nem darabszám)', () => {
+    const findings = computeBusinessSourceDrift(
+      [{ site_id: 'painless', date: YESTERDAY, event_name: BUSINESS_REPORT_HEARTBEAT, count: 0 }],
+      []
+    );
+    expect(findings).toEqual([]);
+  });
+});
+
 describe('P1.2 — elhallgatott CRM-cron (business_source_missing)', () => {
   const prior: BusinessCountRow[] = [
     { site_id: 'painless', date: '2026-08-20', event_name: 'lead_qualified', count: 5 },
@@ -281,6 +364,14 @@ describe('P1.2 — /api/event/business-counts route', () => {
     expect(body.detail).toContain('nope');
   });
 
+  it('üres counts is 200, ÉS ír (a jelzősor miatt) — az eseménytelen nap valós információ', async () => {
+    const res = await handleBusinessCounts(
+      req('bc9.example.com', 'global-admin-token', { date: YESTERDAY, counts: [] }),
+      makeEnv()
+    );
+    expect(res.status).toBe(200);
+  });
+
   it('nincs LEDGER → 503, NEM 200 (a „nyugtázom, de eldobom" a néma adatvesztés)', async () => {
     const res = await handleBusinessCounts(
       req('bc6.example.com', 'global-admin-token', goodBody),
@@ -309,5 +400,74 @@ describe('P1.2 — /api/event/business-counts route', () => {
       const res = await handleBusinessCounts(req('bc8.example.com', 'global-admin-token', goodBody), env);
       expect(res.status).not.toBe(204);
     }
+  });
+});
+
+describe('Codex #1 — a napot az occurred_at dönti el, nem a created_at', () => {
+  it('a lead_status lekérdezés az occurred_at-re csoportosít és szűr', async () => {
+    // MIÉRT EZ A TESZT: a nap-hozzárendelés oszlopa MAGA a kontraktus. A CRM
+    // aggregátuma az esemény idejére csoportosít; ha a gateway a felvétel idejére
+    // (created_at) tenné, akkor egy UTC-éjfélen átnyúló outbox-retry az eredeti napot
+    // hiányosnak, a következőt figyelmen kívül hagyott többletnek mutatná — és a 3-as
+    // minimum mellett már EGY késve érkezett kérés hamis CRITICAL-t adna.
+    const sql: string[] = [];
+    const env: any = {
+      LEDGER: {
+        prepare: (q: string) => {
+          sql.push(q);
+          return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+        }
+      }
+    };
+    const r = await (await import('../src/lib/business-counts')).fetchBusinessSourceFindings(
+      env,
+      '2026-08-23',
+      '2026-08-16'
+    );
+    expect(r).toEqual([]);
+
+    const leadStatusQuery = sql.find((q) => q.includes('FROM lead_status'))!;
+    expect(leadStatusQuery).toBeDefined();
+    expect(leadStatusQuery).toContain('substr(occurred_at, 1, 10)');
+    // A created_at NEM szerepelhet a nap-hozzárendelésben ezen a lábon.
+    expect(leadStatusQuery).not.toContain('created_at');
+  });
+});
+
+describe('Codex #2 — a lekérdezés bukása NEM „nincs eltérés"', () => {
+  it('fetchBusinessSourceFindings null-t ad D1-hibára (nem üres tömböt)', async () => {
+    const env: any = {
+      LEDGER: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => {
+              throw new Error('no such table: business_counts');
+            }
+          }),
+          all: async () => {
+            throw new Error('no such table: business_counts');
+          }
+        })
+      }
+    };
+    const r = await (await import('../src/lib/business-counts')).fetchBusinessSourceFindings(
+      env,
+      '2026-08-23',
+      '2026-08-16'
+    );
+    // Ez a KÜLÖNBSÉG a lényeg: `null` ≠ `[]`. A hívónak tudnia kell, hogy a láb el sem
+    // indult — különben a napi riport `business_source_findings: 0`-t írna, kiesne az
+    // email-feltételből, és a monitor tisztának látszana. (A 0007 migráció hiánya
+    // élesben PONTOSAN ezt a hibát produkálja.)
+    expect(r).toBeNull();
+  });
+
+  it('nincs LEDGER → szintén null, nem üres tömb', async () => {
+    const r = await (await import('../src/lib/business-counts')).fetchBusinessSourceFindings(
+      {} as any,
+      '2026-08-23',
+      '2026-08-16'
+    );
+    expect(r).toBeNull();
   });
 });

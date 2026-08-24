@@ -216,7 +216,24 @@ export async function handleReconciliation(env: Env): Promise<void> {
   // nincs LEDGER — ezt NEM keverjük össze a „nincs eltéréssel".
   const reconDay = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const priorSince = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const businessFindings = (await fetchBusinessSourceFindings(env, reconDay, priorSince)) ?? [];
+  const businessResult = await fetchBusinessSourceFindings(env, reconDay, priorSince);
+  // `null` = a lekérdezés ELBUKOTT (vagy nincs LEDGER / nincs kint a 0007 migráció) —
+  // ez NEM „nincs eltérés". `?? []`-vel a napi riport `business_source_findings: 0`-t
+  // írna, az email-feltételből kiesne, és a monitor tisztának látszana, miközben EL SEM
+  // INDULT. Pontosan az a néma-zöld osztály, ami ellen ez a láb megépült — ugyanaz a
+  // kezelés jár neki, mint a cross-check `crossCheckFailed` ágának. (Codex-review, 2026-08-24.)
+  const businessCheckFailed = businessResult === null;
+  const businessFindings = businessResult ?? [];
+  if (businessCheckFailed) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.RECON_QUERY_FAILED,
+      message:
+        'Business-source reconciliation did NOT run (query failed / no LEDGER / migration 0007 missing) — ' +
+        'zero findings here does NOT mean zero drift',
+      date: reconDay
+    });
+  }
 
   for (const f of businessFindings) {
     logStructured({
@@ -248,6 +265,9 @@ export async function handleReconciliation(env: Env): Promise<void> {
     warning_count: summary.warning_count + crossWarning + businessWarning,
     critical_count: summary.critical_count + crossCritical + businessCritical,
     business_source_findings: businessFindings.length,
+    // A puszta finding-szám félrevezet, ha a láb le sem futott — a kontextus MINDIG
+    // ott van a napi log-sorban (ugyanaz az elv, mint a cross_check_not_running-nál).
+    business_check_failed: businessCheckFailed,
     cross_platform_findings: crossFindings.length,
     // A puszta finding-szám félrevezet, ha a check nem is futott — a kontextus
     // mostantól MINDIG ott van a napi log-sorban.
@@ -269,6 +289,7 @@ export async function handleReconciliation(env: Env): Promise<void> {
     summary.findings.length + crossFindings.length + businessFindings.length > 0 ||
     crossCheckFailed ||
     crossCheckNotRunning ||
+    businessCheckFailed ||
     blockedLegs.length > 0
   ) {
     const criticalCount = summary.critical_count + crossCritical + businessCritical;
@@ -292,20 +313,29 @@ export async function handleReconciliation(env: Env): Promise<void> {
             crossOutcome.skippedLegs.map((l) => `${l.site_id}/${l.platform} (${l.reason})`).join(', ')
           )}. Ezek a legek MA nem adtak jelet — a hiányuk nem „tiszta".</p>`
         : '';
+    const businessFailNote = businessCheckFailed
+      ? `<p><strong>⚠️ A CRM business-source check MA NEM FUTOTT LE (${escapeHtml(reconDay)}).</strong>
+           A lekérdezés elbukott, vagy nincs D1 LEDGER, vagy a <code>0007</code> migráció nincs kint
+           az éles adatbázison. Ez NEM azt jelenti, hogy nincs eltérés — azt, hogy nem néztük meg.
+           Teendő: <code>npx wrangler d1 migrations apply event-gateway-ledger --remote</code>,
+           majd ellenőrzés, hogy a <code>business_counts</code> tábla létezik.</p>`
+      : '';
     const subjectSuffix = [
       crossCheckFailed ? ' + cross-check FAILED' : '',
-      crossCheckNotRunning ? ' + cross-check NOT RUNNING' : ''
+      crossCheckNotRunning ? ' + cross-check NOT RUNNING' : '',
+      businessCheckFailed ? ' + business-source NOT RUNNING' : ''
     ].join('');
     await sendAdminEmail(
       env,
       `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning${subjectSuffix}`,
       failNote +
         notRunningNote +
+        businessFailNote +
         skipNote +
         buildDriftEmail(summary.findings, crossFindings, since) +
         buildOfflineSection(offlineReports) +
         buildBusinessSourceSection(businessFindings, reconDay),
-      criticalCount > 0 || crossCheckFailed ? 'critical' : 'warning'
+      criticalCount > 0 || crossCheckFailed || businessCheckFailed ? 'critical' : 'warning'
     );
   }
 }

@@ -27,6 +27,24 @@ const MAX_COUNT = 1_000_000;
 // számjegyű; a bőséges korlát a payload-robbanás ellen véd.
 const MAX_ENTRIES = 64;
 
+/**
+ * Szerver-oldali JELZŐSOR: „ezen a napon EZ a site jelentkezett".
+ *
+ * MIÉRT KELL (2026-08-24 Codex-review, P2): egy nulla-lifecycle-es napon a CRM
+ * dokumentált `GROUP BY` lekérdezése ÜRES tömböt ad. Ha ilyenkor semmit nem írunk,
+ * a site-nak nincs sora arra a napra — és a `findSilentBusinessSources` „a CRM-cron
+ * leállt"-ot jelentene, holott a cron LEFUTOTT és sikeresen hívott. Vagyis a
+ * hallgatás-detektor pont a normális, eseménytelen napokon adna hamis riasztást.
+ *
+ * A jelzősor MINDEN sikeres beküldésnél kiíródik (nem csak üresnél), hogy a
+ * „jelentkezett-e ma" kérdés EGYSÉGES legyen. `count` mindig 0, és a drift-számítás
+ * EXPLICIT kihagyja — nem üzleti darabszám, hanem életjel.
+ *
+ * Az `event_name` szándékosan olyan alakú, amit a validáció SOHA nem enged be a
+ * kliens felől (a kanonikus events.json-ban nincs ilyen név), tehát nem ütközhet.
+ */
+export const BUSINESS_REPORT_HEARTBEAT = '__report__';
+
 export interface BusinessCountEntry {
   event_name: string;
   count: number;
@@ -53,6 +71,18 @@ export function validateBusinessCounts(
 
   if (typeof p.date !== 'string' || !DATE_RE.test(p.date)) {
     return { ok: false, error: 'date must be YYYY-MM-DD (UTC day)' };
+  }
+  // A regex CSAK az alakot nézi: a `2025-02-30` és a `2026-00-00` átmenne rajta, 200-at
+  // kapna, és egy olyan dátum alá íródna, amit a napi recon SOHA nem kérdez le — vagyis
+  // a monitor arra a payloadra csendben megszűnne. Round-trip ellenőrzés kell.
+  const [yy, mm, dd] = p.date.split('-').map(Number);
+  const parsed = new Date(Date.UTC(yy, mm - 1, dd));
+  if (
+    parsed.getUTCFullYear() !== yy ||
+    parsed.getUTCMonth() !== mm - 1 ||
+    parsed.getUTCDate() !== dd
+  ) {
+    return { ok: false, error: `date is not a real calendar day: ${p.date}` };
   }
   // Jövőbeli nap → majdnem biztosan időzóna-hiba a hívónál. Csendben elfogadva egy
   // örökre üres napot hozna létre, amihez a recon soha nem talál párt.
@@ -106,7 +136,6 @@ export async function storeBusinessCounts(
   payload: BusinessCountsPayload
 ): Promise<boolean> {
   if (!env.LEDGER) return false;
-  if (payload.counts.length === 0) return true;
   const receivedAt = new Date().toISOString();
   try {
     const stmt = env.LEDGER.prepare(
@@ -115,9 +144,16 @@ export async function storeBusinessCounts(
        ON CONFLICT(site_id, date, event_name)
        DO UPDATE SET count = excluded.count, received_at = excluded.received_at`
     );
-    await env.LEDGER.batch(
-      payload.counts.map((c) => stmt.bind(siteId, payload.date, c.event_name, c.count, receivedAt))
-    );
+    // A jelzősor MINDIG megy — ez teszi megkülönböztethetővé a „nulla esemény volt"
+    // napot a „meg sem szólalt a CRM" naptól. Enélkül egy eseménytelen nap hamis
+    // business_source_missing riasztást adna.
+    const rows = [
+      stmt.bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT, 0, receivedAt),
+      ...payload.counts.map((c) =>
+        stmt.bind(siteId, payload.date, c.event_name, c.count, receivedAt)
+      )
+    ];
+    await env.LEDGER.batch(rows);
     return true;
   } catch (err) {
     logStructured({
@@ -197,6 +233,8 @@ export function computeBusinessSourceDrift(
 
   const findings: BusinessSourceFinding[] = [];
   for (const c of crmRows) {
+    // A jelzősor életjel, nem üzleti darabszám — sosem termel driftet.
+    if (c.event_name === BUSINESS_REPORT_HEARTBEAT) continue;
     if (c.count < t.minSample) continue;
     const got = ledger.get(rowKey(c.site_id, c.date, c.event_name)) ?? 0;
     if (got >= c.count) continue;
@@ -265,10 +303,21 @@ export async function fetchBusinessSourceFindings(
       )
         .bind(date)
         .all<BusinessCountRow>(),
+      // A napot az `occurred_at` (a CRM-ben MIKOR TÖRTÉNT) dönti el, NEM a `created_at`
+      // (mikor vette fel a gateway). A CRM aggregátuma is az esemény idejére csoportosít,
+      // tehát a két oldalnak UGYANAZT a napot kell jelentenie. A `created_at` használata
+      // egy UTC-éjfélen átnyúló outbox-retrynél az eredeti napot hiányosnak, a következőt
+      // pedig figyelmen kívül hagyott többletnek mutatná — és a 3-as minimum mellett már
+      // EGY késve érkezett kérés is hamis CRITICAL-t adna. Az outbox lease/retry miatt ez
+      // nem elméleti eset. (Codex-review, 2026-08-24.)
+      //
+      // A P1.1 offline láb SZÁNDÉKOSAN marad `created_at`-en: ott a lead_status beérkezést
+      // a SAJÁT kézbesítéseivel vetjük össze, tehát mindkét oldal gateway-oldali idő —
+      // ott az `occurred_at` vinné el a két oldalt egymástól.
       env.LEDGER.prepare(
-        `SELECT site_id, substr(created_at, 1, 10) AS date, status AS event_name, COUNT(*) AS count
+        `SELECT site_id, substr(occurred_at, 1, 10) AS date, status AS event_name, COUNT(*) AS count
          FROM lead_status
-         WHERE substr(created_at, 1, 10) = ?1
+         WHERE substr(occurred_at, 1, 10) = ?1
            AND lead_id NOT LIKE 'smoke-%' AND lead_id NOT LIKE 'dm-validate%'
          GROUP BY site_id, status`
       )
