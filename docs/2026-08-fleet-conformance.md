@@ -549,3 +549,10 @@ jóváhagyott terv-fájlban; a P1.1 (olcso kettős consent-kapu átírása) a ta
 felülvizsgálat nyomán **teszt-kapu mögé került**: előbb hirdetés-kattintó
 szimuláció (gclid → accept → teszt-lead → AWCT tüzel? → 48h Ads), kód csak akkor,
 ha a teszt bukik.
+
+**Korrekció (2026-08-24, később):** a Meta Lead-duplázás forrása NEM az „Automatic
+events" toggle (az ki van kapcsolva), hanem **5 aktív Event Setup Tool szabály** a
+915395591548632 pixelen (2× Lead: „ingyenes konzultáció", „kérem az ingyenes
+konzultációt"; 3× Schedule: „időpontfoglalás", „időpontok budára/pestre") — a
+pixel-config `estruleengine` bejegyzéseiből igazolva. Fix: Events Manager → Event
+setup → Manage events → szabályok törlése. Részletek az audit-doksi Headline 2-ben.
