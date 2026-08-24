@@ -220,11 +220,13 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
 <!-- TRUTH-ANCHOR: google-offline-path-is-data-manager -->
 `GET /api/event/oauth-init` with the admin token (`X-Admin-Token`) → populates the
 OAUTH_TOKENS KV. The OAuth scope MUST include **`datamanager`** — the **Data Manager
-API is THE Google offline path** (`src/lib/datamanager.ts`); the legacy
-`uploadClickConversions` leg (`src/lib/gads.ts`) is **dormant**, kept only as dead
-code for reference, and closed to new adopters since 2026-06-15. Do not wire
-anything new to it; its `conversionDateTime` format rule (CLAUDE.md §6) does not
-apply to the Data Manager path, which wants RFC3339. Without OAuth, Google Ads
+API is THE Google offline path** (`src/lib/datamanager.ts`). The legacy
+`uploadClickConversions` transport is **gone** — deleted from `src/lib/gads.ts` on
+2026-08-16, once the Data Manager path was validated on live traffic; Google had
+blocked new adopters of it since 2026-06-15, so it could never have succeeded on
+these accounts anyway. `src/lib/gads.ts` now holds only the shared payload/result
+TYPES. Its old `conversionDateTime` format rule (CLAUDE.md §6) does **not** apply to
+the Data Manager path, which wants RFC3339 (`toRfc3339Seconds`). Without OAuth, Google Ads
 uploads fail. Prompt the user to complete the one-time consent (Step 0 #11).
 Tip: run the gateway with `DATAMANAGER_VALIDATE_ONLY=1` first to dry-run the ingest.
 

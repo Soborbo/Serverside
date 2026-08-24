@@ -450,9 +450,64 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
       actions && Object.keys(actions).length > 0 ? 'PASS' : 'WARN',
       actions ? `${Object.keys(actions).length} action(s) mapped` : 'no conversion_actions map'
     );
+
+    // vNext P2 — WORKER-SZINTŰ OAuth-secretek, KÜLÖN a per-customer tokentől.
+    //
+    // Miért külön check: ha a client id/secret hiányzik a workerről, a
+    // `getAccessToken` a refresh-hívásnál bukik, és a régi `gads_oauth` sor
+    // „no access token (run OAuth flow)"-t írt — ami MISDIAGNOSIS. Az OAuth-flow
+    // újrafuttatása ilyenkor NEM segít (az /oauth-init maga is client_id nélkül
+    // építené a Google-URL-t), az operátor pedig órákat tölthet a rossz nyomon.
+    // Pontosan ez az osztály vitte a beautyflow offline Google Ads lábát hetekig
+    // néma TRK-800-001-be (2026-08-11), miután a dashboardon kezelt client id egy
+    // deploynál elveszett — azóta él a wrangler.toml [vars]-ában.
+    const missingOAuthSecrets: string[] = [];
+    if (!env.GADS_OAUTH_CLIENT_ID) missingOAuthSecrets.push('GADS_OAUTH_CLIENT_ID');
+    if (!env.GADS_OAUTH_CLIENT_SECRET) missingOAuthSecrets.push('GADS_OAUTH_CLIENT_SECRET');
+
+    // A hard rule: ha ez a site OFFLINE Google-lábat VÁR (van conversion action VAGY
+    // az expected_platforms.offline nevesíti a gads-ot), akkor a törött OAuth nem
+    // „figyelmeztetés" — a pénzút áll. RED, nem WARN, nem silent skip.
+    const offlineExpected =
+      (actions && Object.keys(actions).length > 0) ||
+      (siteConfig.expected_platforms?.offline ?? []).includes('gads');
+    const moneyPathNote = offlineExpected
+      ? ' — OFFLINE MONEY PATH DOWN: ez a site vár Google Ads offline feltöltést'
+      : '';
+
+    add(
+      'gads_oauth_secrets',
+      missingOAuthSecrets.length === 0 ? 'PASS' : 'FAIL',
+      missingOAuthSecrets.length === 0
+        ? 'GADS_OAUTH_CLIENT_ID + GADS_OAUTH_CLIENT_SECRET present'
+        : `MISSING worker secret(s): ${missingOAuthSecrets.join(', ')}${moneyPathNote}. ` +
+          'Re-running the OAuth flow does NOT fix this — set them on the worker first ' +
+          '(client id: wrangler.toml [vars]; secret: `wrangler secret put GADS_OAUTH_CLIENT_SECRET`).'
+    );
+
+    // A developer token CSAK a reconciliation GAQL-lábát kapuzza (lib/cross-check.ts):
+    // a Data Manager offline UPLOAD szándékosan nem küld `developer-token` headert.
+    // Ezért a hiánya WARN (a mérés vakul), nem FAIL (a pénzút megy).
+    add(
+      'gads_developer_token',
+      env.GADS_DEVELOPER_TOKEN ? 'PASS' : 'WARN',
+      env.GADS_DEVELOPER_TOKEN
+        ? 'present (reconciliation GAQL leg enabled)'
+        : 'MISSING — the Data Manager UPLOAD is unaffected (it sends no developer-token header), ' +
+          'but the daily reconciliation GAQL leg is blind without it'
+    );
+
     try {
       const token = await getAccessToken(siteConfig.gads.customer_id, env);
-      add('gads_oauth', token ? 'PASS' : 'FAIL', token ? 'access token obtained' : 'no access token (run OAuth flow)');
+      add(
+        'gads_oauth',
+        token ? 'PASS' : 'FAIL',
+        token
+          ? 'access token obtained'
+          : missingOAuthSecrets.length > 0
+            ? `no access token — CAUSE IS THE MISSING WORKER SECRET (${missingOAuthSecrets.join(', ')}), not the customer's consent${moneyPathNote}`
+            : `no access token — no refresh token stored for customer_id=${siteConfig.gads.customer_id}; run GET /api/event/oauth-init?customer_id=${siteConfig.gads.customer_id}${moneyPathNote}`
+      );
     } catch (err) {
       // Ne szivárogtassunk OAuth-belső hibaüzenetet a válaszba — logba megy.
       logStructured({
@@ -461,7 +516,7 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
         site_id: siteConfig.site_id,
         error: err instanceof Error ? err.message : String(err)
       });
-      add('gads_oauth', 'FAIL', 'token fetch failed (see Worker logs)');
+      add('gads_oauth', 'FAIL', `token fetch failed (see Worker logs)${moneyPathNote}`);
     }
   } else {
     add('gads_customer_id', 'WARN', 'no customer_id — Google Ads dispatch is a no-op for this site');
