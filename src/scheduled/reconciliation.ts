@@ -18,6 +18,10 @@ import {
   type CrossCheckOutcome
 } from '../lib/cross-check';
 import { listMonitoredSiteConfigs } from '../lib/config';
+import {
+  fetchBusinessSourceFindings,
+  type BusinessSourceFinding
+} from '../lib/business-counts';
 import type { MetricPlatform } from '../lib/metrics';
 
 const WINDOW_HOURS = 24;
@@ -207,6 +211,33 @@ export async function handleReconciliation(env: Env): Promise<void> {
     });
   }
 
+  // P1.2 — CRM business-source recon a TEGNAPI teljes UTC-napra (a mai nap még nyitott,
+  // a CRM aggregátuma is csak a nap végén teljes). `null` = a lekérdezés elbukott VAGY
+  // nincs LEDGER — ezt NEM keverjük össze a „nincs eltéréssel".
+  const reconDay = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const priorSince = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const businessFindings = (await fetchBusinessSourceFindings(env, reconDay, priorSince)) ?? [];
+
+  for (const f of businessFindings) {
+    logStructured({
+      level: f.severity === 'critical' ? 'error' : 'warn',
+      error_code:
+        f.kind === 'business_source_drift'
+          ? TrackingErrorCode.RECON_BUSINESS_SOURCE_DRIFT
+          : TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING,
+      message: f.detail,
+      site_id: f.site_id,
+      event_name: f.event_name,
+      date: f.date,
+      crm_count: f.crm_count,
+      gateway_count: f.gateway_count,
+      drift_kind: f.kind,
+      severity: f.severity
+    });
+  }
+  const businessCritical = businessFindings.filter((f) => f.severity === 'critical').length;
+  const businessWarning = businessFindings.length - businessCritical;
+
   const crossCritical = crossFindings.filter((f) => f.severity === 'critical').length;
   const crossWarning = crossFindings.length - crossCritical;
 
@@ -214,8 +245,9 @@ export async function handleReconciliation(env: Env): Promise<void> {
     level: 'info',
     message: 'Reconciliation completed',
     sites_checked: summary.sites_checked,
-    warning_count: summary.warning_count + crossWarning,
-    critical_count: summary.critical_count + crossCritical,
+    warning_count: summary.warning_count + crossWarning + businessWarning,
+    critical_count: summary.critical_count + crossCritical + businessCritical,
+    business_source_findings: businessFindings.length,
     cross_platform_findings: crossFindings.length,
     // A puszta finding-szám félrevezet, ha a check nem is futott — a kontextus
     // mostantól MINDIG ott van a napi log-sorban.
@@ -234,13 +266,13 @@ export async function handleReconciliation(env: Env): Promise<void> {
   });
 
   if (
-    summary.findings.length + crossFindings.length > 0 ||
+    summary.findings.length + crossFindings.length + businessFindings.length > 0 ||
     crossCheckFailed ||
     crossCheckNotRunning ||
     blockedLegs.length > 0
   ) {
-    const criticalCount = summary.critical_count + crossCritical;
-    const warningCount = summary.warning_count + crossWarning;
+    const criticalCount = summary.critical_count + crossCritical + businessCritical;
+    const warningCount = summary.warning_count + crossWarning + businessWarning;
     const failNote = crossCheckFailed
       ? '<p><strong>⚠️ A cross-platform check ELDŐLT — a GA4/Google-Ads vs ledger összevetés (a Modell-2 böngésző/GTM-vakfolt monitora) MA NEM futott le. Ellenőrizd az analytics.readonly tokent / az API-státuszt.</strong></p>'
       : '';
@@ -271,7 +303,8 @@ export async function handleReconciliation(env: Env): Promise<void> {
         notRunningNote +
         skipNote +
         buildDriftEmail(summary.findings, crossFindings, since) +
-        buildOfflineSection(offlineReports),
+        buildOfflineSection(offlineReports) +
+        buildBusinessSourceSection(businessFindings, reconDay),
       criticalCount > 0 || crossCheckFailed ? 'critical' : 'warning'
     );
   }
@@ -283,6 +316,42 @@ export async function handleReconciliation(env: Env): Promise<void> {
  * halott, csak MÁS a teendő. Enélkül a napi riport üres finding-listája
  * megkülönböztethetetlen lenne a „minden rendben"-től.
  */
+/**
+ * P1.2 — CRM business-source eltérések. Ezt a gateway-ledger SZERKEZETILEG nem tudja
+ * kimutatni: ha a CRM→gateway hívás el sem indul, a ledgerben nulla elvárás mellett a
+ * nulla kézbesítés egészségesnek látszik.
+ */
+function buildBusinessSourceSection(findings: BusinessSourceFinding[], date: string): string {
+  if (findings.length === 0) return '';
+  const rows = findings
+    .map(
+      (f) => `
+      <tr>
+        <td>${escapeHtml(f.site_id)}</td>
+        <td>${escapeHtml(f.event_name)}</td>
+        <td>${escapeHtml(f.kind)}</td>
+        <td>${f.crm_count}</td>
+        <td>${f.gateway_count}</td>
+        <td><strong>${escapeHtml(f.severity)}</strong></td>
+        <td>${escapeHtml(f.detail)}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+    <h3>CRM business-source (${escapeHtml(date)})</h3>
+    <p>A CRM napi aggregátuma (PII-mentes darabszám) vs. a gateway-be TÉNYLEGESEN
+       beérkezett lifecycle-státuszok. Az eltérés azt jelenti, hogy a CRM→gateway hívás
+       el sem indult — ezt a ledger önmagában nem látja.
+       A <code>business_source_missing</code> sor pedig azt, hogy MAGA a CRM-cron állt le.</p>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr><th>Site</th><th>Event</th><th>Kind</th><th>CRM</th><th>Gateway</th>
+            <th>Severity</th><th>Detail</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 function buildOfflineSection(reports: OfflineLegReport[]): string {
   if (reports.length === 0) return '';
   const rows = reports

@@ -238,6 +238,21 @@ export enum TrackingErrorCode {
    */
   RECON_OFFLINE_BLOCKED = 'TRK-950-015',
 
+  // ── P1.2 business-source recon (CRM aggregatum vs gateway lead_status) ─────
+  /**
+   * A CRM SZERINT tobb uzleti esemeny tortent, mint amennyi a gateway-be beerkezett:
+   * a CRM→gateway dispatch ejt. A P1.1 ezt SZERKEZETILEG nem lathatja — ott a
+   * beerkezes MAGA az elvart alap, tehat egy el sem indult hivas nulla elvarast
+   * jelent, es a nulla kezbesites egeszsegesnek latszik.
+   */
+  RECON_BUSINESS_SOURCE_DRIFT = 'TRK-950-016',
+  /**
+   * Egy site-ra tegnap volt aggregatum, ma nincs — MAGA a CRM-cron allt le. A
+   * megfigyelt elozmenyhez merunk, nem konfiguralt listahoz: egy sosem-jelentkezo
+   * site nem riaszt (nincs bekotve), egy elhallgato igen.
+   */
+  RECON_BUSINESS_SOURCE_MISSING = 'TRK-950-017',
+
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
 
@@ -391,6 +406,10 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Offline business leg: Google rejects a high share of uploads',
   [TrackingErrorCode.RECON_OFFLINE_BLOCKED]:
     'Offline business leg unmeasurable: a dependency (OAuth secret / refresh token / customer_id / conversion action) is missing',
+  [TrackingErrorCode.RECON_BUSINESS_SOURCE_DRIFT]:
+    'CRM reports more business events than reached the gateway: the CRM->gateway dispatch is dropping',
+  [TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING]:
+    'A site that used to report daily business counts has gone silent: the CRM cron itself may be down',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]:
     'Cross-platform reconciliation is not running (no recon config, or every leg skipped) — the Model 2 browser/GTM blind spot is unmonitored',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
@@ -443,6 +462,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // A halott offline business-lab ugyanaz a karkep, mint a hianyzo config-blokk:
   // a penz nem er celba, es magatol soha nem javul meg.
   [TrackingErrorCode.RECON_OFFLINE_ZERO_DELIVERY]: 'critical',
+  [TrackingErrorCode.RECON_BUSINESS_SOURCE_DRIFT]: 'critical',
 
   [TrackingErrorCode.META_API_REJECTED]: 'warning',
   [TrackingErrorCode.META_API_TIMEOUT]: 'warning',
@@ -505,6 +525,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // SZANDEKOSAN 'warning': a blokkolt lab hibaja ISMERT (a health-check jelzi), es a
   // recon csak lathatova teszi. Critical-la emelve duplan riasztana ugyanarrol.
   [TrackingErrorCode.RECON_OFFLINE_BLOCKED]: 'warning',
+  [TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING]: 'warning',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'warning',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
   // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)

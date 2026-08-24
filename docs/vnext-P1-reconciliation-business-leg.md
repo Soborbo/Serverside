@@ -1,7 +1,8 @@
 # P1 — Reconciliation business-leg: TERV
 
-**Dátum:** 2026-08-24 · **vNext P1** · **Státusz: P1.1 IMPLEMENTÁLVA** (2026-08-24,
-a merge-gate review két kötelező korrekciójával). **P1.2 gateway-fél: külön commit.**
+**Dátum:** 2026-08-24 · **vNext P1** · **Státusz: P1.1 + P1.2 gateway-fél IMPLEMENTÁLVA**
+(2026-08-24, a merge-gate review két kötelező korrekciójával).
+**Nyitott: a P1.2 CRM-oldali hívása (§3.5) + a 0007 migráció éles D1-en (§3.6).**
 
 **Teszt-fájl:** `tests/reconciliation-business-leg.test.ts` — a RED-baseline elvárásai
 MEG VANNAK FORDÍTVA (lásd §5). Három célzott visszavonás bizonyítja, hogy a tesztek a
@@ -252,8 +253,15 @@ nem tudja betömni.
 **Nem** teljes event-sync, **nem** új infrastruktúra. A CRM-nek már van cron-drivere (az
 outbox sender), a gateway-nek már van admin-route-ja és per-site token-auth-ja.
 
+> **Az implementált útvonal ELTÉR a tervezettől.** Nem `/api/event/admin/business-counts`,
+> hanem **`/api/event/business-counts`**. Ok: a teljes `/admin/*` felület a GLOBÁLIS
+> `ADMIN_API_TOKEN` mögött van, és a CRM-nek per-site tokenje van (`crm_token_sha256`).
+> Az admin-felületre téve a CRM-be be kellene tenni a globális tokent — tenant-izolációs
+> visszalépés, ami egy szivárgás blast-radiusát 1 site-ról az egész flottára emelné.
+> Az auth így ugyanaz, mint a `/lead-status`-on (`authenticateLeadStatus`).
+
 ```http
-POST /api/event/admin/business-counts
+POST /api/event/business-counts
 X-Admin-Token: <per-site CRM token>
 Content-Type: application/json
 
@@ -297,7 +305,62 @@ A `business_source_missing` szándékosan a megfigyelt előzményhez mér, nem e
 konfigurált listához: egy sosem-jelentkező site nem riaszt (nincs bekötve), de egy
 elhallgató igen.
 
-### 3.4 Amit a v1 SZÁNDÉKOSAN nem csinál
+### 3.4 Validáció — szerver-szerver, tehát KONKRÉT 400
+
+A hívónak tudnia kell javítani, ezért minden elutasítás megnevezi az okot
+(`invalid_payload` + `detail`). Amit a gateway visszautasít:
+
+| eset | miért |
+|---|---|
+| ismeretlen / nem-offline `event_name` | a kanonikus `events.json` az egyetlen forrás; egy elgépelt név csendben egy soha nem egyeztetett sort hozna létre |
+| jövőbeli `date` | majdnem biztosan időzóna-hiba a hívónál; elfogadva egy örökre üres napot hozna létre |
+| duplikált `event_name` | különben az utolsó csendben felülírná az elsőt |
+| negatív / tört / abszurd `count` | cardinality- és hibavédelem |
+
+`count: 0` **érvényes** — a „ma nulla lead" valós, mérendő információ.
+
+A válasz **soha nem 204**: nincs LEDGER → 503, D1-írás hibája → 500. A
+„nyugtázom, de eldobom" pont az a néma adatvesztés, amit a P1.2 mérni hivatott
+(CLAUDE.md 12).
+
+### 3.5 ⏳ NYITOTT — a CRM-oldali hívás
+
+A gateway-fél kész és tesztelt; a **CRM-nek még hívnia kell**. A meglévő cron-driverbe
+(outbox sender) illeszkedő napi lépés:
+
+```ts
+// A tegnapi UTC-napra, a crm_tracking_events-ből aggregálva. PII NINCS a payloadban.
+const date = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+const counts = await db
+  .select({ event_name: crmTrackingEvents.eventName, count: sql`COUNT(*)` })
+  .from(crmTrackingEvents)
+  .where(and(eq(crmTrackingEvents.eventKind, 'lifecycle'), sqlDateEquals(crmTrackingEvents.occurredAt, date)))
+  .groupBy(crmTrackingEvents.eventName);
+
+await fetch(`${env.TRACKING_WORKER_URL.replace('/lead-status', '/business-counts')}`, {
+  method: 'POST',
+  headers: { 'X-Admin-Token': env.TRACKING_ADMIN_TOKEN, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ date, counts })
+});
+```
+
+Fontos: a **már meglévő** `TRACKING_ADMIN_TOKEN` (per-site) megy vele — új secret nem
+kell. A hívás idempotens (PK-ütközésen felülír), tehát a retry biztonságos, és egy
+késve érkező javított aggregátum javítja a korábbit.
+
+### 3.6 ⏳ NYITOTT — a 0007 migráció éles D1-en
+
+```bash
+npx wrangler d1 migrations apply event-gateway-ledger --remote
+# ellenőrzés:
+npx wrangler d1 execute event-gateway-ledger --remote \
+  --command "SELECT name FROM sqlite_master WHERE type='table' AND name='business_counts'"
+```
+
+Amíg a tábla nincs kint, a `/business-counts` 500-at ad (a CRM retry-ol, nem veszít
+adatot), a recon business-lába pedig `null`-t kap és kimarad — **nem** „nincs eltérés".
+
+### 3.7 Amit a v1 SZÁNDÉKOSAN nem csinál
 
 - nem szinkronizál event-szintű rekordokat (az teljes második ledger lenne);
 - nem próbál lead-szintű join-t (PII-felület, és a `lead_id` a gateway-ben már megvan);
@@ -329,8 +392,8 @@ TRK-950-014  RECON_OFFLINE_VENDOR_FAILURE     warning       ✅ KIOSZTVA (P1.1)
 TRK-950-015  RECON_OFFLINE_BLOCKED            warning       ✅ KIOSZTVA (P1.1)
                                                             (a tervezett *_CONFIG_MISSING
                                                              helyett — lásd §2.6)
-TRK-950-016  RECON_BUSINESS_SOURCE_DRIFT      critical      ⏳ P1.2
-TRK-950-017  RECON_BUSINESS_SOURCE_MISSING    warning       ⏳ P1.2
+TRK-950-016  RECON_BUSINESS_SOURCE_DRIFT      critical      ✅ KIOSZTVA (P1.2)
+TRK-950-017  RECON_BUSINESS_SOURCE_MISSING    warning       ✅ KIOSZTVA (P1.2)
 ```
 
 > A sávot **nem** szabad újrahasznosítani: a `TRK-910` blokk kommentje
@@ -369,10 +432,10 @@ business-leg ÚJ láb, nem a Meta-formula átírása.
 
 ## 6. Sorrend és függőségek
 
-1. **P1.1 előbb.** Önmagában is értéket ad (a gateway-ben már megvan minden adat), és
-   nem igényel CRM-változást.
-2. **P1.2 utána**, mert CRM-oldali munkát is kér (aggregátum-endpoint hívása a meglévő
-   cronból) — és mert a P1.1 nélkül nincs mihez viszonyítani.
+1. ✅ **P1.1** — kész. Önmagában is értéket ad (a gateway-ben már megvolt minden adat),
+   CRM-változást nem igényelt.
+2. ✅ **P1.2 gateway-fél** — kész (endpoint + tábla + recon-láb + riport).
+   ⏳ **P1.2 CRM-fél** — §3.5, a meglévő cron-driverbe illeszkedő napi hívás.
 3. **A P2 OAuth-függést a kód kezeli, nem a munkasorrend** (review-korrekció #2). Amíg
    a worker-secret vagy a refresh token hiányzik, az érintett láb `BLOCKED_DEPENDENCY`
    állapotban áll: **nem riaszt**, de a napi riportban ott a sora az okkal. Amint a
