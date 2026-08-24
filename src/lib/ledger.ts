@@ -874,6 +874,14 @@ export interface LeadConsentRecord {
    * használatot engedte, a személyre szabást nem).
    */
   ad_personalization: string | null;
+  /**
+   * CMP Fázis 2 (2.5): a lead LEGFRISSEBB nem-NULL `consent_id`-ja a
+   * consent_receipts-ből — a kulcs, amivel az offline/replay ág a consent_log
+   * AKTUÁLIS állapotát (legmagasabb revision) feloldja a capture-kori receipt
+   * helyett. null = a lead egyetlen receiptje sem hordoz consent_id-t (a teljes
+   * CookieYes-flotta ilyen) → a hívó a mai, receipt-alapú szabálynál marad.
+   */
+  consent_id: string | null;
 }
 
 /**
@@ -901,18 +909,33 @@ export async function getLatestConsentForLead(
     // előre; azokon belül továbbra is a legfrissebb nyer (egy valódi későbbi
     // visszavonás → DENIED tehát helyesen felülírja a korábbi GRANTED-et). Ha
     // egyetlen receipt sem hordoz jelet, marad a régi „legfrissebb sor" viselkedés.
+    // A `consent_id` KÜLÖN al-lekérdezés, nem a fő sor oszlopa: a jel-hordozó
+    // (capture-kori) receipt és a consent_id-t hordozó receipt lehet KÉT külön
+    // sor (pl. a consent_id egy későbbi konverzió receiptjén érkezett). A
+    // legfrissebb nem-NULL érték kell — a consent_id a preferencia-lánc STABIL
+    // azonosítója, tehát a sorok között nem térhet el, csak hiányozhat.
     const row = await env.LEDGER.prepare(
-      `SELECT ad_allowed, ad_user_data, ad_personalization FROM consent_receipts
-       WHERE site_id = ? AND lead_id = ?
+      `SELECT ad_allowed, ad_user_data, ad_personalization,
+              (SELECT consent_id FROM consent_receipts
+                WHERE site_id = ?1 AND lead_id = ?2 AND consent_id IS NOT NULL
+                ORDER BY received_at DESC LIMIT 1) AS consent_id
+         FROM consent_receipts
+       WHERE site_id = ?1 AND lead_id = ?2
        ORDER BY (ad_user_data IS NOT NULL) DESC, received_at DESC LIMIT 1`
     )
       .bind(siteId, leadId)
-      .first<{ ad_allowed: number; ad_user_data: string | null; ad_personalization: string | null }>();
+      .first<{
+        ad_allowed: number;
+        ad_user_data: string | null;
+        ad_personalization: string | null;
+        consent_id: string | null;
+      }>();
     if (!row) return null;
     return {
       ad_allowed: row.ad_allowed === 1,
       ad_user_data: row.ad_user_data ?? null,
-      ad_personalization: row.ad_personalization ?? null
+      ad_personalization: row.ad_personalization ?? null,
+      consent_id: row.consent_id ?? null
     };
   } catch (err) {
     ledgerError('getLatestConsentForLead', err, { site_id: siteId });
