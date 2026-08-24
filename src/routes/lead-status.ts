@@ -21,10 +21,13 @@ import {
   mapLeadStatusToEventName,
   VALID_LEAD_STATUSES,
   getLatestConsentForLead,
+  getConsentState,
+  markDoNotReplay,
   recordLeadStatus,
   recordDeliveries,
   normalizeDelivery
 } from '../lib/ledger';
+import { isBlockedByConsentState } from '../lib/consent-log';
 
 /**
  * CRM offline-loop endpoint (P0 üzleti érték). A CRM ide POST-olja a lead
@@ -276,9 +279,23 @@ export async function handleLeadStatus(
     leadConsent?.ad_personalization === 'GRANTED' || leadConsent?.ad_personalization === 'DENIED'
       ? leadConsent.ad_personalization
       : null;
+  // ── CMP Fázis 2 (2.5): a consent_log az ÚJ, legerősebb precedencia. ─────────
+  // Ha a lead receiptje consent_id-t hordoz (provider='sbo' site), az upload-
+  // döntést NEM a capture-kori receipt adja, hanem a consent_log AKTUÁLIS
+  // állapota (legmagasabb revision). A nap-1 GRANTED / nap-3 visszavonás /
+  // nap-10 revenue_confirmed eset csak így skippel helyesen. `null` (nincs
+  // consent_id — a teljes CookieYes-flotta —, ismeretlen consent_id, vagy
+  // D1-hiba) → a MAI precedencia-lánc változatlanul fut tovább.
+  const consentLogState = leadConsent?.consent_id
+    ? await getConsentState(env, siteConfig.site_id, leadConsent.consent_id)
+    : null;
+
   let consentBlocked: boolean;
-  let consentSource: 'receipt' | 'crm' | 'fallback';
-  if (receiptSignal !== null) {
+  let consentSource: 'consent_log' | 'receipt' | 'crm' | 'fallback';
+  if (consentLogState !== null) {
+    consentBlocked = isBlockedByConsentState(consentLogState);
+    consentSource = 'consent_log';
+  } else if (receiptSignal !== null) {
     consentBlocked = receiptSignal === 'DENIED';
     consentSource = 'receipt';
   } else if (body.ad_allowed !== undefined) {
@@ -323,10 +340,16 @@ export async function handleLeadStatus(
   // A számítás a gads-ágak ELŐTT fut, mert a konfigurációs blokk DLQ-rekordjának
   // ugyanezt a payloadot kell hordoznia — a replay később ugyanazzal a consent-
   // jellel megy ki, mint amit most küldtünk volna.
-  const adUserDataGranted = receiptSignal === 'GRANTED' || body.ad_allowed === true;
-  const adPersonalizationSignal =
-    receiptAdPersonalization ??
-    (receiptSignal === null && body.ad_allowed === true ? 'GRANTED' : undefined);
+  // Consent_log-állapot mellett a JELEK IS onnan jönnek (mindkét mező explicit
+  // GRANTED/DENIED a logban) — a capture-kori receipt jele elavult lehet, és a
+  // Google felé a döntés pillanatában ÉRVÉNYES consentet kell jelenteni.
+  const adUserDataGranted = consentLogState
+    ? consentLogState.ad_user_data === 'GRANTED'
+    : receiptSignal === 'GRANTED' || body.ad_allowed === true;
+  const adPersonalizationSignal = consentLogState
+    ? consentLogState.ad_personalization
+    : (receiptAdPersonalization ??
+      (receiptSignal === null && body.ad_allowed === true ? 'GRANTED' : undefined));
   const consentSignals: {
     ad_user_data?: 'GRANTED' | 'DENIED';
     ad_personalization?: 'GRANTED' | 'DENIED';
@@ -344,8 +367,37 @@ export async function handleLeadStatus(
       event_name: eventName,
       require_consent: siteConfig.require_consent === true,
       has_consent_record: leadConsent !== null,
-      consent_source: consentSource
+      consent_source: consentSource,
+      // consent_log-blokknál a bizonyíték is a logba: melyik revision döntött.
+      consent_log_decision: consentLogState?.decision,
+      consent_log_revision: consentLogState?.revision
     });
+    if (consentSource === 'consent_log') {
+      // 2.5: az AKTUÁLIS állapot DENIED/withdrawn → a skip VÉGLEGES erre az
+      // eventre. A do_not_replay=1 nélkül egy későbbi CRM-retry vagy admin-replay
+      // — akár egy időközbeni ÚJ hozzájárulás után — újra kiküldené a döntés
+      // idején tiltott konverziót. Best-effort: ha a jelölés elbukik, a skip
+      // ettől a kérésen belül még áll, csak a replay-védelem gyengül (logolva).
+      await markDoNotReplay(env, siteConfig.site_id, eventName, orderId);
+      // 'skipped|consent_withdrawn' ledger-sor — a szándékos kihagyás NEM némaság
+      // (CLAUDE.md 11.). CSAK a consent_log-ágon írjuk (provider='sbo' site-ok):
+      // a receipt/crm/fallback ágak mai, sor-nélküli viselkedése változatlan.
+      ctx.waitUntil(
+        recordDeliveries(env, {
+          event_id: orderId,
+          lead_id: body.lead_id,
+          site_id: siteConfig.site_id,
+          event_name: eventName,
+          origin: 'offline',
+          records: [
+            normalizeDelivery('gads', {
+              status: 'fulfilled',
+              value: { success: true, skipped: true, skip_reason: 'consent_withdrawn' }
+            })
+          ]
+        })
+      );
+    }
   } else if (siteConfig.gads?.customer_id) {
     // Model 2: the server is Google-Ads-offline-only (Enhanced Conversions for
     // Leads), delivered via the Data Manager API. The email hash MUST use the

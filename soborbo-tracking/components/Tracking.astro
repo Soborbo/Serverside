@@ -1,15 +1,37 @@
 ---
 /**
  * <Tracking /> — Place in Layout <head>.
- * Injects CookieYes, Consent Mode v2, GTM, and auto-init.
  *
- * GTM noscript must go after <body> — use <TrackingNoscript />.
+ * Két mód (CMP Fázis 2):
+ *  - consentProvider="cookieyes" (DEFAULT, minden mai site): CookieYes + Consent
+ *    Mode v2 default + GTM azonnali betöltéssel (advanced mód, wait_for_update).
+ *    Ez az ág BITRE a Fázis 2 előtti — a defaultot átállítani tilos.
+ *  - consentProvider="sbo" (pilot): NINCS CookieYes-vezérlés. Inline, SZINKRON
+ *    consent-boot: default mind DENIED, majd a `sbo_consent` süti dönt — döntés
+ *    (vagy reject) esetén a GTM EL SEM INDUL (basic mód, wait_for_update nélkül:
+ *    nincs mire várni, a süti-olvasás szinkron). A banner/panel a
+ *    <ConsentBanner /> komponens (body vége), a pozitív döntés után az itt
+ *    definiált idempotens `window.__sboLoadGtm()`-et hívja.
+ *    A `cookieYesId` sbo alatt is renderelhető marad: a párhuzamos mérési ablak
+ *    (2.4) alatt a CookieYes szkript KIKAPCSOLT bannerrel bent marad, hogy a
+ *    sütije olvasható legyen — az ablak végén a prop lekerül. ⚠️ GTM Preview-ban
+ *    ellenőrizendő, hogy a kikapcsolt banner mellett a CookieYes NEM push-ol
+ *    saját consent-parancsot — ha igen, a szkriptet el kell hagyni, és az ablak
+ *    a perzisztens sütiből mér.
+ *
+ * GTM noscript a <body> után — <TrackingNoscript /> (sbo-pilotnál NEM kell:
+ * noscript alatt consent-döntés sincs, tehát a GTM-iframe consent előtt futna).
  */
+import { trackingConfig, type ConsentProvider } from '../lib/config';
+
 interface Props {
   gtmId: string;
   cookieYesId?: string;
+  /** Default a PUBLIC_TRACKING_CONSENT_PROVIDER env (ami default 'cookieyes'). */
+  consentProvider?: ConsentProvider;
 }
-const { gtmId, cookieYesId } = Astro.props;
+const { gtmId, cookieYesId, consentProvider = trackingConfig.consentProvider } = Astro.props;
+const isSbo = consentProvider === 'sbo';
 ---
 
 {cookieYesId && (
@@ -17,30 +39,90 @@ const { gtmId, cookieYesId } = Astro.props;
     src={`https://cdn-cookieyes.com/client_data/${cookieYesId}/script.js`} />
 )}
 
-<script is:inline>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('consent', 'default', {
-    'ad_storage': 'denied', 'ad_user_data': 'denied',
-    'ad_personalization': 'denied', 'analytics_storage': 'denied',
-    'functionality_storage': 'denied', 'personalization_storage': 'denied',
-    /* wait_for_update must be >= the CMP's load/restore time. Most
-       production CMPs (CookieYes, Cookiebot, OneTrust) advertise
-       2000 ms. With a lower value, a returning consented visitor's
-       tags fire under the denied default before their stored choice
-       loads — silently losing conversions for the most attributable
-       segment of traffic. */
-    'security_storage': 'granted', 'wait_for_update': 2000
-  });
-</script>
+{!isSbo && (
+  <script is:inline>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('consent', 'default', {
+      'ad_storage': 'denied', 'ad_user_data': 'denied',
+      'ad_personalization': 'denied', 'analytics_storage': 'denied',
+      'functionality_storage': 'denied', 'personalization_storage': 'denied',
+      /* wait_for_update must be >= the CMP's load/restore time. Most
+         production CMPs (CookieYes, Cookiebot, OneTrust) advertise
+         2000 ms. With a lower value, a returning consented visitor's
+         tags fire under the denied default before their stored choice
+         loads — silently losing conversions for the most attributable
+         segment of traffic. */
+      'security_storage': 'granted', 'wait_for_update': 2000
+    });
+  </script>
+)}
 
-<script is:inline define:vars={{ gtmId }}>
-  (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-  'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-  })(window,document,'script','dataLayer',gtmId);
-</script>
+{!isSbo && (
+  <script is:inline define:vars={{ gtmId }}>
+    (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+    new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+    'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+    })(window,document,'script','dataLayer',gtmId);
+  </script>
+)}
+
+{isSbo && (
+  <script is:inline define:vars={{ gtmId }}>
+    /* Soborbo consent-boot (CMP Fázis 2.1) — inline, SZINKRON, minden más előtt.
+       A parser a lib/consent-sbo-state.ts párja (formátum:
+       v1.<a>.<m>.<rev>.<decision>.<consent_id>.<ts>) — bundler nélkül, mert a
+       döntésnek a GTM-ről AZELŐTT kell megszületnie, hogy bármi aszinkron
+       betöltődne. Basic mód: nincs wait_for_update — nincs mire várni. */
+    (function(w,d){
+      w.dataLayer = w.dataLayer || [];
+      function gtag(){w.dataLayer.push(arguments);}
+      gtag('consent', 'default', {
+        'ad_storage': 'denied', 'ad_user_data': 'denied',
+        'ad_personalization': 'denied', 'analytics_storage': 'denied',
+        'functionality_storage': 'denied', 'personalization_storage': 'denied',
+        'security_storage': 'granted'
+      });
+      /* Idempotens GTM-loader — a boot ÉS a banner (pozitív döntés után) hívja. */
+      var loaded = false;
+      w.__sboLoadGtm = function(){
+        if (loaded) return; loaded = true;
+        w.dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});
+        var f = d.getElementsByTagName('script')[0], j = d.createElement('script');
+        j.async = true;
+        j.src = 'https://www.googletagmanager.com/gtm.js?id=' + gtmId;
+        f.parentNode.insertBefore(j, f);
+      };
+      /* sbo_consent süti — szigorú szinkron parse; bármi hibás → nincs döntés. */
+      var st = null;
+      try {
+        var m = d.cookie.match(/(?:^|;\s*)sbo_consent=([^;]*)/);
+        if (m) {
+          var p = decodeURIComponent(m[1]).split('.');
+          if (p.length === 7 && p[0] === 'v1' &&
+              (p[1] === '0' || p[1] === '1') && (p[2] === '0' || p[2] === '1') &&
+              /^[1-9][0-9]{0,4}$/.test(p[3]) &&
+              (p[4]==='accept_all'||p[4]==='reject_all'||p[4]==='custom'||p[4]==='withdrawn') &&
+              /^[A-Za-z0-9_:-]{8,64}$/.test(p[5]) && /^[0-9]{1,12}$/.test(p[6])) {
+            st = { a: p[1] === '1', m: p[2] === '1' };
+          }
+        }
+      } catch (e) { /* nincs döntés */ }
+      if (st && (st.a || st.m)) {
+        gtag('consent', 'update', {
+          'ad_storage': st.m ? 'granted' : 'denied',
+          'ad_user_data': st.m ? 'granted' : 'denied',
+          'ad_personalization': st.m ? 'granted' : 'denied',
+          'analytics_storage': st.a ? 'granted' : 'denied'
+        });
+        w.__sboLoadGtm();
+      }
+      /* nincs döntés VAGY reject/withdrawn → a GTM NEM töltődik. A banner
+         (ConsentBanner) kérdez; pozitív döntés után hívja a loadert. */
+    })(window,document);
+  </script>
+)}
 
 <script>
   import {

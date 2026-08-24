@@ -258,3 +258,23 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
   `../scripts/generate-site.mjs` (repo root: `scripts/generate-site.mjs`); never
   improvise the JSON. There is a single `../src/events.json` (no vendored copy);
   the browser contract is checked with `node server/check-event-contract.mjs`.
+
+## CMP mode (Fázis 2 — pilot only, default: CookieYes)
+
+Every site runs CookieYes by default (`PUBLIC_TRACKING_CONSENT_PROVIDER` unset).
+**Do NOT flip a site to the own CMP as part of an install** — it is a human,
+per-site pilot decision with its own runbook
+(`Serverside docs/cmp-fazis2-pilot-runbook.md`). What the mode changes when set
+to `sbo`:
+
+- `<Tracking />` renders the synchronous consent-boot (all-denied default, GTM
+  loads ONLY after a positive decision) instead of the CookieYes+advanced flow.
+- `<ConsentBanner policyHref=... />` goes at the end of `<body>`; a footer link
+  with `data-sb-consent-open` is the withdrawal path on every page.
+- `<TrackingNoscript />` must be REMOVED on sbo sites (no consent decision
+  exists under noscript, so the GTM iframe would run pre-consent).
+- The backend dispatch passes `consentId:
+  readSboConsentCookieHeader(cookieHeader)?.consentId` so the offline/replay leg
+  can resolve the consent_log's current revision.
+- Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
+  it is a mandatory field of every consent-log row.

@@ -1,0 +1,234 @@
+---
+/**
+ * <ConsentBanner /> — a saját CMP bannere + panelje (CMP Fázis 2).
+ *
+ * KIZÁRÓLAG provider='sbo' site-ra való (PUBLIC_TRACKING_CONSENT_PROVIDER=sbo);
+ * más provider alatt a script inertre vált (defense in depth). Helye: a Layout
+ * <body> vége. A <head>-be a <Tracking consentProvider="sbo" /> kell — az adja
+ * a consent default-ot és a feltételes GTM-loadert, ez a komponens CSAK a
+ * döntés-UI és a döntés-rögzítés.
+ *
+ * A markup/CSS a lib/consent-banner-ui.ts-ből jön (build-time), mert a
+ * gombparitást (Elfogadom ↔ Elutasítom pixelre azonos) unit teszt őrzi — lásd
+ * ott. A visszavonás útja: bárhova a site-on egy
+ *   <a href="#" data-sb-consent-open>Süti beállítások</a>
+ * (vagy `window.sboConsent.open()`) — ugyanaz a panel, új consent_log sor.
+ */
+import {
+  renderConsentBannerHtml,
+  consentBannerCss,
+  type ConsentBannerTexts,
+} from '../lib/consent-banner-ui';
+import { trackingConfig } from '../lib/config';
+import huTexts from '../consent-texts/2026-08-a/hu.json';
+import enTexts from '../consent-texts/2026-08-a/en.json';
+
+interface Props {
+  /** Az adatkezelési tájékoztató útvonala (a panel alján hivatkozva). */
+  policyHref?: string;
+}
+const { policyHref = '/adatkezelesi-tajekoztato' } = Astro.props;
+
+const texts = (trackingConfig.locale === 'hu' ? huTexts : enTexts) as ConsentBannerTexts;
+const html = renderConsentBannerHtml(texts, policyHref);
+const css = consentBannerCss();
+---
+
+<style is:global set:html={css}></style>
+<Fragment set:html={html} />
+
+<script>
+  import { isSboConsentProvider } from '../lib/config';
+  import { readSboConsent, type SboConsentState } from '../lib/consent-sbo-state';
+  import {
+    applySboDecision,
+    flushPendingSboConsent,
+    postBannerShown,
+  } from '../lib/consent-sbo';
+  import { getDevice } from '../lib/persistence';
+
+  declare global {
+    interface Window {
+      sboConsent?: { open: () => void };
+      __sboLoadGtm?: () => void;
+    }
+  }
+
+  function qs<T extends HTMLElement>(sel: string): T | null {
+    return document.querySelector<T>(sel);
+  }
+
+  function init(): void {
+    // Más provider alatt a komponens inert — a markup rejtve marad.
+    if (!isSboConsentProvider()) return;
+    const rootMaybe = qs<HTMLElement>('#sb-consent');
+    if (!rootMaybe || rootMaybe.dataset.sbBound === '1') return;
+    const root: HTMLElement = rootMaybe;
+    root.dataset.sbBound = '1';
+
+    const bar = root.querySelector<HTMLElement>('[data-sb-layer="banner"]')!;
+    const overlay = root.querySelector<HTMLElement>('[data-sb-layer="overlay"]')!;
+    const panel = root.querySelector<HTMLElement>('[data-sb-layer="panel"]')!;
+    const catAnalytics = root.querySelector<HTMLInputElement>('[data-sb-category="analytics"]')!;
+    const catMarketing = root.querySelector<HTMLInputElement>('[data-sb-category="marketing"]')!;
+    const bannerVersion = root.dataset.bannerVersion || 'unknown';
+    const textVersion = root.dataset.textVersion || 'unknown';
+    const ctx = { bannerVersion, consentTextVersion: textVersion };
+
+    // 503 után őrzött döntések újraküldése — minden oldalletöltésen.
+    void flushPendingSboConsent();
+
+    let shownAt: number | null = null;
+    let metricSent = false;
+    let lastFocused: Element | null = null;
+
+    function sendShownMetric(withInteraction: boolean): void {
+      if (metricSent || shownAt === null) return;
+      metricSent = true;
+      postBannerShown({
+        banner_version: bannerVersion,
+        lang: document.documentElement.lang || undefined,
+        device_class: getDevice(),
+        interaction_ms: withInteraction ? Math.round(performance.now() - shownAt) : undefined,
+      });
+    }
+
+    function applySignalsAndGtm(s: SboConsentState): void {
+      const w = window as unknown as { dataLayer: unknown[] };
+      w.dataLayer = w.dataLayer || [];
+      // A gtag-hívás a dataLayer-en keresztül — az arguments objektum kell, sima
+      // array-push a Consent Mode-nak nem ugyanaz.
+      function gtag(..._args: unknown[]): void {
+        // eslint-disable-next-line prefer-rest-params
+        w.dataLayer.push(arguments);
+      }
+      const g = (yes: boolean) => (yes ? 'granted' : 'denied');
+      gtag('consent', 'update', {
+        ad_storage: g(s.marketing),
+        ad_user_data: g(s.marketing),
+        ad_personalization: g(s.marketing),
+        analytics_storage: g(s.analytics),
+      });
+      // Basic mód: a GTM CSAK pozitív döntés után indul. reject_all/withdrawn
+      // mellett el sem indul ezen az oldalletöltésen; ha egy KORÁBBI letöltésen
+      // már betöltött, a consent update deny-ja fogja a tageket.
+      if (s.analytics || s.marketing) window.__sboLoadGtm?.();
+    }
+
+    function hideAll(): void {
+      root.hidden = true;
+      panel.hidden = true;
+      overlay.hidden = true;
+      document.removeEventListener('keydown', onPanelKeydown, true);
+      if (lastFocused instanceof HTMLElement) lastFocused.focus();
+    }
+
+    function decide(analytics: boolean, marketing: boolean): void {
+      const state = applySboDecision({ analytics, marketing }, ctx);
+      applySignalsAndGtm(state);
+      sendShownMetric(true);
+      hideAll();
+    }
+
+    function showBanner(): void {
+      root.hidden = false;
+      bar.hidden = false;
+      if (shownAt === null) shownAt = performance.now();
+    }
+
+    // ── Panel (modal, fókuszcsapdával) ──────────────────────────────────────
+    function panelFocusables(): HTMLElement[] {
+      return Array.from(
+        panel.querySelectorAll<HTMLElement>('button, input, a[href]')
+      ).filter((el) => !el.hasAttribute('disabled'));
+    }
+
+    function onPanelKeydown(e: KeyboardEvent): void {
+      if (panel.hidden) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePanel();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const f = panelFocusables();
+      if (f.length === 0) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    function openPanel(): void {
+      lastFocused = document.activeElement;
+      const current = readSboConsent();
+      // A panel a JELENLEGI állapotot mutatja; döntés híján mindkettő OFF
+      // (default: elutasítva — a kapcsolók alapból nem lehetnek bepipálva).
+      catAnalytics.checked = current?.analytics === true;
+      catMarketing.checked = current?.marketing === true;
+      root.hidden = false;
+      bar.hidden = true;
+      overlay.hidden = false;
+      panel.hidden = false;
+      if (shownAt === null) shownAt = performance.now();
+      document.addEventListener('keydown', onPanelKeydown, true);
+      panelFocusables()[0]?.focus();
+    }
+
+    function closePanel(): void {
+      // Esc/overlay: döntés NEM született. Ha még nincs tárolt döntés, vissza a
+      // bannerhez — a kérdés nem tűnhet el válasz nélkül.
+      panel.hidden = true;
+      overlay.hidden = true;
+      document.removeEventListener('keydown', onPanelKeydown, true);
+      if (readSboConsent() === null) {
+        showBanner();
+      } else {
+        root.hidden = true;
+        if (lastFocused instanceof HTMLElement) lastFocused.focus();
+      }
+    }
+
+    // ── Gomb-kötések ────────────────────────────────────────────────────────
+    root.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-sb-action]');
+      if (!btn) return;
+      switch (btn.dataset.sbAction) {
+        case 'accept': decide(true, true); break;
+        case 'reject': decide(false, false); break;
+        case 'settings': openPanel(); break;
+        case 'panel-accept-all': decide(true, true); break;
+        case 'panel-reject-all': decide(false, false); break;
+        case 'panel-save': decide(catAnalytics.checked, catMarketing.checked); break;
+      }
+    });
+    overlay.addEventListener('click', closePanel);
+
+    // Footer „Süti beállítások" link(ek) — visszavonási út (2.3).
+    document.querySelectorAll<HTMLElement>('[data-sb-consent-open]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        openPanel();
+      });
+    });
+    window.sboConsent = { open: openPanel };
+
+    // Döntés nélkül elhagyott oldal → ID-MENTES megjelenés-ping interaction
+    // nélkül (a consent_metrics.interaction_ms NULL-ja pont ezt jelenti).
+    window.addEventListener('pagehide', () => sendShownMetric(false));
+
+    // Nincs érvényes döntés → banner. Van → semmi dolgunk (a GTM-ről a
+    // <head>-beli consent-boot már döntött, szinkron). A megjelenés-ping a
+    // döntéskor vagy a pagehide-on megy el — egy megjelenés = egy sor.
+    if (readSboConsent() === null) showBanner();
+  }
+
+  document.addEventListener('astro:page-load', init);
+  if (document.readyState !== 'loading') init();
+  else document.addEventListener('DOMContentLoaded', init);
+</script>

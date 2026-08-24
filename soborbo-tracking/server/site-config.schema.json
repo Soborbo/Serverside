@@ -18,6 +18,15 @@
       "type": "boolean",
       "description": "Phase D (2026-08): fail closed on UNCERTAIN consent (TRK-910-002 unparseable / -003 sources disagree / -005 signals internally inconsistent) — uncertain never becomes GRANTED; those deliveries are skipped with reason consent_uncertain_failclosed. Default false = log only, zero behaviour change. Flip to true per site within days of observing the volume: left false permanently it becomes a new legacy fail-open branch."
     },
+    "consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_comment": {} },
+      "description": "Soborbo CMP (Fázis 1-2, 2026-08): WHICH consent system runs on this site. Absent (every current site) === provider 'cookieyes' — zero behaviour change. provider 'sbo' enables the own CMP: /api/consent accepts decisions, the GA4 gate requires analytics_storage GRANTED, and the offline/replay leg resolves the consent_log's current revision via the lead's consent_id. FLIPPING TO 'sbo' IS A HUMAN, PER-SITE PILOT DECISION — never a default.",
+      "properties": {
+        "provider": { "type": "string", "enum": ["cookieyes", "sbo"] }
+      }
+    },
     "crm_token_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",

@@ -24,6 +24,17 @@
  */
 
 export { hasMarketingConsent, hasAnalyticsConsent, hasAnyConsent, onConsentChange, waitForConsent, type ConsentCategory } from './consent';
+// CMP Fázis 2 — a saját consent-modul (provider='sbo' site-ok; default: cookieyes).
+export {
+  readSboConsent, sboConsentAgeSeconds,
+  SBO_CONSENT_COOKIE, SBO_CONSENT_EVENT,
+  type SboConsentState, type SboDecisionKind,
+} from './consent-sbo-state';
+export {
+  applySboDecision, flushPendingSboConsent, postBannerShown, readCkyParallelWindow,
+  type SboDecisionInput, type SboDecisionContext, type SboConsentWirePayload,
+} from './consent-sbo';
+export { isSboConsentProvider, type ConsentProvider } from './config';
 export {
   persistTrackingParams, captureUrlParams, getGclid, getFbclid, getFbp, getFbc,
   getAllTrackingData, getStoredData, getAttribution, getSourceType,

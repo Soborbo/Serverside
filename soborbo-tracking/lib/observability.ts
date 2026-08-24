@@ -28,6 +28,11 @@ export const TRACKING_CODES = {
   GATEWAY_REJECTED:        { code: 'TRK-1006', severity: 'error', message: 'Gateway rejected the dispatch (non-2xx HTTP status) — the conversion did NOT land' },
   // 3xxx — data integrity
   PII_IN_DATALAYER:        { code: 'TRK-3001', severity: 'error', message: 'PII-shaped key blocked from a dataLayer push' },
+  // 4xxx — saját CMP (Fázis 2). A consent-POST kudarca SOSEM néma: a kliens az
+  // egyetlen őrzője a döntésnek, amíg a gateway 204-gyel nem igazolta a tárolást.
+  CONSENT_STORED:          { code: 'TRK-4000', severity: 'info',  message: 'Consent decision stored by the gateway (204)' },
+  CONSENT_POST_RETRYABLE:  { code: 'TRK-4001', severity: 'warn',  message: 'Consent POST not stored (429/5xx/network) — decision kept pending, resent later with the SAME consent_event_id' },
+  CONSENT_POST_REJECTED:   { code: 'TRK-4002', severity: 'error', message: 'Consent POST rejected (4xx) — dropped from the pending queue; the cookie state still applies locally' },
 } as const satisfies Record<string, CodeDef>;
 
 export type TrackingCodeKey = keyof typeof TRACKING_CODES;

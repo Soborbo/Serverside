@@ -89,7 +89,17 @@ export type SkipReason =
    * Az agykontroll 2026-07-27 és 08-11 között 43 ilyen külső hívást futtatott el,
    * mire a hiba egyáltalán észrevehetővé vált — egy azonnali skip helyett.
    */
-  | 'invalid_identifier';
+  | 'invalid_identifier'
+  /**
+   * CMP Fázis 2 (2.5): a consent a CAPTURE UTÁN vonódott vissza — az offline
+   * upload / DLQ-replay pillanatában a consent_log AKTUÁLIS állapota (legmagasabb
+   * revision) DENIED/withdrawn. NEM olvad össze a `consent_denied`-del: az a
+   * capture-KORI kimondott elutasítás; ez egy korábban engedett, később
+   * visszavont hozzájárulás. TERMINÁLIS, és a hívó do_not_replay=1-gyel kíséri —
+   * a visszavont döntés alatti eventet egy későbbi ÚJ hozzájárulás sem
+   * játszhatja újra.
+   */
+  | 'consent_withdrawn';
 
 /**
  * A perzisztálható skip-okok teljes listája — a `deliveries.skip_reason` oszlop
@@ -107,7 +117,8 @@ export const SKIP_REASONS: readonly SkipReason[] = [
   'dedup',
   'eea_rule',
   'template_guard',
-  'invalid_identifier'
+  'invalid_identifier',
+  'consent_withdrawn'
 ];
 
 export function isSkipReason(v: unknown): v is SkipReason {

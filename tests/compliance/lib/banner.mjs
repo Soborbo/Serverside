@@ -16,6 +16,28 @@ export const SELECTORS = {
   revisit: ['.cky-btn-revisit-wrapper', '.cky-revisit-bottom-left', '[data-cky-tag="revisit-consent"]']
 };
 
+/**
+ * CMP Fázis 2 — a SAJÁT CMP (`provider='sbo'`, soborbo-tracking ConsentBanner)
+ * szelektorai. Az accept/reject a banner ÉS a panel gombját is lefedi: a
+ * withdrawal-forgatókönyv a footer-linken (revisit) megnyitott PANELBEN utasít
+ * el, ott a gomb data-sb-action-je `panel-reject-all`.
+ */
+export const SBO_SELECTORS = {
+  container: ['#sb-consent .sb-consent-bar', '#sb-consent .sb-consent-panel'],
+  accept: ['#sb-consent [data-sb-action="accept"]', '#sb-consent [data-sb-action="panel-accept-all"]'],
+  reject: ['#sb-consent [data-sb-action="reject"]', '#sb-consent [data-sb-action="panel-reject-all"]'],
+  settings: ['#sb-consent [data-sb-action="settings"]'],
+  revisit: ['[data-sb-consent-open]']
+};
+
+/**
+ * A site `cmp` mezője (sites.json) → a hozzá tartozó szelektor-készlet. Ismeretlen
+ * érték → CookieYes-készlet + a generikus szöveg-fallback (a mai viselkedés).
+ */
+export function selectorsForCmp(cmp) {
+  return cmp === 'sbo' ? SBO_SELECTORS : SELECTORS;
+}
+
 /** Szöveges fallback, ha a CMP nem CookieYes (HU + EN). */
 export const TEXT_PATTERNS = {
   accept: /^(elfogad|összes elfogad|mindet elfogad|accept|allow all|agree|got it|ok)/i,

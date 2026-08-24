@@ -15,7 +15,15 @@ import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
 import { getSiteConfig } from '../lib/config';
-import { recordDeliveries, normalizeDelivery, type VendorResult } from '../lib/ledger';
+import {
+  recordDeliveries,
+  normalizeDelivery,
+  getLatestConsentForLead,
+  getConsentState,
+  markDoNotReplay,
+  type VendorResult
+} from '../lib/ledger';
+import { isBlockedByConsentState } from '../lib/consent-log';
 import type { HashedUserData } from '../lib/hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
@@ -48,6 +56,7 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
 
   let succeeded = 0;
   let failed = 0;
+  let suppressed = 0;
 
   for (const { key, record } of toRetry) {
     try {
@@ -56,6 +65,38 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         await recordRetryDelivery(env, record, result);
         await deleteDeadLetter(env, key);
         succeeded++;
+      } else if (result.skipped && result.skip_reason === 'consent_withdrawn') {
+        // 2.5: a visszavonás NEM tranziens állapot — a rekord óránkénti újra-
+        // skippelése a 7 napos lejáratig csak zaj lenne, és a dead-archívumból
+        // egy admin-replay újra kiküldhetné. Ehelyett: do_not_replay=1 (permanens
+        // szuppresszió az idempotency táblában) + 'skipped' ledger-sor (a monitor
+        // lássa, MIÉRT nincs kézbesítés) + a DLQ-példány törlése. A törlés CSAK a
+        // sikeres jelölés után — ha a jelölés elbukik, a rekord marad, és a
+        // következő cron-kör újra próbálja.
+        await recordDeliveries(env, {
+          event_id: String(record.event_payload.event_id ?? ''),
+          lead_id: record.lead_id,
+          site_id: record.site_id,
+          event_name: String(record.event_payload.event_name ?? ''),
+          origin: 'retry',
+          records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
+        });
+        const marked = await markDoNotReplay(
+          env,
+          record.site_id,
+          String(record.event_payload.event_name ?? ''),
+          String(record.event_payload.event_id ?? '')
+        );
+        if (marked) await deleteDeadLetter(env, key);
+        logStructured({
+          level: 'info',
+          message:
+            'DLQ record suppressed — consent withdrawn since capture (do_not_replay=1, record removed)',
+          site_id: record.site_id,
+          platform: record.platform,
+          lead_id: record.lead_id
+        });
+        suppressed++;
       } else {
         if (result.skipped) {
           logSkippedRetry(record);
@@ -135,6 +176,7 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
     retried: toRetry.length,
     succeeded,
     failed,
+    suppressed_consent_withdrawn: suppressed,
     expired_found: expired.length,
     expired_archived: archivedExpired
   });
@@ -234,6 +276,26 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
     return sendToGA4MP(siteConfig, ga4Payload);
   }
   if (record.platform === 'gads') {
+    // CMP Fázis 2 (2.5): MINDEN replay előtt a consent_log AKTUÁLIS állapota
+    // (legmagasabb revision) dönt, nem a capture-kori jel. Ez a retrySingle az
+    // EGYETLEN közös pontja mind a négy replay-útnak (cron, Queues consumer,
+    // admin single/bulk), ezért a kapu ide kerül. lead_id vagy consent_id nélkül
+    // (a teljes CookieYes-flotta) az ág bitre a mai — a Fázis 2 szerveroldala
+    // inert marad, amíg egy site nem ír consent_id-s receiptet.
+    if (record.lead_id) {
+      const leadConsent = await getLatestConsentForLead(env, record.site_id, record.lead_id);
+      if (leadConsent?.consent_id) {
+        const state = await getConsentState(env, record.site_id, leadConsent.consent_id);
+        if (isBlockedByConsentState(state)) {
+          return {
+            success: true,
+            skipped: true,
+            skip_reason: 'consent_withdrawn',
+            error: `gads replay skipped: current consent state is ${state?.decision} (revision ${state?.revision})`
+          };
+        }
+      }
+    }
     // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager
     // API-n megy, NEM a sunset uploadClickConversions-ön (az új adopternek
     // CUSTOMER_NOT_ALLOWLISTED-et ad). A retry-nak UGYANAZT az utat kell használnia.

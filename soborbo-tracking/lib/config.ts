@@ -14,10 +14,27 @@
 
 export type Market = 'GB' | 'HU';
 
+/**
+ * CMP Fázis 2: melyik CMP fut a site-on. A default MINDEN oldalon 'cookieyes' —
+ * a `PUBLIC_TRACKING_CONSENT_PROVIDER=sbo` átállítása EMBERI, pilotonkénti
+ * döntés (brief tiltólista #1). Bármely nem-'sbo' érték 'cookieyes'-ként
+ * értelmeződik: egy elgépelt env-érték ne kapcsolhassa ki a futó CMP-t.
+ */
+export type ConsentProvider = 'cookieyes' | 'sbo';
+
 export interface TrackingConfig {
   country: Market;
   currency: string;
   locale: 'en' | 'hu';
+  consentProvider: ConsentProvider;
+  /**
+   * A site adatkezelési tájékoztatójának verziója (consent_log.policy_version).
+   * A site állítja be (PUBLIC_TRACKING_POLICY_VERSION); a default szándékosan
+   * kimondja, hogy NINCS beállítva — a pilot élesítési checklist része.
+   */
+  policyVersion: string;
+  /** A consent-szabályrendszer címkéje (consent_log.ruleset). */
+  ruleset: string;
 }
 
 function readEnv(key: string): string | undefined {
@@ -38,10 +55,18 @@ function readEnv(key: string): string | undefined {
  * böngészőbe másolódik, nincs bundler-injektálás). A gateway minimuma:
  * Serverside `src/lib/consent.ts` MIN_CLIENT_LIB_VERSION.
  */
-export const CLIENT_LIB_VERSION = '6.1.0';
+export const CLIENT_LIB_VERSION = '6.2.0';
 
 export const trackingConfig: TrackingConfig = {
   country: (readEnv('PUBLIC_TRACKING_COUNTRY') as Market) || 'GB',
   currency: readEnv('PUBLIC_TRACKING_CURRENCY') || 'GBP',
   locale: (readEnv('PUBLIC_TRACKING_LOCALE') as 'en' | 'hu') || 'en',
+  consentProvider: readEnv('PUBLIC_TRACKING_CONSENT_PROVIDER') === 'sbo' ? 'sbo' : 'cookieyes',
+  policyVersion: readEnv('PUBLIC_TRACKING_POLICY_VERSION') || 'policy-unset',
+  ruleset: readEnv('PUBLIC_TRACKING_RULESET') || 'eea_uk',
 };
+
+/** EGY helyen definiált provider-kérdés — ne szóródjon `=== 'sbo'` összehasonlítás. */
+export function isSboConsentProvider(): boolean {
+  return trackingConfig.consentProvider === 'sbo';
+}

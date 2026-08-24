@@ -109,6 +109,8 @@ export type ConsentSourceName =
   | 'cookieyes_api'
   | 'override'
   | 'server_cookie'
+  /** CMP Fázis 2: a saját `sbo_consent` süti (provider='sbo' site-ok kliens-libje). */
+  | 'sbo_cookie'
   | 'none';
 
 const CONSENT_SOURCE_NAMES: ReadonlySet<string> = new Set<ConsentSourceName>([
@@ -116,6 +118,7 @@ const CONSENT_SOURCE_NAMES: ReadonlySet<string> = new Set<ConsentSourceName>([
   'cookieyes_api',
   'override',
   'server_cookie',
+  'sbo_cookie',
   'none'
 ]);
 

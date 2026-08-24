@@ -21,10 +21,11 @@
  */
 
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
+import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
   getFbp, getFbcCookie, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
 } from './persistence';
-import { CLIENT_LIB_VERSION } from './config';
+import { CLIENT_LIB_VERSION, isSboConsentProvider } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
 import { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS } from './event-contract';
@@ -114,6 +115,22 @@ function getConsentState(): ConsentState | undefined {
   const override = (window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent;
   if (override && typeof override === 'object') return override;
 
+  // CMP Fázis 2: provider='sbo' alatt a jelek a SAJÁT sütiből épülnek — ugyanaz
+  // az egy forrás, amiből a dispatch-kapuk is olvasnak (nincs második igazság).
+  // Nincs döntés → undefined → a Worker a require_consent szabálya szerint dönt,
+  // pontosan úgy, mint a hiányzó CookieYes-süti esetén.
+  if (isSboConsentProvider()) {
+    const s = readSboConsent();
+    if (!s) return undefined;
+    const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
+    return {
+      ad_user_data: sig(s.marketing),
+      ad_personalization: sig(s.marketing),
+      ad_storage: sig(s.marketing),
+      analytics_storage: sig(s.analytics)
+    };
+  }
+
   const raw = getCookie('cookieyes-consent');
   if (!raw) return undefined;
 
@@ -159,8 +176,14 @@ export interface ConsentSourceSnapshot {
 export interface ConsentSourcesPayload {
   cookie: ConsentSourceSnapshot;
   api: ConsentSourceSnapshot;
-  source_used: 'cookieyes_cookie' | 'cookieyes_api' | 'override' | 'none';
+  source_used: 'cookieyes_cookie' | 'cookieyes_api' | 'override' | 'sbo_cookie' | 'none';
   client_lib_version: string;
+  /**
+   * A döntés kora másodpercben. CSAK provider='sbo' alatt létezik (a saját süti
+   * timestampet hordoz; a CookieYes-é nem) — a szerver TRK-910-004 (lejárt
+   * consent) kódja erre vár.
+   */
+  consent_age_s?: number;
   /** Nyers stringek — a gateway CSAK mismatch esetén tárolja (consent_debug). */
   raw_cookie?: string;
   raw_api?: string;
@@ -227,24 +250,36 @@ export function collectConsentSources(): ConsentSourcesPayload {
   const hasOverride =
     typeof window !== 'undefined' &&
     Boolean((window as unknown as { __trackingConsent?: ConsentState }).__trackingConsent);
+
+  // CMP Fázis 2: provider='sbo' alatt a döntést a saját süti hajtja, és a
+  // döntés kora is ismert (a CookieYes sütije timestamp nélküli — ott a mező
+  // továbbra sincs). A cookie/api snapshotok NEM váltanak jelentést: alattuk
+  // változatlanul a CookieYes olvasata megy — a párhuzamos mérési ablak (2.4)
+  // receipt-oldali evidenciája pont ez.
+  const sboState = !hasOverride && isSboConsentProvider() ? readSboConsent() : null;
   const sourceUsed: ConsentSourcesPayload['source_used'] = hasOverride
     ? 'override'
-    : cookiePresent
-      ? 'cookieyes_cookie'
-      : apiPresent
-        ? 'cookieyes_api'
-        : 'none';
+    : sboState
+      ? 'sbo_cookie'
+      : isSboConsentProvider()
+        ? 'none'
+        : cookiePresent
+          ? 'cookieyes_cookie'
+          : apiPresent
+            ? 'cookieyes_api'
+            : 'none';
 
   return {
     cookie,
     api,
     source_used: sourceUsed,
     client_lib_version: CLIENT_LIB_VERSION,
+    consent_age_s: sboConsentAgeSeconds(sboState),
     raw_cookie: rawCookie,
     raw_api: rawApi
-    // `consent_age_s` SZÁNDÉKOSAN hiányzik: a `cookieyes-consent` süti nem
-    // hordoz timestampet, és heurisztikát nem találunk ki rá. A gateway
-    // receiptjén NULL marad, amíg nincs saját CMP.
+    // CookieYes alatt a `consent_age_s` SZÁNDÉKOSAN hiányzik: a
+    // `cookieyes-consent` süti nem hordoz timestampet, és heurisztikát nem
+    // találunk ki rá — a gateway receiptjén NULL marad.
   };
 }
 
@@ -438,6 +473,11 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     client_id: clientId,
     session_id: sessionId,
     consent: payload.consent || getConsentState(),
+    // CMP Fázis 2 (1.3): a döntés-lánc azonosítója a konverzió receiptjére —
+    // ezen keresztül oldja fel az offline/replay ág a consent_log AKTUÁLIS
+    // állapotát. CookieYes-provider alatt undefined (a mező ki sem megy), a
+    // szerveren NULL — nem hiba.
+    consent_id: isSboConsentProvider() ? readSboConsent()?.consentId : undefined,
     // Fázis D telemetria — a döntést NEM befolyásolja, csak jelenti, mit láttak
     // a párhuzamos consent-források ebben a pillanatban.
     consent_sources: collectConsentSources(),

@@ -34,6 +34,9 @@ declare global {
   }
 }
 
+import { isSboConsentProvider } from './config';
+import { readSboConsent, SBO_CONSENT_EVENT } from './consent-sbo-state';
+
 export type ConsentCategory = 'necessary' | 'functional' | 'analytics' | 'performance' | 'advertisement';
 
 function getCookieYesConsent(): Record<ConsentCategory, boolean> | null {
@@ -41,6 +44,31 @@ function getCookieYesConsent(): Record<ConsentCategory, boolean> | null {
   if (typeof window.getCkyConsent !== 'function') return null;
   try { return window.getCkyConsent().categories; }
   catch { return null; }
+}
+
+/**
+ * CMP Fázis 2 — provider-elágazás. `provider='sbo'` alatt a consent-kapuk a
+ * SAJÁT `sbo_consent` sütiből olvasnak, SZINKRONBAN (consent-sbo-state.ts) —
+ * betöltési verseny nincs, mert nincs mire várni. A CookieYes-út (minden mai
+ * site defaultja) BITRE változatlan. A sbo-állapot ugyanabba a kategória-alakba
+ * fordul, amit a CookieYes-hívók ismernek: analytics → analytics,
+ * marketing → advertisement (a functional/performance nálunk nem létező
+ * kategória → false).
+ */
+function getSboConsentAsCategories(): Record<ConsentCategory, boolean> | null {
+  const s = readSboConsent();
+  if (!s) return null;
+  return {
+    necessary: true,
+    functional: false,
+    analytics: s.analytics,
+    performance: false,
+    advertisement: s.marketing
+  };
+}
+
+function getProviderConsent(): Record<ConsentCategory, boolean> | null {
+  return isSboConsentProvider() ? getSboConsentAsCategories() : getCookieYesConsent();
 }
 
 /**
@@ -64,14 +92,14 @@ function isDevMode(): boolean {
 }
 
 export function hasMarketingConsent(): boolean {
-  const c = getCookieYesConsent();
+  const c = getProviderConsent();
   if (!c) return isDevMode();
   // Ads/marketing category in CookieYes is `advertisement`, NOT `marketing`.
   return c.advertisement === true;
 }
 
 export function hasAnalyticsConsent(): boolean {
-  const c = getCookieYesConsent();
+  const c = getProviderConsent();
   if (!c) return isDevMode();
   return c.analytics === true;
 }
@@ -81,11 +109,16 @@ export function hasAnyConsent(): boolean {
   return hasAnalyticsConsent() || hasMarketingConsent();
 }
 
+/** A provider-helyes change-event neve. */
+function consentUpdateEventName(): string {
+  return isSboConsentProvider() ? SBO_CONSENT_EVENT : 'cookieyes_consent_update';
+}
+
 export function onConsentChange(
   callback: (consent: Record<ConsentCategory, boolean>) => void,
 ): void {
-  document.addEventListener('cookieyes_consent_update', () => {
-    const c = getCookieYesConsent();
+  document.addEventListener(consentUpdateEventName(), () => {
+    const c = getProviderConsent();
     if (c) callback(c);
   });
 }
@@ -95,17 +128,18 @@ export function waitForConsent(
   timeoutMs = 5_000,
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const c = getCookieYesConsent();
+    const eventName = consentUpdateEventName();
+    const c = getProviderConsent();
     if (c?.[category]) { resolve(true); return; }
     const handler = () => {
-      if (getCookieYesConsent()?.[category]) {
-        document.removeEventListener('cookieyes_consent_update', handler);
+      if (getProviderConsent()?.[category]) {
+        document.removeEventListener(eventName, handler);
         resolve(true);
       }
     };
-    document.addEventListener('cookieyes_consent_update', handler);
+    document.addEventListener(eventName, handler);
     setTimeout(() => {
-      document.removeEventListener('cookieyes_consent_update', handler);
+      document.removeEventListener(eventName, handler);
       resolve(false);
     }, timeoutMs);
   });
