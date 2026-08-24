@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 
 import { instrumentationScript } from './lib/instrument.mjs';
 import { classifyRequest, isFirstParty } from './lib/classify.mjs';
-import { SELECTORS, TEXT_PATTERNS, bannerProbeScript } from './lib/banner.mjs';
+import { selectorsForCmp, TEXT_PATTERNS, bannerProbeScript } from './lib/banner.mjs';
 import {
   evaluateAfterReject,
   evaluateBannerUi,
@@ -222,26 +222,34 @@ async function capture(context, page, requests, since) {
 
 // ── Banner-interakció (a KIZÁRÓLAGOS kattintás-felület) ─────────────────────
 
-const probeConfig = {
-  container: SELECTORS.container,
-  accept: SELECTORS.accept,
-  reject: SELECTORS.reject,
-  settings: SELECTORS.settings,
-  revisit: SELECTORS.revisit,
-  acceptText: { source: TEXT_PATTERNS.accept.source, flags: TEXT_PATTERNS.accept.flags },
-  rejectText: { source: TEXT_PATTERNS.reject.source, flags: TEXT_PATTERNS.reject.flags },
-  settingsText: { source: TEXT_PATTERNS.settings.source, flags: TEXT_PATTERNS.settings.flags }
-};
+/**
+ * CMP Fázis 2.7: a szonda-konfiguráció a site `cmp` mezőjéből paramétereződik —
+ * `sbo` → a saját banner szelektorai (SBO_SELECTORS), minden más → CookieYes +
+ * szöveg-fallback (a korábbi viselkedés változatlanul).
+ */
+function probeConfigFor(cmp) {
+  const sel = selectorsForCmp(cmp);
+  return {
+    container: sel.container,
+    accept: sel.accept,
+    reject: sel.reject,
+    settings: sel.settings,
+    revisit: sel.revisit,
+    acceptText: { source: TEXT_PATTERNS.accept.source, flags: TEXT_PATTERNS.accept.flags },
+    rejectText: { source: TEXT_PATTERNS.reject.source, flags: TEXT_PATTERNS.reject.flags },
+    settingsText: { source: TEXT_PATTERNS.settings.source, flags: TEXT_PATTERNS.settings.flags }
+  };
+}
 
-async function probeBanner(page) {
-  return page.evaluate(bannerProbeScript(), probeConfig).catch(() => null);
+async function probeBanner(page, cmp) {
+  return page.evaluate(bannerProbeScript(), probeConfigFor(cmp)).catch(() => null);
 }
 
 /**
  * Kattintás a banner egy MEGNEVEZETT gombjára. Csak a felderített szelektorokat
  * vagy a szöveg-mintát fogadja el — semmi mást. `null`-t ad, ha nincs ilyen gomb.
  */
-async function clickBannerButton(page, kind) {
+async function clickBannerButton(page, kind, cmp) {
   // A kattintás EREDMÉNYE számít, nem az, hogy találtunk-e gombot. Egy látható,
   // de letakart/leváló gombon a click() timeoutol — ha ezt elnyelnénk és mégis
   // „sikert" adnánk vissza, a C forgatókönyv a VÁLTOZATLAN, döntés előtti
@@ -259,7 +267,7 @@ async function clickBannerButton(page, kind) {
   };
 
   let lastFailure = null;
-  for (const sel of SELECTORS[kind] || []) {
+  for (const sel of selectorsForCmp(cmp)[kind] || []) {
     const r = await attempt(page.locator(sel).first(), sel);
     if (typeof r === 'string') return r;
     if (r) lastFailure = r;
@@ -352,7 +360,7 @@ async function runSite(browserName, browser, site, args, outDir) {
     const t0 = Date.now();
     await page.goto(site.url, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(SETTLE_MS);
-    const banner = await probeBanner(page);
+    const banner = await probeBanner(page, site.cmp);
     const beforeDecision = await capture(context, page, requests, t0);
     beforeDecision.noscript_gtm_iframe = await detectNoscriptIframe(page);
 
@@ -437,7 +445,7 @@ async function runDecisionScenario(browser, site, args, kind, blocked) {
     // mérés pont a döntés KÖVETKEZMÉNYÉT hallgatná el. Az öntesztet ez a hiba
     // buktatta először.
     const boundary = Date.now();
-    const clicked = await clickBannerButton(page, kind);
+    const clicked = await clickBannerButton(page, kind, site.cmp);
     out.clicked = clickSucceeded(clicked) ? clicked : null;
     if (clicked && !clickSucceeded(clicked)) out.click_error = clicked;
     if (clickSucceeded(clicked)) {
@@ -467,7 +475,7 @@ async function runWithdrawalScenario(browser, site, args, blocked) {
   try {
     await page.goto(site.url, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(SETTLE_MS);
-    const accepted = await clickBannerButton(page, 'accept');
+    const accepted = await clickBannerButton(page, 'accept', site.cmp);
     if (!clickSucceeded(accepted)) {
       out.reason = accepted
         ? `ACCEPT_CLICK_FAILED — ${accepted.error}`
@@ -479,7 +487,7 @@ async function runWithdrawalScenario(browser, site, args, blocked) {
     await page.waitForTimeout(SETTLE_MS);
 
     const beforeCookies = await context.cookies();
-    const revisit = await clickBannerButton(page, 'revisit');
+    const revisit = await clickBannerButton(page, 'revisit', site.cmp);
     if (!clickSucceeded(revisit)) {
       out.reason = 'NO_REVISIT_UI — nincs elérhető visszavonó felület.';
       out.cookies_after_accept = beforeCookies.map((c) => c.name);
@@ -487,7 +495,7 @@ async function runWithdrawalScenario(browser, site, args, blocked) {
     }
     await page.waitForTimeout(1_000);
     const boundary = Date.now();
-    const rejected = await clickBannerButton(page, 'reject');
+    const rejected = await clickBannerButton(page, 'reject', site.cmp);
     if (!clickSucceeded(rejected)) {
       out.reason = rejected
         ? `REVISIT_REJECT_CLICK_FAILED — ${rejected.error}`
@@ -540,7 +548,7 @@ async function runGpcScenario(browser, site, args, blocked) {
       ['ga4', 'google_ads', 'meta', 'gateway'].includes(r.category)
     ).length;
     out.gtm_loaded = cap.requests.some((r) => r.category === 'gtm');
-    out.banner_visible = Boolean((await probeBanner(page))?.banner_visible);
+    out.banner_visible = Boolean((await probeBanner(page, site.cmp))?.banner_visible);
     out.note = 'Csak megfigyelés — az A forgatókönyvvel összevetve látszik, változtat-e bármit a Sec-GPC fejléc.';
   } catch (err) {
     out.error = String(err && err.message ? err.message : err).slice(0, 300);
