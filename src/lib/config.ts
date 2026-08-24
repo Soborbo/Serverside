@@ -251,8 +251,30 @@ export async function countSiteConfigs(env: Env): Promise<number> {
  * összegyűjtött listát adja vissza (a riasztás inkább maradjon el, mint hogy
  * fals pozitívot adjon részleges lista miatt).
  */
-export async function listMonitoredSiteConfigs(env: Env): Promise<SiteConfig[]> {
+/**
+ * A monitorozott site-configok + AZ, HOGY A LISTA TELJES-E.
+ *
+ * MIÉRT KELL A `complete` (2026-08-24 review, HIGH): a KV-listázás lapozás közben
+ * elbukhat, és ilyenkor az addig összegyűjtött RÉSZLISTA jön vissza. Aki ezt teljesnek
+ * hiszi és EXCLUSION FILTERKÉNT használja, az a hiányzó site-okat NÉMÁN kizárja a
+ * mérésből: 15 site-ból 8 után elbukó listázás mellett a maradék 7 offline sorai
+ * kiszűrődnek, finding nem keletkezik, és a monitor tisztának látszik. Ez pontosan az
+ * a hibaosztály, ami ellen az egész riasztási lánc épült.
+ *
+ * A `complete: false` NEM azt jelenti, hogy a lista használhatatlan — azt, hogy
+ * NEGATÍV következtetést (,,ez a site nincs a listán, tehát hagyjuk ki") nem szabad
+ * belőle levonni.
+ */
+export interface MonitoredSiteConfigs {
+  configs: SiteConfig[];
+  complete: boolean;
+}
+
+export async function listMonitoredSiteConfigsWithCompleteness(
+  env: Env
+): Promise<MonitoredSiteConfigs> {
   const bySiteId = new Map<string, SiteConfig>();
+  let complete = true;
   try {
     let cursor: string | undefined;
     for (;;) {
@@ -271,14 +293,27 @@ export async function listMonitoredSiteConfigs(env: Env): Promise<SiteConfig[]> 
       cursor = page.cursor;
     }
   } catch (err) {
+    // A részlista NEM dobódik el (a digest-oldali pozitív használat továbbra is
+    // értelmes rajta) — de a hiányosságot MEGJELÖLJÜK.
+    complete = false;
     logStructured({
       level: 'error',
       error_code: TrackingErrorCode.KV_READ_FAILED,
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.KV_READ_FAILED],
+      partial_site_configs: bySiteId.size,
       error: err instanceof Error ? err.message : String(err)
     });
   }
-  return [...bySiteId.values()];
+  return { configs: [...bySiteId.values()], complete };
+}
+
+/**
+ * Back-compat burkoló azoknak a hívóknak, akik a listát csak POZITÍV irányban
+ * használják (végigiterálnak rajta). Aki NEGATÍV következtetést von le belőle
+ * (kizárás/szűrés), az KÖTELEZŐEN a `…WithCompleteness` változatot használja.
+ */
+export async function listMonitoredSiteConfigs(env: Env): Promise<SiteConfig[]> {
+  return (await listMonitoredSiteConfigsWithCompleteness(env)).configs;
 }
 
 /**

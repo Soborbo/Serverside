@@ -541,6 +541,17 @@ export interface OfflineLastAcceptedRow {
  *
  * A `blocked_by` feloldása a HÍVÓ dolga (config + KV kell hozzá) — ezért függvényként
  * jön be, nem beégetve: így a pure mag tesztelhető marad.
+ *
+ * A KULCSHALMAZ A KÉT ABLAK UNIÓJA (2026-08-24 review, HIGH). Korábban CSAK a
+ * `received24` sorain iteráltunk, és a `received7d` legfeljebb kiegészítette a már
+ * meglévő kulcsokat. Következmény: egy 4 nappal ezelőtt beérkezett, azóta soha nem
+ * kézbesített lifecycle-esemény NEM kapott lábat — mert az elmúlt 24 órában nem jött
+ * belőle semmi —, tehát a 7 napos ABSZOLÚT detektor pont arra az esetre nem futott le,
+ * amire készült. A hiba a korábbi teszten sem látszott, mert az `received: 1,
+ * received_7d: 6`-tal dolgozott, vagyis mindig volt 24 órás kulcs is.
+ *
+ * A hiányzó 24 órás érték NULLA (nem a 7 napos!): a regresszió-detektor `expected24 > 0`
+ * feltétele így helyesen néma marad, és csak az abszolút ág szólal meg.
  */
 export function assembleOfflineLegs(
   received24: OfflineReceivedRow[],
@@ -573,29 +584,46 @@ export function assembleOfflineLegs(
 
   const d24 = agg(delivered24);
   const d7 = agg(delivered7d);
-  const r7 = new Map(received7d.map((r) => [key(r.site_id, r.event_name), r.received]));
   const la = new Map(lastAccepted.map((r) => [key(r.site_id, r.event_name), r.last_accepted_at]));
 
-  const bySite = new Map<string, OfflineLegInput[]>();
+  // A kulcshalmaz a KÉT ablak uniója. A 24 órás sorok mennek előre (a riport
+  // sorrendje így stabil marad), utánuk a CSAK a 7 napos ablakban létező kulcsok.
+  const legKeys = new Map<string, { site_id: string; event_name: string }>();
+  const r24 = new Map<string, number>();
+  const r7 = new Map<string, number>();
   for (const r of received24) {
     const k = key(r.site_id, r.event_name);
+    legKeys.set(k, { site_id: r.site_id, event_name: r.event_name });
+    r24.set(k, r.received);
+  }
+  for (const r of received7d) {
+    const k = key(r.site_id, r.event_name);
+    if (!legKeys.has(k)) legKeys.set(k, { site_id: r.site_id, event_name: r.event_name });
+    r7.set(k, r.received);
+  }
+
+  const bySite = new Map<string, OfflineLegInput[]>();
+  for (const [k, { site_id, event_name }] of legKeys) {
     const a24 = d24.get(k);
     const a7 = d7.get(k);
+    const received = r24.get(k) ?? 0;
     const leg: OfflineLegInput = {
-      site_id: r.site_id,
-      event_name: r.event_name,
-      received: r.received,
+      site_id,
+      event_name,
+      received,
       accepted: a24?.accepted ?? 0,
       rejected: a24?.rejected ?? 0,
       skips: a24?.skips ?? {},
-      received_7d: r7.get(k) ?? r.received,
+      // A 7 napos ablak a 24 órás SZUPERHALMAZA; ha mégis hiányzik (defenzív ág),
+      // a 24 órás értékre esünk vissza, nem nullára.
+      received_7d: r7.get(k) ?? received,
       accepted_7d: a7?.accepted ?? 0,
       skips_7d: a7?.skips ?? {},
-      blocked_by: resolveBlock(r.site_id, r.event_name),
+      blocked_by: resolveBlock(site_id, event_name),
       last_accepted_at: la.get(k) ?? null
     };
-    if (!bySite.has(r.site_id)) bySite.set(r.site_id, []);
-    bySite.get(r.site_id)!.push(leg);
+    if (!bySite.has(site_id)) bySite.set(site_id, []);
+    bySite.get(site_id)!.push(leg);
   }
   return bySite;
 }
@@ -730,7 +758,8 @@ async function buildOfflineBlockResolver(
 async function fetchOfflineLegs(
   env: Env,
   sinceIso: string,
-  siteConfigs: SiteConfig[]
+  siteConfigs: SiteConfig[],
+  configsComplete: boolean
 ): Promise<Map<string, OfflineLegInput[]>> {
   const ledger = env.LEDGER!;
   const since7d = new Date(Date.now() - OFFLINE_ABSOLUTE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -792,15 +821,29 @@ async function fetchOfflineLegs(
 
   // `monitoring: false` site-ok kihagyása — ugyanaz a szabály, mint a digestben: egy
   // soha-nem-konvertáló dummy minden nap riasztana, és a riasztás-fáradtság pont a
-  // valódi néma hibát fedné el. ÜRES config-lista (KV-hiba vagy on-demand hívás)
-  // esetén NEM szűrünk: a csend rosszabb, mint egy fölösleges sor.
-  const monitored = siteConfigs.length > 0 ? new Set(siteConfigs.map((c) => c.site_id)) : null;
-  const received24 = (recv24.results ?? []).filter((r) => !monitored || monitored.has(r.site_id));
+  // valódi néma hibát fedné el.
+  //
+  // DE: a szűrő CSAK TELJES config-listával használható (2026-08-24 review, HIGH). A
+  // KV-listázás lapozás közben elbukhat, és a `listMonitoredSiteConfigs` ilyenkor az
+  // addig összegyűjtött RÉSZLISTÁT adja vissza. Ha ezt teljesnek hinnénk, 15 site-ból
+  // 8 után elbukó listázás mellett a maradék 7 site offline sorai kiszűrődnének,
+  // findingot nem termelnének, és a monitor tisztának látszana — pontosan az a
+  // hibaosztály, ami ellen az egész lánc épült. Nem teljes lista (vagy üres lista,
+  // pl. on-demand hívás) → NEM szűrünk: a fölösleges sor olcsóbb, mint a csend.
+  const monitored = configsComplete && siteConfigs.length > 0
+    ? new Set(siteConfigs.map((c) => c.site_id))
+    : null;
+  const keep = (r: { site_id: string }) => !monitored || monitored.has(r.site_id);
+  const received24 = (recv24.results ?? []).filter(keep);
+  // A szűrőnek MINDKÉT ablakra állnia kell: a 7 napos kulcsok azóta önálló lábat
+  // hoznak létre (lásd assembleOfflineLegs), tehát szűretlenül a `monitoring: false`
+  // site-ok visszaszivárognának a riportba.
+  const received7d = (recv7d.results ?? []).filter(keep);
   const resolveBlock = await buildOfflineBlockResolver(env, siteConfigs);
 
   return assembleOfflineLegs(
     received24,
-    recv7d.results ?? [],
+    received7d,
     del24.results ?? [],
     del7d.results ?? [],
     lastAcc.results ?? [],
@@ -811,7 +854,9 @@ async function fetchOfflineLegs(
 export async function fetchReconInputs(
   env: Env,
   sinceIso: string,
-  siteConfigs: SiteConfig[] = []
+  siteConfigs: SiteConfig[] = [],
+  /** A config-lista TELJES-e. `false` → tilos exclusion filterként használni. */
+  configsComplete = false
 ): Promise<SiteReconInput[] | null> {
   if (!env.LEDGER) return null;
   try {
@@ -844,7 +889,7 @@ export async function fetchReconInputs(
     // ugyanaz a viselkedés, mint a többi lekérdezésnél. Csendes részleges eredményt
     // NEM adunk: az „nincs offline láb" és a „nem tudtuk lekérdezni" nem
     // keverhető össze.
-    const offlineLegs = await fetchOfflineLegs(env, sinceIso, siteConfigs);
+    const offlineLegs = await fetchOfflineLegs(env, sinceIso, siteConfigs, configsComplete);
     return appendOfflineOnlySites(
       assembleReconInputs(
         events.results ?? [],

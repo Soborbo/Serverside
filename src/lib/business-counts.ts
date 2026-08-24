@@ -123,9 +123,23 @@ export function validateBusinessCounts(
 }
 
 /**
- * Idempotens felírás: a PK (site_id, date, event_name) ütközésén FELÜLÍR. Egy késve
- * érkező, javított aggregátum tehát javítja a korábbit — az újraküldés biztonságos,
- * ugyanaz a minta, mint a CRM outbox determinisztikus kulcsainál.
+ * TELJES NAPI SNAPSHOT-CSERE, nem részleges upsert (2026-08-24 review, MEDIUM).
+ *
+ * A payload a CRM adott napi TELJES aggregátuma, ezért a tárolásnak is teljes cserének
+ * kell lennie. A korábbi „csak upsert" modell csak azokra az event-nevekre volt
+ * javító hatású, amiket a MÁSODIK payload is tartalmazott:
+ *
+ *     első report:      lead_qualified = 5
+ *     javított report:  counts = []          →  a régi 5 BENT MARADT
+ *
+ * …és a recon egy olyan üzleti darabszámhoz mérte a gateway-t, amit a CRM már
+ * visszavont. Ezért: a nap NEM-heartbeat sorainak törlése, majd a heartbeat + az
+ * aktuális snapshot beszúrása — mind EGY `batch()`-ben, ami D1-en tranzakció, tehát
+ * nincs olyan pillanat, amikor a nap üresen látszik.
+ *
+ * Az alternatíva (a CRM küldjön minden kanonikus lifecycle-eventet `count: 0`-val)
+ * elvetve: az megkövetelné, hogy a CRM ismerje a teljes event-listát, és minden új
+ * offline event csendben rést nyitna.
  *
  * `false` visszatérés = a sorok NEM biztos, hogy tárolódtak → a hívó 500-at kapjon,
  * hogy retry-olhasson (a néma elnyelés pont az a hibaosztály, ami ellen a P1.2 szól).
@@ -138,19 +152,27 @@ export async function storeBusinessCounts(
   if (!env.LEDGER) return false;
   const receivedAt = new Date().toISOString();
   try {
-    const stmt = env.LEDGER.prepare(
+    const insert = env.LEDGER.prepare(
       `INSERT INTO business_counts (site_id, date, event_name, count, received_at)
        VALUES (?1, ?2, ?3, ?4, ?5)
        ON CONFLICT(site_id, date, event_name)
        DO UPDATE SET count = excluded.count, received_at = excluded.received_at`
     );
+    // A nap korábbi ÜZLETI sorainak törlése — így egy javított snapshotból KIMARADÓ
+    // event-név is eltűnik, nem csak a benne szereplők frissülnek. A heartbeat sort
+    // NEM töröljük: az életjel, nem darabszám (és úgyis újraíródik alább).
+    const clear = env.LEDGER.prepare(
+      `DELETE FROM business_counts WHERE site_id = ?1 AND date = ?2 AND event_name != ?3`
+    ).bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT);
+
     // A jelzősor MINDIG megy — ez teszi megkülönböztethetővé a „nulla esemény volt"
     // napot a „meg sem szólalt a CRM" naptól. Enélkül egy eseménytelen nap hamis
     // business_source_missing riasztást adna.
     const rows = [
-      stmt.bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT, 0, receivedAt),
+      clear,
+      insert.bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT, 0, receivedAt),
       ...payload.counts.map((c) =>
-        stmt.bind(siteId, payload.date, c.event_name, c.count, receivedAt)
+        insert.bind(siteId, payload.date, c.event_name, c.count, receivedAt)
       )
     ];
     await env.LEDGER.batch(rows);

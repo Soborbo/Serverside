@@ -17,7 +17,7 @@ import {
   type CrossCheckFinding,
   type CrossCheckOutcome
 } from '../lib/cross-check';
-import { listMonitoredSiteConfigs } from '../lib/config';
+import { listMonitoredSiteConfigsWithCompleteness } from '../lib/config';
 import {
   fetchBusinessSourceFindings,
   type BusinessSourceFinding
@@ -58,14 +58,28 @@ export async function handleReconciliation(env: Env): Promise<void> {
   // dependency-állapotához (customer_id / conversion action / OAuth) config kell.
   // KV-hiba esetén üres lista jön vissza — akkor az offline láb NEM némul el,
   // csak a `blocked_by` marad feloldatlan (mérünk, nem hallgatunk).
-  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigs>> = [];
+  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigsWithCompleteness>>['configs'] = [];
+  // A TELJESSÉG külön jel: a KV-listázás lapozás közben elbukhat, és a részlistát
+  // exclusion filterként használva a hiányzó site-ok NÉMÁN kiesnének a mérésből
+  // (2026-08-24 review, HIGH). Hiba esetén is `false`, nem csak throw-nál.
+  let configsComplete = false;
   try {
-    siteConfigs = await listMonitoredSiteConfigs(env);
+    const listed = await listMonitoredSiteConfigsWithCompleteness(env);
+    siteConfigs = listed.configs;
+    configsComplete = listed.complete;
   } catch {
     // már logolva a config-rétegben
   }
+  if (!configsComplete) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE],
+      resolved_site_configs: siteConfigs.length
+    });
+  }
 
-  const inputs = await fetchReconInputs(env, since, siteConfigs);
+  const inputs = await fetchReconInputs(env, since, siteConfigs, configsComplete);
   if (inputs === null) return; // query failed (already logged)
   const summary = summarize(inputs, DEFAULT_THRESHOLDS);
   const offlineReports = collectOfflineReports(inputs);
@@ -99,13 +113,16 @@ export async function handleReconciliation(env: Env): Promise<void> {
     });
   }
 
-  // P1.1 — a BLOKKOLT offline lábak. SZÁNDÉKOSAN nem drift-findingek: a hibájuk
-  // ISMERT (hiányzó OAuth secret / refresh token / customer_id / conversion action),
-  // és a health-check már jelzi — egy második riasztás ugyanarról csak zajt termel,
-  // a riasztás-fáradtság pedig pont a valódi néma hibát fedné el. A recon viszont NEM
-  // lehet néma róluk: enélkül egy config-hiányos site úgy néz ki, mintha nem is
-  // lenne offline lába. Külön kód (TRK-950-015), warning szinten, a critical/warning
-  // SZÁMLÁLÓKON KÍVÜL — az email súlyát nem emelik.
+  // P1.1 — a BLOKKOLT offline lábak. SZÁNDÉKOSAN nem drift-FINDINGEK: a hibájuk ISMERT
+  // (hiányzó OAuth secret / refresh token / customer_id / conversion action), és a
+  // health-check már jelzi — egy második CRITICAL ugyanarról csak zajt termel.
+  //
+  // PONTOSÍTÁS (2026-08-24 review): ez NEM jelenti azt, hogy a blokkolt láb nem generál
+  // levelet. Generál — napi OPERATIONAL WARNING szinten —, és ez szándékos: a
+  // health-check ON-DEMAND (valakinek le kell kérnie), az email viszont PUSH. Amit
+  // elkerülünk, az a második *critical drift finding*, nem a láthatóság. Külön kód
+  // (TRK-950-015), warning szinten, a critical/warning SZÁMLÁLÓKON KÍVÜL — az email
+  // SÚLYÁT nem emeli, de a kimenetelét igen.
   for (const b of blockedLegs) {
     logStructured({
       level: 'warn',
@@ -275,6 +292,10 @@ export async function handleReconciliation(env: Env): Promise<void> {
     cross_check_total_sites: crossOutcome.totalSites,
     cross_check_skipped_legs: crossOutcome.skippedLegs.length,
     cross_check_not_running: crossCheckNotRunning,
+    // DEGRADED: a config-feloldás nem volt teljes, tehát a `monitoring:false` szűrő
+    // ki van kapcsolva, és a blocked_by feloldatlan maradhat. A riport ettől nem
+    // hamis — csak kevésbé szűrt —, de a tényt látni kell.
+    config_enumeration_complete: configsComplete,
     // P1.1 — az offline business-láb állapota MINDIG látszik a napi sorban, akkor is,
     // ha nem termelt findinget. A puszta finding-szám félrevezet, ha a láb blokkolt
     // vagy még nem élesedett (UNARMED) — ugyanaz a tanulság, mint a cross-checknél.
@@ -290,6 +311,7 @@ export async function handleReconciliation(env: Env): Promise<void> {
     crossCheckFailed ||
     crossCheckNotRunning ||
     businessCheckFailed ||
+    !configsComplete ||
     blockedLegs.length > 0
   ) {
     const criticalCount = summary.critical_count + crossCritical + businessCritical;
@@ -313,6 +335,14 @@ export async function handleReconciliation(env: Env): Promise<void> {
             crossOutcome.skippedLegs.map((l) => `${l.site_id}/${l.platform} (${l.reason})`).join(', ')
           )}. Ezek a legek MA nem adtak jelet — a hiányuk nem „tiszta".</p>`
         : '';
+    const degradedConfigNote = configsComplete
+      ? ''
+      : `<p><strong>⚠️ DEGRADED: a SITE_CONFIG felsorolás NEM volt teljes.</strong>
+           ${siteConfigs.length} site-config oldódott fel. A reconciliation emiatt NEM szűrt a
+           <code>monitoring</code> flagre (a részlistából negatív következtetést levonni azt
+           jelentené, hogy a fel nem oldott site-ok némán kiesnek a mérésből), és az offline
+           lábak <code>blocked_by</code> állapota feloldatlan maradhatott. A mai riport tehát
+           bővebb és kevésbé pontos a szokásosnál — nem szűkebb.</p>`;
     const businessFailNote = businessCheckFailed
       ? `<p><strong>⚠️ A CRM business-source check MA NEM FUTOTT LE (${escapeHtml(reconDay)}).</strong>
            A lekérdezés elbukott, vagy nincs D1 LEDGER, vagy a <code>0007</code> migráció nincs kint
@@ -330,6 +360,7 @@ export async function handleReconciliation(env: Env): Promise<void> {
       `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning${subjectSuffix}`,
       failNote +
         notRunningNote +
+        degradedConfigNote +
         businessFailNote +
         skipNote +
         buildDriftEmail(summary.findings, crossFindings, since) +

@@ -1,5 +1,5 @@
 import type { Env } from '../env';
-import { getSiteConfig } from '../lib/config';
+import { lookupSiteConfig } from '../lib/config';
 import { authenticateLeadStatus } from '../lib/admin-auth';
 import { logStructured, CANONICAL_EVENTS } from '../types';
 import { TrackingErrorCode } from '../lib/error-codes';
@@ -39,7 +39,27 @@ export async function handleBusinessCounts(request: Request, env: Env): Promise<
   const hostname = new URL(request.url).hostname;
 
   // CLAUDE.md 14: hostname → KV site-config. Nincs fallback config.
-  const siteConfig = await getSiteConfig(hostname, env);
+  //
+  // `lookupSiteConfig` (nem `getSiteConfig`), mert a kettőt SZÉT KELL VÁLASZTANI
+  // (2026-08-24 review, HIGH):
+  //   tényleg nincs ilyen host  → 404 (permanens)
+  //   a KV-olvasás HIBÁZOTT     → 503 (tranziens, retry-olható)
+  // A `getSiteConfig` mindkettőre `null`-t ad, tehát egy másodperces KV-blip 404-nek
+  // látszott volna. Ez az endpoint ugyan nem közvetlen money path, de PONT azt hivatott
+  // bizonyítani, hogy a money-path események nem vesztek el — ha a CRM sender a 404-et
+  // permanensnek veszi (és ez a szokásos olvasat), egy blip miatt a napi aggregátum
+  // és a heartbeat VÉGLEG eltűnne, és a hallgatás-detektor is hamisan szólalna meg.
+  const lookup = await lookupSiteConfig(hostname, env);
+  if (lookup.unavailable) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.KV_READ_FAILED,
+      message: 'business-counts: site config lookup unavailable (transient)',
+      hostname
+    });
+    return json({ error: 'config_unavailable', detail: 'site config lookup failed; retry' }, 503);
+  }
+  const siteConfig = lookup.config;
   if (!siteConfig) return json({ error: 'unknown_site' }, 404);
 
   if (!(await authenticateLeadStatus(request, env, siteConfig))) {

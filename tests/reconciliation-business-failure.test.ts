@@ -127,3 +127,74 @@ describe('Codex #2 — a business-source láb bukása látható marad', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * 2026-08-24 merge-gate review (#71 hotfix) — HIGH: RÉSZLEGES SITE_CONFIG-listázás.
+ *
+ * A `listMonitoredSiteConfigs` KV-hibánál elkapja a kivételt és az addig összegyűjtött
+ * RÉSZLISTÁT adja vissza. A P1.1 ezt teljesnek vette, és exclusion filterként használta:
+ *
+ *   15 site a KV-ben → a listázás 8 után elbukik → a maradék 7 site offline sorai
+ *   kiszűrődnek → nincs finding → a monitor tisztának látszik.
+ *
+ * Ez pontosan az a hibaosztály, ami ellen az egész lánc épült. RED TEST: a
+ * `configsComplete` jel visszavonásával a degraded-jelzés eltűnik, és a szűrő újra
+ * a részlistára áll.
+ */
+describe('#71 HIGH — részleges config-listázás nem szűkítheti némán a mérést', () => {
+  /** A listázás az 1. lap után dob — a részlista 1 site-ot tartalmaz. */
+  function partialListingEnv(over: Record<string, unknown> = {}) {
+    let page = 0;
+    const empty = { results: [] };
+    return {
+      LEDGER: { prepare: () => ({ bind: () => ({ all: async () => empty }), all: async () => empty }) },
+      SITE_CONFIG: {
+        list: async () => {
+          page++;
+          if (page > 1) throw new Error('KV list failed mid-pagination');
+          return { keys: [{ name: 'painless.example.com' }], list_complete: false, cursor: 'c1' };
+        },
+        get: async () => ({ site_id: 'painless', country_code: 'GB', currency: 'GBP' })
+      },
+      OAUTH_TOKENS: { get: async () => null },
+      ...over
+    } as any;
+  }
+
+  it('a napi log DEGRADED-et jelez: config_enumeration_complete: false', async () => {
+    const lines = captureLogs();
+    await handleReconciliation(partialListingEnv());
+    const completed = lines.find((l) => l.message === 'Reconciliation completed');
+    expect(completed!.config_enumeration_complete).toBe(false);
+  });
+
+  it('külön warning-sor is megy a feloldott site-ok számával', async () => {
+    const lines = captureLogs();
+    await handleReconciliation(partialListingEnv());
+    const warn = lines.find((l) => l.error_code === 'TRK-950-018');
+    expect(warn, 'nincs TRK-950-018 sor a részleges listázásra').toBeDefined();
+    expect(warn!.resolved_site_configs).toBe(1);
+  });
+
+  it('a levél KIMONDJA, hogy a riport bővebb — nem szűkebb', async () => {
+    captureLogs();
+    await handleReconciliation(partialListingEnv());
+    expect(emails).toHaveLength(1);
+    expect(emails[0].html).toContain('DEGRADED');
+    expect(emails[0].html).toContain('NEM szűrt');
+  });
+
+  it('TELJES listázásnál nincs degraded-jelzés (nem zajgenerátor)', async () => {
+    const empty = { results: [] };
+    const lines = captureLogs();
+    await handleReconciliation(
+      makeEnv({
+        LEDGER: { prepare: () => ({ bind: () => ({ all: async () => empty }), all: async () => empty }) },
+        SITE_CONFIG: { list: async () => ({ keys: [], list_complete: true }) }
+      })
+    );
+    const completed = lines.find((l) => l.message === 'Reconciliation completed');
+    expect(completed!.config_enumeration_complete).toBe(true);
+    expect(lines.some((l) => l.error_code === 'TRK-950-018')).toBe(false);
+  });
+});

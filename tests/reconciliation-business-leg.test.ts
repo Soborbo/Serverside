@@ -429,3 +429,76 @@ describe('P1.1 — regressziós korlátok: a böngésző-oldali formulák ÉRINT
     expect(computeSiteDrift(tiny)).toEqual([]);
   });
 });
+
+/**
+ * 2026-08-24 merge-gate review (#71 hotfix) — HIGH.
+ *
+ * A 7 napos ABSZOLÚT detektor kihagyta pont azt az esetet, amire készült: az
+ * `assembleOfflineLegs` KIZÁRÓLAG a `received24` sorain iterált, a `received7d` csak
+ * kiegészítette a már meglévő kulcsokat. Egy 4 nappal ezelőtt beérkezett, azóta soha
+ * nem kézbesített lifecycle-esemény így NEM kapott lábat.
+ *
+ * A korábbi teszt ezt NEM fogta meg, mert `received: 1, received_7d: 6`-tal dolgozott —
+ * vagyis szándékosan volt 24 órás kulcs is.
+ */
+describe('#71 HIGH — a CSAK 7 napos ablakban létező láb is megszületik', () => {
+  const noBlock = () => null;
+
+  it('0 esemény 24h-ban, 4 esemény 7 napban, 0 accepted valaha → CRITICAL', () => {
+    const legs = assembleOfflineLegs(
+      [], // received24: ÜRES — az elmúlt 24 órában nem jött lifecycle-esemény
+      [{ site_id: 'painless', event_name: 'revenue_confirmed', received: 4 }],
+      [],
+      [],
+      [],
+      noBlock
+    );
+    const siteLegs = legs.get('painless');
+    expect(siteLegs, 'nem született láb a csak-7-napos kulcsból').toBeDefined();
+    expect(siteLegs).toHaveLength(1);
+
+    const l = siteLegs![0];
+    // A hiányzó 24 órás érték NULLA, nem a 7 napos — különben a regresszió-detektor
+    // is elsülne, holott az elmúlt 24 órában nincs mit várni.
+    expect(l.received).toBe(0);
+    expect(l.received_7d).toBe(4);
+    expect(deriveOfflineState(l)).toBe('UNARMED');
+
+    const kinds = computeOfflineDrift(l).map((f) => f.kind);
+    expect(kinds).toContain('offline_zero_delivery');
+    expect(computeOfflineDrift(l)[0].detail).toContain('MEG SOHA');
+  });
+
+  it('a 24 órás és a csak-7-napos kulcsok EGYÜTT jönnek ki (unió, nem felülírás)', () => {
+    const legs = assembleOfflineLegs(
+      [{ site_id: 'painless', event_name: 'lead_qualified', received: 2 }],
+      [
+        { site_id: 'painless', event_name: 'lead_qualified', received: 5 },
+        { site_id: 'painless', event_name: 'revenue_confirmed', received: 4 }
+      ],
+      [],
+      [],
+      [],
+      noBlock
+    );
+    const names = legs.get('painless')!.map((l) => l.event_name);
+    expect(names).toContain('lead_qualified');
+    expect(names).toContain('revenue_confirmed');
+    expect(names).toHaveLength(2);
+  });
+
+  it('a csak-7-napos láb is tiszteli a dependency-állapotgépet', () => {
+    // Blokkolt előfeltétel → nincs finding, akkor sem, ha a 7 napos ablakban lenne minta.
+    const legs = assembleOfflineLegs(
+      [],
+      [{ site_id: 'painless', event_name: 'revenue_confirmed', received: 9 }],
+      [],
+      [],
+      [],
+      () => 'oauth_secret_missing' as const
+    );
+    const l = legs.get('painless')![0];
+    expect(deriveOfflineState(l)).toBe('BLOCKED_DEPENDENCY');
+    expect(computeOfflineDrift(l)).toEqual([]);
+  });
+});

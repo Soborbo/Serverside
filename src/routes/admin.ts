@@ -1,7 +1,7 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
-import { getSiteConfig, listMonitoredSiteConfigs } from '../lib/config';
+import { getSiteConfig, listMonitoredSiteConfigsWithCompleteness } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
 import { getLeadTrail, isValidLeadId, markDoNotReplay } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
@@ -232,18 +232,26 @@ async function handleReconReport(request: Request, env: Env): Promise<Response> 
   // A site-configok az offline láb dependency-állapotához kellenek (customer_id /
   // conversion action / OAuth). KV-hiba esetén üres lista → a láb NEM némul el,
   // csak a `blocked_by` marad feloldatlan.
-  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigs>> = [];
+  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigsWithCompleteness>>['configs'] = [];
+  let configsComplete = false;
   try {
-    siteConfigs = await listMonitoredSiteConfigs(env);
+    const listed = await listMonitoredSiteConfigsWithCompleteness(env);
+    siteConfigs = listed.configs;
+    configsComplete = listed.complete;
   } catch {
     // már logolva a config-rétegben
   }
-  const inputs = await fetchReconInputs(env, since, siteConfigs);
+  const inputs = await fetchReconInputs(env, since, siteConfigs, configsComplete);
   if (inputs === null) {
     return json({ error: 'ledger_unavailable', detail: 'No D1 LEDGER binding or query failed' }, 503);
   }
   const summary = summarize(inputs, DEFAULT_THRESHOLDS);
-  return json({ window_hours: hours, since, summary, sites: inputs }, 200);
+  // A teljességet a válasz is hordozza: egy on-demand riport sem sugallhatja, hogy
+  // szűrt lista mögött teljes kép van.
+  return json(
+    { window_hours: hours, since, config_enumeration_complete: configsComplete, summary, sites: inputs },
+    200
+  );
 }
 
 // ── GET /admin/leads/:lead_id ────────────────────────────────────────────────
