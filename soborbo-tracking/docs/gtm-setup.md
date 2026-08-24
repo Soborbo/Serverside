@@ -44,7 +44,19 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
 `scroll_depth`.
 
 ## Tags — base
-- **Consent Default** (Custom HTML, Consent Initialization) — CookieYes handles the update.
+
+<!-- TRUTH-ANCHOR: consent-default-is-inline-not-a-gtm-tag -->
+- **Consent Default — NOT a GTM tag.** The Consent Mode default is set **inline in
+  `Tracking.astro`, before the GTM snippet**, and never from inside the container.
+  A Custom HTML "Consent Initialization" tag cannot run early enough: GTM evaluates
+  it *after* the container has loaded, so the default would land after tags have
+  already had a chance to fire. `gen-container.mjs` therefore emits no such tag —
+  do not add one by hand. Who then sends the *update*:
+  - **`cookieyes` sites** (today's default, every live site): the CookieYes script,
+    loaded from `Tracking.astro`.
+  - **`sbo` sites** (pilot only): the synchronous consent boot in `Tracking.astro`.
+    GTM is not loaded at all until a positive decision exists, so there is no
+    pre-consent window to default into.
 - **Conversion Linker** — ad_storage, Initialization. Without it, Google Ads does not
   attribute (gclid → _gcl_aw).
 - **Google Tag (GA4)** — G-XXXXXXXXXX, analytics_storage, All Pages.

@@ -25,6 +25,24 @@ export async function handleOAuthInit(request: Request, env: Env): Promise<Respo
     return new Response('Not found', { status: 404 });
   }
 
+  // vNext P2 — FAIL FAST a hiányzó worker-secretre. Enélkül a redirect
+  // `client_id=undefined`-dal indul, a Google egy általános hibaoldalt ad, és az
+  // operátor a SAJÁT Google-fiókjában keresi a hibát, miközben a worker-config a
+  // baj. (Ugyanez a misdiagnosis-osztály, mint a health-check „run OAuth flow"
+  // üzenete volt egy hiányzó client id mellett.)
+  const missing: string[] = [];
+  if (!env.GADS_OAUTH_CLIENT_ID) missing.push('GADS_OAUTH_CLIENT_ID');
+  if (!env.GADS_OAUTH_CLIENT_SECRET) missing.push('GADS_OAUTH_CLIENT_SECRET');
+  if (missing.length > 0) {
+    return new Response(
+      `OAuth cannot start: missing worker secret(s): ${missing.join(', ')}.\n` +
+        'Set them on the gateway worker first (client id lives in wrangler.toml [vars];\n' +
+        'the secret via `wrangler secret put GADS_OAUTH_CLIENT_SECRET`), then re-run this.\n' +
+        'Completing the Google consent screen would NOT help while these are unset.\n',
+      { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
+    );
+  }
+
   const url = new URL(request.url);
   const customerId = url.searchParams.get('customer_id');
   if (!customerId || !/^\d{10}$/.test(customerId)) {

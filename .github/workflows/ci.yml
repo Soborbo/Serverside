@@ -42,6 +42,12 @@ jobs:
       - name: Contract sync-guard
         run: npm run check:contract
 
+      # P0.5 truth-freeze: a doksi a JELENLEGI modellt irja le, nem a celallapotot.
+      # Kulon lepes, hogy a bukas oka (melyik cafolt utasitas / hianyzo horgony) lathato
+      # legyen a CI-osszefoglaloban, ne egy vitest-stack alatt.
+      - name: Doc truth-freeze gate
+        run: npm run check:docs
+
       - name: Test
         run: npm test
 
