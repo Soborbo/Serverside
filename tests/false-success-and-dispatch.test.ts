@@ -39,7 +39,7 @@ async function lomtalanShapeConfig(withMeta = false) {
     // védőháló az expected_platforms-ból születik, nem a config meglétéből
     // (PR #36) — enélkül az F4-2 zajszűrő not_expected-nek látná és sort sem írna.
     expected_platforms: { smoke: ['meta'] },
-    ...(withMeta ? { meta: { pixel_id: '123', access_token: 'TOKEN' } } : {}),
+    ...(withMeta ? { meta: { pixel_id: '1234567890', access_token: 'TOKEN' } } : {}),
     gads: { customer_id: null, login_customer_id: null },
     crm_token_sha256: await sha256Hex(SITE_TOKEN)
   };

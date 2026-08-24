@@ -39,13 +39,17 @@ const SITE_TOKEN = 'lomtalan-skip-token';
 async function config(opts: {
   withMeta?: boolean;
   expectedSmoke?: string[];
+  /** Formahibás azonosító szimulálásához (kitöltetlen placeholder, elgépelt ID). */
+  metaPixelId?: string;
 }): Promise<Record<string, unknown>> {
   return {
     site_id: 'lomtalan-skip',
     country_code: 'HU',
     currency: 'HUF',
     require_consent: true,
-    ...(opts.withMeta ? { meta: { pixel_id: '123', access_token: 'TOKEN' } } : {}),
+    ...(opts.withMeta
+      ? { meta: { pixel_id: opts.metaPixelId ?? '1234567890', access_token: 'TOKEN' } }
+      : {}),
     ...(opts.expectedSmoke ? { expected_platforms: { smoke: opts.expectedSmoke } } : {}),
     gads: { customer_id: null, login_customer_id: null },
     crm_token_sha256: await sha256Hex(SITE_TOKEN)
@@ -518,5 +522,84 @@ describe('Fan-out AE-metrika — a not_expected scaffold-láb nem ír datapontot
     expect(points.find((p) => p.platform === 'meta')?.success).toBe(1);
     // A nem elvárt lábak továbbra sem mérendők.
     expect(points.map((p) => p.platform)).not.toContain('linkedin');
+  });
+});
+
+/**
+ * Formahibás azonosító — az agykontroll 2026-07-27 … 08-11 regressziós őre.
+ *
+ * A `meta` blokk MEGVOLT, csak a benne lévő pixel_id volt használhatatlan. Mivel a
+ * pixel_id az endpoint-URL ÚTVONALÁBA kerül, a Meta nem validációs hibát adott,
+ * hanem Graph-objektumként próbálta feloldani → 43× HTTP 400 (TRK-600-005),
+ * `warning` súllyal, két héten át. A helyes viselkedés: a hívás EL SEM INDUL, és a
+ * hiányzó blokkal AZONOS retryable ágra fut (DLQ + CRITICAL), mert a kárkép és a
+ * gyógymód is ugyanaz — csak a teendő szövege más.
+ */
+describe('Skip-osztályozás — formahibás azonosító (invalid_identifier)', () => {
+  const identifierAlerts = () =>
+    vi.mocked(sendAlert).mock.calls.filter(
+      (c) => c[1] === TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID
+    );
+
+  async function run(pixelId: string, expectedSmoke: string[] = ['meta']) {
+    const calls = installFetch(200);
+    const { ledger, deliveries } = makeLedger();
+    const { env, deadRecords } = makeEnv({
+      siteConfig: await config({ withMeta: true, expectedSmoke, metaPixelId: pixelId }),
+      ledger
+    });
+    const { ctx, tasks } = collectingCtx();
+
+    await handleConversion(leadRequest(true), env, ctx);
+    await Promise.allSettled(tasks);
+    return { calls, deliveries, deadRecords };
+  }
+
+  it.each([
+    ['kitöltetlen onboarding-placeholder', 'REPLACE_ME_16_DIGIT_PIXEL_ID'],
+    ['üres string', ''],
+    ['szögletes-zárójeles template-változó', '[phone]'],
+    ['nem-numerikus ID', 'PX-1234567890'],
+    ['GA4 measurement ID a pixel_id helyén', 'G-TTZEYC461Q']
+  ])('%s → EGYETLEN külső hívás sem indul el', async (_label, pixelId) => {
+    const { calls } = await run(pixelId);
+    expect(calls.filter((c) => c.includes('facebook.com'))).toHaveLength(0);
+  });
+
+  it('a ledger-sor "skipped", megkülönböztető hibakóddal (nem TRK-600-005)', async () => {
+    const { deliveries } = await run('REPLACE_ME_16_DIGIT_PIXEL_ID');
+    expect(metaRow(deliveries)?.status).toBe('skipped');
+    expect(metaRow(deliveries)?.error_code).toBe(TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID);
+    // Hívás nem történt → HTTP-státusz sem lehet (normalizeDelivery invariáns).
+    expect(metaRow(deliveries)?.http_status).toBeNull();
+  });
+
+  it('retryable: DLQ-rekord készül, hogy a KV javítása után újrajátszható legyen', async () => {
+    const { deadRecords } = await run('REPLACE_ME_16_DIGIT_PIXEL_ID');
+    expect(deadRecords).toHaveLength(1);
+  });
+
+  it('CRITICAL riasztás megy ki — nem néma warning, mint a vendor-oldali 400', async () => {
+    await run('REPLACE_ME_16_DIGIT_PIXEL_ID');
+    expect(identifierAlerts()).toHaveLength(1);
+    // A hiányzó blokk kódja NEM jó ide: a teendő „javítsd az ID-t", nem „írd be a blokkot".
+    expect(notConfiguredAlerts()).toHaveLength(0);
+  });
+
+  it('érvényes alakú pixel_id-t nem érint (a guard nem ad fals pozitívat)', async () => {
+    const { calls, deadRecords } = await run('1114983601859742');
+    expect(calls.filter((c) => c.includes('facebook.com'))).toHaveLength(1);
+    expect(deadRecords).toHaveLength(0);
+    expect(identifierAlerts()).toHaveLength(0);
+  });
+
+  it('NEM elvárt platformon terminális marad: se DLQ, se riasztás, se zaj-sor', async () => {
+    // Ugyanaz a formahibás config, de a meta nincs az expected_platforms-ban →
+    // az F4-2 zajszűrő ága nyer. Egy be nem kötött platform hibás ID-je nem
+    // adatvesztés, és ha riasztana, a digest tele lenne álriasztással.
+    const { deliveries, deadRecords } = await run('REPLACE_ME_16_DIGIT_PIXEL_ID', ['gads']);
+    expect(deadRecords).toHaveLength(0);
+    expect(identifierAlerts()).toHaveLength(0);
+    expect(metaRow(deliveries)).toBeUndefined();
   });
 });

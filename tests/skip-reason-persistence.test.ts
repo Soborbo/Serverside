@@ -24,9 +24,11 @@ import { TrackingErrorCode } from '../src/lib/error-codes';
  */
 
 describe('SkipReason taxonómia', () => {
-  it('a not_configured az EGYETLEN nem-terminális ok', () => {
+  it('a not_configured és az invalid_identifier a KÉT nem-terminális ok', () => {
+    // Mindkettő KV-javítás után újrajátszható (hiányzó blokk / formahibás ID) —
+    // minden más skip terminális. Bővítés csak tudatosan, a DLQ-következménnyel.
     const retryable = SKIP_REASONS.filter((r) => !isTerminalSkip(r));
-    expect(retryable).toEqual(['not_configured']);
+    expect(retryable).toEqual(['not_configured', 'invalid_identifier']);
   });
 
   it('minden Fázis D-ben felvett ok terminális', () => {
