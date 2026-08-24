@@ -36,7 +36,7 @@ async function config(consentStrict: boolean): Promise<Record<string, unknown>> 
     currency: 'HUF',
     require_consent: true,
     ...(consentStrict ? { consent_strict: true } : {}),
-    meta: { pixel_id: '123', access_token: 'TOKEN' },
+    meta: { pixel_id: '1234567890', access_token: 'TOKEN' },
     expected_platforms: { smoke: ['meta'] },
     gads: { customer_id: null, login_customer_id: null },
     crm_token_sha256: await sha256Hex(SITE_TOKEN)

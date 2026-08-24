@@ -119,6 +119,12 @@ export interface ConversionRequestPayload {
   // befolyásolja. Lásd lib/storage-telemetry.ts.
   storage_read_blocked?: unknown;
   storage_read_blocked_keys?: unknown;
+  // Soborbo CMP (Fázis 1): MELYIK consent-döntéshez tartozik ez az event. A saját
+  // CMP sütijéből jön; a CookieYes-oldalakon soha nincs jelen, és a hiánya NEM
+  // hiba (a receipten NULL marad). Tisztán KÖTÉS a consent_log bizonyítékához —
+  // a kézbesítési döntést nem befolyásolja, és érvénytelen forma sem buktathatja
+  // el a konverziót. Lásd lib/consent-log.ts.
+  consent_id?: unknown;
   // Univerzális attribúció: click ID-k (gclid/gbraid/wbraid/fbclid/...) + UTM-ek
   // + kontextus. Lásd lib/attribution.ts.
   attribution?: unknown;

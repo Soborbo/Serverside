@@ -1,0 +1,51 @@
+{
+  "_comment": "A banner és a panel SZÓ SZERINTI szövege, verzióhoz kötve. Ez a fájl a consent_log.consent_text_version bizonyíték-lába: a Git-történet mutatja meg, MIT olvasott a látogató abban a pillanatban, amikor igent mondott (GDPR Art. 7(1)). EZT A FÁJLT SOSEM SZERKESZTJÜK A HELYÉN — szövegváltozás = ÚJ verziókönyvtár (2026-08-b, …), különben a régi döntésekhez tartozó bizonyíték visszamenőleg megváltozna. A szövegváltozás egyben re-consent trigger is (ICO: ha a célok/tevékenységek változnak, új hozzájárulást kell kérni).",
+  "version": "2026-08-a",
+  "lang": "hu",
+
+  "banner": {
+    "title": "Sütik ezen az oldalon",
+    "body": "Az oldal működéséhez szükséges sütiket mindig használjuk. Ezen felül – csak a te engedélyeddel – mérjük, hogyan használják a látogatók az oldalt, illetve mérjük és személyre szabjuk a Google- és Meta-hirdetéseinket. Az adatok egy része az Egyesült Államokba kerül.",
+    "accept": "Elfogadom",
+    "reject": "Elutasítom",
+    "settings": "Beállítások",
+    "_button_rule": "Az Elfogadom és az Elutasítom PIXELRE azonos méret, kontraszt, betűtípus és kattintásszám. Ezt unit teszt méri, nem szemrevételezés – a compliance harness szerint ez a flotta legsúlyosabb hibája, és a NAIH a TV2-t pontosan ezért bírságolta (NAIH-3195/2022)."
+  },
+
+  "panel": {
+    "title": "Süti-beállítások",
+    "intro": "Kategóriánként dönthetsz. A döntésed bármikor módosíthatod az oldal alján lévő „Süti beállítások” hivatkozással.",
+    "save": "Beállítások mentése",
+    "accept_all": "Mindet elfogadom",
+    "reject_all": "Mindet elutasítom",
+    "categories": {
+      "necessary": {
+        "label": "Működéshez szükséges",
+        "always_on": "Mindig aktív",
+        "body": "Az oldal alapvető működéséhez kell (biztonság, űrlapok, a te süti-döntésed tárolása). Ezekhez nem kérünk engedélyt, mert nélkülük az oldal nem használható."
+      },
+      "analytics": {
+        "label": "Statisztika",
+        "body": "Azt mérjük, hogyan használják a látogatók az oldalt: mely oldalak népszerűek, hol akadnak el. Szolgáltató: Google (Google Analytics 4).",
+        "default": "off"
+      },
+      "marketing": {
+        "label": "Marketing",
+        "body": "Google- és Meta-hirdetéseink mérése és személyre szabása. Szolgáltatók: Google (Google Ads), Meta (Facebook, Instagram).",
+        "default": "off"
+      }
+    },
+    "third_parties_link": "Kik kapják meg az adatokat?",
+    "policy_link": "Adatkezelési tájékoztató"
+  },
+
+  "footer_link": "Süti beállítások",
+
+  "_copy_rules": [
+    "TILOS: „elutasítás esetén semmilyen adat nem kerül harmadik félhez” — advanced Consent Mode mellett ez HAMIS, és amíg a flottán egyetlen site is advanced, sehol nem írható le.",
+    "TILOS: „nem kapsz irreleváns hirdetést” — nem garantálható, tehát ígéret, nem tény.",
+    "KÖTELEZŐ: a harmadik felek NÉVVEL (Google, Meta) — a homályos „partnereink” az ICO és a NAIH szerint is elégtelen.",
+    "KÖTELEZŐ: a nemzetközi (USA) adattovábbítás említése.",
+    "A szöveg tényszerű és emberi, ígéret nélkül."
+  ]
+}

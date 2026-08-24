@@ -7,6 +7,7 @@ import type {
   ConsentSourceName,
   IngressKind
 } from './consent';
+import type { ConsentLogEntry, ConsentMetricEntry, ConsentLogState } from './consent-log';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
@@ -144,6 +145,18 @@ export function normalizeDelivery(
         status: 'skipped',
         error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
         skip_reason: 'not_configured'
+      };
+    }
+    // Ugyanaz az elv formahibás azonosítóra: a blokk megvan, de a benne lévő ID
+    // használhatatlan, ezért hívás nem indult. Külön kód, mert a teendő más —
+    // „javítsd az ID-t", nem „írd be a blokkot". A kód ITT képződik (nem a
+    // vendor-modulban), hogy a fan-out általános CRITICAL-riasztó ága ne lőjön rá
+    // még a skip-osztályozás előtt — lásd lib/meta.ts.
+    if (settled.value.skip_reason === 'invalid_identifier') {
+      return {
+        platform,
+        status: 'skipped',
+        error_code: TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID
       };
     }
     // A vendor SAJÁT hibakódja is átjut, ha adott (a Data Manager offline lába
@@ -433,6 +446,12 @@ export interface ConsentReceiptInput {
    * „jelentett, és nem volt blokk" 0-val.
    */
   storage?: StorageReadTelemetry;
+  /**
+   * Soborbo CMP: MELYIK consent-döntéshez tartozik ez az event. A CookieYes-
+   * oldalakon MINDIG undefined → a receipten NULL, és ez NEM hiba. Ahol a saját
+   * CMP fut, ez köti a konverziót a `consent_log` bizonyítékához.
+   */
+  consent_id?: string;
 }
 
 export interface ConsentReceiptSources {
@@ -471,8 +490,8 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
          (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at,
           src_cookie_analytics, src_cookie_marketing, src_api_analytics, src_api_marketing, src_server_analytics, src_server_marketing,
           source_used, source_consistent, ingress_kind, client_lib_version, consent_age_s, finding_codes,
-          storage_read_blocked, storage_read_blocked_keys)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          storage_read_blocked, storage_read_blocked_keys, consent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -501,7 +520,8 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
         s?.consent_age_s ?? null,
         s?.finding_codes ?? null,
         c.storage === undefined ? null : c.storage.blocked ? 1 : 0,
-        c.storage?.keys ?? null
+        c.storage?.keys ?? null,
+        c.consent_id ?? null
       )
       .run();
   } catch (err) {
@@ -546,6 +566,181 @@ export async function recordConsentDebug(env: Env, d: ConsentDebugInput): Promis
       .run();
   } catch (err) {
     ledgerError('recordConsentDebug', err, { site_id: d.site_id });
+  }
+}
+
+// ── Soborbo CMP (Fázis 1) — consent_log / consent_metrics ────────────────────
+
+/**
+ * A consent-döntés írásának kimenetele. A hívónak (routes/consent.ts) MEG KELL
+ * tudnia különböztetni a hármat, mert három különböző HTTP-státusz tartozik hozzá:
+ *
+ *   'stored'    → 204. Új sor, eltárolva.
+ *   'duplicate' → 204. Ugyanaz a `consent_event_id` már bent van — a kliens
+ *                 retry-ja, nem hiba. Az idempotencia a UNIQUE indexen áll, nem
+ *                 egy előzetes SELECT-en: két párhuzamos beacon között az utóbbi
+ *                 versenyt nyerne, és duplikált sort írna.
+ *   'failed'    → 503. D1-hiba. NEM 204: a kliens `receipt_synced=false`-t tart,
+ *                 és a következő oldalletöltéskor újraküldi. Egy csendes 204 itt
+ *                 azt jelentené, hogy a consent-proof elveszett, és senki nem tudja.
+ */
+export type ConsentLogWriteResult = 'stored' | 'duplicate' | 'failed';
+
+/** A UNIQUE constraint megsértése — D1/SQLite szövegére illesztve. */
+function isUniqueViolation(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /UNIQUE constraint failed/i.test(msg);
+}
+
+/**
+ * Consent-döntés rögzítése. APPEND-ONLY: soha nincs UPDATE, a visszavonás is új sor.
+ *
+ * Idempotencia a `consent_event_id` UNIQUE indexén — lásd ConsentLogWriteResult.
+ */
+export async function recordConsentDecision(
+  env: Env,
+  entry: ConsentLogEntry
+): Promise<ConsentLogWriteResult> {
+  if (!env.LEDGER) return 'failed';
+  try {
+    await env.LEDGER.prepare(
+      `INSERT INTO consent_log
+         (id, consent_id, consent_event_id, revision, site_id, decision,
+          cat_analytics, cat_marketing,
+          ad_user_data, ad_personalization, ad_storage, analytics_storage,
+          consent_mode, policy_version, banner_version, consent_text_version, ruleset,
+          lang, country, client_lib_version,
+          cky_cookie_analytics, cky_cookie_marketing, cky_agreement,
+          client_decided_at, server_received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        id(),
+        entry.consent_id,
+        entry.consent_event_id,
+        entry.revision,
+        entry.site_id,
+        entry.decision,
+        entry.cat_analytics,
+        entry.cat_marketing,
+        entry.ad_user_data,
+        entry.ad_personalization,
+        entry.ad_storage,
+        entry.analytics_storage,
+        entry.consent_mode,
+        entry.policy_version,
+        entry.banner_version,
+        entry.consent_text_version,
+        entry.ruleset,
+        entry.lang ?? null,
+        entry.country ?? null,
+        entry.client_lib_version ?? null,
+        entry.cky_cookie_analytics ?? null,
+        entry.cky_cookie_marketing ?? null,
+        entry.cky_agreement ?? null,
+        entry.client_decided_at,
+        new Date().toISOString()
+      )
+      .run();
+    return 'stored';
+  } catch (err) {
+    // A duplikátum NEM hiba: a kliens addig ismétel, amíg 204-et nem kap.
+    if (isUniqueViolation(err)) return 'duplicate';
+    ledgerError('recordConsentDecision', err, { site_id: entry.site_id });
+    return 'failed';
+  }
+}
+
+/**
+ * Banner-megjelenés. ID-MENTES (lásd a 0006 migráció kommentjét és a
+ * consent-log.ts parse-olóját, ami az azonosító-mezőket ELUTASÍTJA).
+ *
+ * Sosem dob: ez UX-mérés, egy elvesztett sor nem indokol 5xx-et a látogatónak.
+ */
+export async function recordConsentMetric(env: Env, m: ConsentMetricEntry): Promise<void> {
+  if (!env.LEDGER) return;
+  try {
+    await env.LEDGER.prepare(
+      `INSERT INTO consent_metrics
+         (id, site_id, banner_version, lang, device_class, interaction_ms, shown_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        id(),
+        m.site_id,
+        m.banner_version,
+        m.lang ?? null,
+        m.device_class ?? null,
+        m.interaction_ms ?? null,
+        new Date().toISOString()
+      )
+      .run();
+  } catch (err) {
+    ledgerError('recordConsentMetric', err, { site_id: m.site_id });
+  }
+}
+
+/**
+ * Az AKTUÁLIS consent-állapot egy `consent_id`-re: a LEGMAGASABB revision.
+ *
+ * Ezt hívja a `GET /api/consent/:consent_id`, és rajta keresztül minden offline
+ * upload / retry / replay — NEM a capture-kori receiptet. A nap-1 GRANTED /
+ * nap-3 visszavonás / nap-10 revenue_confirmed eset csak így skippel helyesen.
+ *
+ * `null` = nincs ilyen consent_id, VAGY D1-hiba. A hívó ezt a mai, receipt-alapú
+ * szabályra visszaesésként kezeli (consent-log.ts isBlockedByConsentState) — a
+ * Fázis 1 inert, a CookieYes-oldalakon soha nincs consent_id.
+ *
+ * A tenant-izolációhoz a `site_id` KÖTELEZŐ: egy consent_id ismerete nem adhat
+ * betekintést egy másik site consent-rekordjába.
+ */
+export async function getConsentState(
+  env: Env,
+  siteId: string,
+  consentId: string
+): Promise<ConsentLogState | null> {
+  if (!env.LEDGER) return null;
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT consent_id, revision, decision, cat_analytics, cat_marketing,
+              ad_user_data, ad_personalization, ad_storage, analytics_storage,
+              client_decided_at, server_received_at
+         FROM consent_log
+        WHERE site_id = ? AND consent_id = ?
+        ORDER BY revision DESC
+        LIMIT 1`
+    )
+      .bind(siteId, consentId)
+      .first<{
+        consent_id: string;
+        revision: number;
+        decision: string;
+        cat_analytics: number;
+        cat_marketing: number;
+        ad_user_data: string;
+        ad_personalization: string;
+        ad_storage: string;
+        analytics_storage: string;
+        client_decided_at: string;
+        server_received_at: string;
+      }>();
+    if (!row) return null;
+    return {
+      consent_id: row.consent_id,
+      revision: row.revision,
+      decision: row.decision as ConsentLogState['decision'],
+      cat_analytics: row.cat_analytics === 1,
+      cat_marketing: row.cat_marketing === 1,
+      ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
+      ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
+      ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
+      analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
+      client_decided_at: row.client_decided_at,
+      server_received_at: row.server_received_at
+    };
+  } catch (err) {
+    ledgerError('getConsentState', err, { site_id: siteId });
+    return null;
   }
 }
 

@@ -87,8 +87,9 @@ describe('recordConsentReceipt — storage oszlopok', () => {
       ad_allowed: true,
       storage
     });
-    // Az utolsó két bind a 0005 migráció két oszlopa.
-    return rows[0].slice(-2);
+    // A 0005 migráció két oszlopa — a 0006 (consent_id) UTÁNUK érkezett az
+    // ALTER-sorrendben, így az a legutolsó bind; a storage-pár eggyel előrébb ül.
+    return rows[0].slice(-3, -1);
   };
 
   it('jelentett blokk → 1 + kulcslista', async () => {

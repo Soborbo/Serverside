@@ -12,14 +12,18 @@
  * 'accepted' SOHA nem íródhat HTTP-státusz nélkül, lásd normalizeDelivery), de a
  * FELDOLGOZÁSI kimenet háromfelé válik:
  *
- * | ok               | DLQ | markDispatched | riasztás |
- * |------------------|-----|----------------|----------|
- * | consent_denied   | ✗   | ✓ (terminális) | —        |
- * | not_expected     | ✗   | ✓ (terminális) | —        |
- * | not_configured   | ✓   | ✓ ha a DLQ-írás sikerült | CRITICAL |
+ * | ok                 | DLQ | markDispatched | riasztás |
+ * |--------------------|-----|----------------|----------|
+ * | consent_denied     | ✗   | ✓ (terminális) | —        |
+ * | not_expected       | ✗   | ✓ (terminális) | —        |
+ * | not_configured     | ✓   | ✓ ha a DLQ-írás sikerült | CRITICAL |
+ * | invalid_identifier | ✓   | ✓ ha a DLQ-írás sikerült | CRITICAL |
  *
- * A `not_configured` az EGYETLEN retryable skip: a config helyreállítása után a
- * DLQ-rekord újrajátszható az EREDETI event_id-vel és event_time-mal.
+ * A `not_configured` és az `invalid_identifier` az EGYETLEN két retryable skip: a
+ * config javítása után a DLQ-rekord újrajátszható az EREDETI event_id-vel és
+ * event_time-mal. A kettő ugyanaz a kárkép (halott platform-láb, ami magától soha
+ * nem javul meg), csak az egyiknél hiányzik a blokk, a másiknál formahibás a
+ * benne lévő azonosító.
  */
 export type SkipReason =
   /**
@@ -34,7 +38,7 @@ export type SkipReason =
   /** A platform ELVÁRT, de a config-blokkja hiányzik → retryable konfigurációs blokk. */
   | 'not_configured'
   // ── Fázis D (2026-08) — a skip-ágak megnevezése ────────────────────────────
-  // Mind TERMINÁLIS. A `not_configured` marad az EGYETLEN retryable skip.
+  // A `not_configured` és az `invalid_identifier` kivételével mind TERMINÁLIS.
   /**
    * `require_consent: true` (fail-closed site), és a consent-jel nem GRANTED,
    * de nem is kimondott DENIED: az egész consent-objektum hiányzik, VAGY az
@@ -74,7 +78,18 @@ export type SkipReason =
   /** Régió-alapú policy-tiltás (EEA-szabály) zárta ki a platformot. */
   | 'eea_rule'
   /** A platform sablon-/payload-őre utasította el a küldést a hívás előtt. */
-  | 'template_guard';
+  | 'template_guard'
+  /**
+   * A config-blokk MEGVAN, de a benne lévő azonosító alakja használhatatlan
+   * (kitöltetlen `REPLACE_ME_*` placeholder, elgépelt vagy rossz típusú ID).
+   *
+   * Azért nem indul el a hívás, mert a Meta CAPI-nál a `pixel_id` az endpoint-URL
+   * ÚTVONALÁBA kerül: egy formahibás érték nem validációs hibát ad, hanem a Graph
+   * API objektumként próbálja feloldani (400 „Object with ID … does not exist").
+   * Az agykontroll 2026-07-27 és 08-11 között 43 ilyen külső hívást futtatott el,
+   * mire a hiba egyáltalán észrevehetővé vált — egy azonnali skip helyett.
+   */
+  | 'invalid_identifier';
 
 /**
  * A perzisztálható skip-okok teljes listája — a `deliveries.skip_reason` oszlop
@@ -91,7 +106,8 @@ export const SKIP_REASONS: readonly SkipReason[] = [
   'no_identifiers',
   'dedup',
   'eea_rule',
-  'template_guard'
+  'template_guard',
+  'invalid_identifier'
 ];
 
 export function isSkipReason(v: unknown): v is SkipReason {
@@ -100,8 +116,9 @@ export function isSkipReason(v: unknown): v is SkipReason {
 
 /**
  * Terminális skip = nincs mit visszanyerni, a retry értelmetlen (vagy tilos).
- * A `not_configured` az EGYETLEN nem-terminális ok — a Fázis D-ben felvett
- * okok MIND terminálisak. Ha ez valaha megváltozik, a `not_expected` és a
+ * A `not_configured` és az `invalid_identifier` a KÉT nem-terminális ok —
+ * mindkettő KV-javítás után újrajátszható. A Fázis D-ben felvett okok MIND
+ * terminálisak. Ha ez valaha megváltozik, a `not_expected` és a
  * `not_configured` szétválasztását (2026-07-15-i lomtalan-adatvesztés) akkor
  * SEM szabad összevonni.
  *
@@ -112,5 +129,5 @@ export function isSkipReason(v: unknown): v is SkipReason {
  * örökre a DLQ-ban keringjen.
  */
 export function isTerminalSkip(reason: SkipReason | undefined): boolean {
-  return reason !== 'not_configured';
+  return reason !== 'not_configured' && reason !== 'invalid_identifier';
 }

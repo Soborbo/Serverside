@@ -32,6 +32,7 @@ import {
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
 import { parseStorageReadTelemetry } from '../lib/storage-telemetry';
+import { parseConsentId } from '../lib/consent-log';
 import { parseEcommerce } from '../lib/ecommerce';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTerminalSkip } from '../lib/skip-reason';
@@ -847,7 +848,11 @@ function fanOut(
       storage: parseStorageReadTelemetry(
         payload.storage_read_blocked,
         payload.storage_read_blocked_keys
-      )
+      ),
+      // Soborbo CMP: a saját CMP döntésének azonosítója, ha a site azzal fut.
+      // CookieYes-oldalon undefined → a receipten NULL, ami NEM hiba. Formahibás
+      // érték is CSAK kimarad: egy consent-KÖTÉS soha nem buktathat konverziót.
+      consent_id: parseConsentId(payload.consent_id)
     })
   );
 
@@ -975,16 +980,21 @@ function fanOut(
         includeUserData: boolean,
         platformStart: number
       ) => {
-        // Egy not_configured skip {success:true}-t ad (hívás nem történt) — de a
+        // Egy konfigurációs skip {success:true}-t ad (hívás nem történt) — de a
         // fan-out SIKER-metrikában ez NEM siker, különben egy config-vesztés
-        // (lomtalan-osztály) zöldnek látszana az AE-dashboardon. A ledger-sor +
-        // CRITICAL riasztás elkapja, de az AE-nézet félrevezetne. (A jogos
-        // consent-skip marad success:true — az a fan-out helyes működése.)
+        // (lomtalan-osztály) vagy egy formahibás azonosító (agykontroll-osztály)
+        // zöldnek látszana az AE-dashboardon. A ledger-sor + CRITICAL riasztás
+        // elkapja, de az AE-nézet félrevezetne. (A jogos consent-skip marad
+        // success:true — az a fan-out helyes működése.)
         const settledOk = result.status === 'fulfilled';
         const skipped = settledOk && result.value.skipped === true;
         const skipReason = skipped ? result.value.skip_reason : undefined;
-        const notConfigured = skipReason === 'not_configured';
-        // A scaffold-láb átminősítése (nem konfigurált ÉS nem is elvárt ezen a
+        // Konfigurációs blokk KÉT alesete: hiányzó config-blokk (not_configured)
+        // vagy formahibás azonosító a meglévő blokkban (invalid_identifier) —
+        // mindkettő KV-javítás után újrajátszható, egyik sem "siker".
+        const configBlocked =
+          skipReason === 'not_configured' || skipReason === 'invalid_identifier';
+        // A scaffold-láb átminősítése (config-blokkolt ÉS nem is elvárt ezen a
         // site-on — pl. TikTok egy csak-Meta site-on) ELŐRE került, a metrika-írás
         // elé. Korábban a metrika a minősítés ELŐTT futott, így minden ad-allowed
         // event success=0 datapontot írt a három be nem kötött forwarderre: az AE-ben
@@ -992,10 +1002,10 @@ function fanOut(
         // piros sor pont azt a napot fedné el, amikor egy VALÓDI, bekötött forwarder
         // kezd el bukni. A ledger már eddig is kiszűrte ezeket a sorokat (lásd
         // isNotExpectedSkip lentebb) — a metrika most követi ugyanazt a szabályt.
-        const notExpected = notConfigured && !isExpectedPlatform(siteConfig, platform);
+        const notExpected = configBlocked && !isExpectedPlatform(siteConfig, platform);
         if (notExpected && settledOk) result.value.skip_reason = 'not_expected';
 
-        const success = settledOk && result.value.success && !notConfigured;
+        const success = settledOk && result.value.success && !configBlocked;
         const errorCode = settledOk ? result.value.error_code : undefined;
 
         if (!notExpected) {
@@ -1021,7 +1031,7 @@ function fanOut(
         }
 
         // ── Skip-osztályozás ────────────────────────────────────────────────
-        // Három eset, három kimenet (lásd lib/skip-reason.ts). A `skipped` flag
+        // Négy ok, három kimenet (lásd lib/skip-reason.ts). A `skipped` flag
         // önmagában NEM elég: 2026-07-15 és 07-20 között a lomtalan hiányzó Meta
         // configja pontosan úgy nézett ki, mint egy jogos consent-kihagyás, így
         // 3 valódi lead veszett el retry-rekord nélkül, zöld monitor mellett.
@@ -1030,28 +1040,38 @@ function fanOut(
           //     (A `skipReason` a MINŐSÍTÉS ELŐTTI érték, tehát a not_configured
           //     még not_configured-ként látszik itt — a not_expected ág külön van.)
           if (isTerminalSkip(skipReason)) return;
-          // (b) not_configured, de a platform nem is elvárt ezen a site-on
+          // (b) konfigurációs skip, de a platform nem is elvárt ezen a site-on
           //     (pl. TikTok egy csak-Meta site-on) → szintén terminális. Az okot
           //     fentebb már `not_expected`-re minősítettük, hogy a ledger NE kapjon
           //     PLATFORM_NOT_CONFIGURED hibakódot: egy sosem-bekötött platform
           //     nem hiba, és ha kódot kapna, a digest tele lenne álriasztással.
           //     A minősítés a normalizeDelivery ELŐTT történik (lásd lentebb).
           if (notExpected) return;
-          // (c) ELVÁRT platform + hiányzó config → retryable konfigurációs blokk.
-          //     Ez az egyetlen skip, ami DLQ-rekordot és CRITICAL riasztást kap:
-          //     magától soha nem javul meg, viszont a config helyreállítása után
-          //     az EREDETI event_id-vel és event_time-mal újrajátszható.
+          // (c) ELVÁRT platform + használhatatlan config → retryable konfigurációs
+          //     blokk. Ez az egyetlen skip-ág, ami DLQ-rekordot és CRITICAL
+          //     riasztást kap: magától soha nem javul meg, viszont a config
+          //     javítása után az EREDETI event_id-vel és event_time-mal
+          //     újrajátszható. Két alesete van, és a TEENDŐ különbözik:
+          //     hiányzó blokk → „írd be", formahibás azonosító → „javítsd az ID-t".
+          const configErrorCode =
+            skipReason === 'invalid_identifier'
+              ? TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID
+              : TrackingErrorCode.PLATFORM_NOT_CONFIGURED;
+          const configFailureReason =
+            skipReason === 'invalid_identifier'
+              ? `expected platform '${platform}' has a malformed identifier in its config block`
+              : `expected platform '${platform}' has no config block for this site`;
           logStructured({
             level: 'error',
-            error_code: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,
-            message: ERROR_DESCRIPTIONS[TrackingErrorCode.PLATFORM_NOT_CONFIGURED],
+            error_code: configErrorCode,
+            message: ERROR_DESCRIPTIONS[configErrorCode],
             site_id: siteConfig.site_id,
             hostname,
             platform,
             event_name: payload.event_name
           });
           alerts.push(
-            sendAlert(env, TrackingErrorCode.PLATFORM_NOT_CONFIGURED, {
+            sendAlert(env, configErrorCode, {
               site_id: siteConfig.site_id,
               hostname,
               platform,
@@ -1068,7 +1088,7 @@ function fanOut(
               hashed_user_data: includeUserData
                 ? (hashedUserData as unknown as Record<string, unknown>)
                 : undefined,
-              failure_reason: `expected platform '${platform}' has no config block for this site`,
+              failure_reason: configFailureReason,
               // Konfigurációs blokk: a retry-keretet nem szabad percek alatt
               // elégetnie (lásd lib/deadletter.ts backoffSeconds/blocked flag).
               blocked_configuration: true,
