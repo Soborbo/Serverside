@@ -171,6 +171,27 @@ export async function getAccessToken(customerId: string, env: Env): Promise<stri
   return result.accessToken;
 }
 
+/**
+ * Van-e EGYÁLTALÁN refresh token ehhez a customerhez? Olcsó KV-olvasás, hálózati
+ * hívás NÉLKÜL — szándékosan nem `getAccessToken`, ami refresh-elne is.
+ *
+ * A P1.1 offline reconciliation dependency-állapotához kell: ha nincs token, a láb
+ * BLOCKED_DEPENDENCY, és NEM szabad drift-findinget generálni rá (a hiba ismert, a
+ * health-check jelzi). Egy hálózati refresh itt napi több tucat felesleges
+ * Google-hívást jelentene, ráadásul a cron futásidejét is a vendor válaszidejéhez
+ * kötné.
+ */
+export async function hasRefreshToken(customerId: string, env: Env): Promise<boolean> {
+  try {
+    return (await env.OAUTH_TOKENS.get(`gads:${customerId}:refresh_token`)) !== null;
+  } catch {
+    // KV-hiba → NEM állítjuk, hogy hiányzik: a „blokkolt" állapot elnémítaná a
+    // drift-detektort. Inkább mérjünk (és ha tényleg nincs token, a nulla
+    // kézbesítés úgyis kiderül).
+    return true;
+  }
+}
+
 export async function storeRefreshToken(
   customerId: string,
   refreshToken: string,

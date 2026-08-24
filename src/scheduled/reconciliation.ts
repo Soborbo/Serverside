@@ -6,9 +6,11 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   fetchReconInputs,
   summarize,
+  collectOfflineReports,
   DEFAULT_THRESHOLDS,
   type DriftKind,
-  type DriftFinding
+  type DriftFinding,
+  type OfflineLegReport
 } from '../lib/reconciliation';
 import {
   runCrossPlatformCheck,
@@ -16,13 +18,21 @@ import {
   type CrossCheckOutcome
 } from '../lib/cross-check';
 import { listMonitoredSiteConfigs } from '../lib/config';
+import {
+  fetchBusinessSourceFindings,
+  type BusinessSourceFinding
+} from '../lib/business-counts';
 import type { MetricPlatform } from '../lib/metrics';
 
 const WINDOW_HOURS = 24;
 
 const KIND_ERROR_CODE: Record<DriftKind, TrackingErrorCode> = {
   vendor_failure_rate: TrackingErrorCode.RECON_VENDOR_FAILURE_RATE,
-  coverage_drift: TrackingErrorCode.RECON_COVERAGE_DRIFT
+  coverage_drift: TrackingErrorCode.RECON_COVERAGE_DRIFT,
+  // P1.1 business-leg (CRM lifecycle → Google Ads offline / Data Manager)
+  offline_zero_delivery: TrackingErrorCode.RECON_OFFLINE_ZERO_DELIVERY,
+  offline_coverage_drift: TrackingErrorCode.RECON_OFFLINE_COVERAGE_DRIFT,
+  offline_vendor_failure: TrackingErrorCode.RECON_OFFLINE_VENDOR_FAILURE
 };
 
 /**
@@ -44,9 +54,22 @@ export async function handleReconciliation(env: Env): Promise<void> {
 
   const since = new Date(Date.now() - WINDOW_HOURS * 60 * 60 * 1000).toISOString();
 
-  const inputs = await fetchReconInputs(env, since);
+  // EGYSZER olvassuk (a cross-check is ezt kapja lentebb): a P1.1 offline láb
+  // dependency-állapotához (customer_id / conversion action / OAuth) config kell.
+  // KV-hiba esetén üres lista jön vissza — akkor az offline láb NEM némul el,
+  // csak a `blocked_by` marad feloldatlan (mérünk, nem hallgatunk).
+  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigs>> = [];
+  try {
+    siteConfigs = await listMonitoredSiteConfigs(env);
+  } catch {
+    // már logolva a config-rétegben
+  }
+
+  const inputs = await fetchReconInputs(env, since, siteConfigs);
   if (inputs === null) return; // query failed (already logged)
   const summary = summarize(inputs, DEFAULT_THRESHOLDS);
+  const offlineReports = collectOfflineReports(inputs);
+  const blockedLegs = offlineReports.filter((r) => r.state === 'BLOCKED_DEPENDENCY');
 
   // Observability: minden finding → structured log + Analytics Engine metrika.
   for (const f of summary.findings) {
@@ -59,7 +82,13 @@ export async function handleReconciliation(env: Env): Promise<void> {
       drift_kind: f.kind,
       drift_value: f.value,
       drift_threshold: f.threshold,
-      severity: f.severity
+      severity: f.severity,
+      // P1.3 kötelező riasztás-mezők (offline lábon értelmezettek)
+      event_name: f.event_name,
+      expected: f.expected,
+      delivered: f.delivered,
+      failure_rate: f.failure_rate,
+      last_successful_upload: f.last_successful_upload
     });
     recordReconciliationMetric(env, {
       site_id: f.site_id,
@@ -67,6 +96,29 @@ export async function handleReconciliation(env: Env): Promise<void> {
       kind: f.kind,
       severity: f.severity,
       value: f.value
+    });
+  }
+
+  // P1.1 — a BLOKKOLT offline lábak. SZÁNDÉKOSAN nem drift-findingek: a hibájuk
+  // ISMERT (hiányzó OAuth secret / refresh token / customer_id / conversion action),
+  // és a health-check már jelzi — egy második riasztás ugyanarról csak zajt termel,
+  // a riasztás-fáradtság pedig pont a valódi néma hibát fedné el. A recon viszont NEM
+  // lehet néma róluk: enélkül egy config-hiányos site úgy néz ki, mintha nem is
+  // lenne offline lába. Külön kód (TRK-950-015), warning szinten, a critical/warning
+  // SZÁMLÁLÓKON KÍVÜL — az email súlyát nem emelik.
+  for (const b of blockedLegs) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.RECON_OFFLINE_BLOCKED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.RECON_OFFLINE_BLOCKED],
+      site_id: b.site_id,
+      event_name: b.event_name,
+      platform: 'gads',
+      offline_state: b.state,
+      blocked_by: b.blocked_by,
+      received: b.received,
+      expected: b.expected,
+      delivered: b.delivered
     });
   }
 
@@ -89,7 +141,6 @@ export async function handleReconciliation(env: Env): Promise<void> {
   let crossCheckFailed = false;
   try {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const siteConfigs = await listMonitoredSiteConfigs(env);
     crossOutcome = await runCrossPlatformCheck(env, siteConfigs, yesterday);
   } catch (err) {
     crossCheckFailed = true;
@@ -160,6 +211,50 @@ export async function handleReconciliation(env: Env): Promise<void> {
     });
   }
 
+  // P1.2 — CRM business-source recon a TEGNAPI teljes UTC-napra (a mai nap még nyitott,
+  // a CRM aggregátuma is csak a nap végén teljes). `null` = a lekérdezés elbukott VAGY
+  // nincs LEDGER — ezt NEM keverjük össze a „nincs eltéréssel".
+  const reconDay = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const priorSince = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const businessResult = await fetchBusinessSourceFindings(env, reconDay, priorSince);
+  // `null` = a lekérdezés ELBUKOTT (vagy nincs LEDGER / nincs kint a 0007 migráció) —
+  // ez NEM „nincs eltérés". `?? []`-vel a napi riport `business_source_findings: 0`-t
+  // írna, az email-feltételből kiesne, és a monitor tisztának látszana, miközben EL SEM
+  // INDULT. Pontosan az a néma-zöld osztály, ami ellen ez a láb megépült — ugyanaz a
+  // kezelés jár neki, mint a cross-check `crossCheckFailed` ágának. (Codex-review, 2026-08-24.)
+  const businessCheckFailed = businessResult === null;
+  const businessFindings = businessResult ?? [];
+  if (businessCheckFailed) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.RECON_QUERY_FAILED,
+      message:
+        'Business-source reconciliation did NOT run (query failed / no LEDGER / migration 0007 missing) — ' +
+        'zero findings here does NOT mean zero drift',
+      date: reconDay
+    });
+  }
+
+  for (const f of businessFindings) {
+    logStructured({
+      level: f.severity === 'critical' ? 'error' : 'warn',
+      error_code:
+        f.kind === 'business_source_drift'
+          ? TrackingErrorCode.RECON_BUSINESS_SOURCE_DRIFT
+          : TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING,
+      message: f.detail,
+      site_id: f.site_id,
+      event_name: f.event_name,
+      date: f.date,
+      crm_count: f.crm_count,
+      gateway_count: f.gateway_count,
+      drift_kind: f.kind,
+      severity: f.severity
+    });
+  }
+  const businessCritical = businessFindings.filter((f) => f.severity === 'critical').length;
+  const businessWarning = businessFindings.length - businessCritical;
+
   const crossCritical = crossFindings.filter((f) => f.severity === 'critical').length;
   const crossWarning = crossFindings.length - crossCritical;
 
@@ -167,8 +262,12 @@ export async function handleReconciliation(env: Env): Promise<void> {
     level: 'info',
     message: 'Reconciliation completed',
     sites_checked: summary.sites_checked,
-    warning_count: summary.warning_count + crossWarning,
-    critical_count: summary.critical_count + crossCritical,
+    warning_count: summary.warning_count + crossWarning + businessWarning,
+    critical_count: summary.critical_count + crossCritical + businessCritical,
+    business_source_findings: businessFindings.length,
+    // A puszta finding-szám félrevezet, ha a láb le sem futott — a kontextus MINDIG
+    // ott van a napi log-sorban (ugyanaz az elv, mint a cross_check_not_running-nál).
+    business_check_failed: businessCheckFailed,
     cross_platform_findings: crossFindings.length,
     // A puszta finding-szám félrevezet, ha a check nem is futott — a kontextus
     // mostantól MINDIG ott van a napi log-sorban.
@@ -176,16 +275,25 @@ export async function handleReconciliation(env: Env): Promise<void> {
     cross_check_total_sites: crossOutcome.totalSites,
     cross_check_skipped_legs: crossOutcome.skippedLegs.length,
     cross_check_not_running: crossCheckNotRunning,
+    // P1.1 — az offline business-láb állapota MINDIG látszik a napi sorban, akkor is,
+    // ha nem termelt findinget. A puszta finding-szám félrevezet, ha a láb blokkolt
+    // vagy még nem élesedett (UNARMED) — ugyanaz a tanulság, mint a cross-checknél.
+    offline_legs_total: offlineReports.length,
+    offline_legs_armed: offlineReports.filter((r) => r.state === 'ARMED').length,
+    offline_legs_unarmed: offlineReports.filter((r) => r.state === 'UNARMED').length,
+    offline_legs_blocked: blockedLegs.length,
     worst: summary.worst
   });
 
   if (
-    summary.findings.length + crossFindings.length > 0 ||
+    summary.findings.length + crossFindings.length + businessFindings.length > 0 ||
     crossCheckFailed ||
-    crossCheckNotRunning
+    crossCheckNotRunning ||
+    businessCheckFailed ||
+    blockedLegs.length > 0
   ) {
-    const criticalCount = summary.critical_count + crossCritical;
-    const warningCount = summary.warning_count + crossWarning;
+    const criticalCount = summary.critical_count + crossCritical + businessCritical;
+    const warningCount = summary.warning_count + crossWarning + businessWarning;
     const failNote = crossCheckFailed
       ? '<p><strong>⚠️ A cross-platform check ELDŐLT — a GA4/Google-Ads vs ledger összevetés (a Modell-2 böngésző/GTM-vakfolt monitora) MA NEM futott le. Ellenőrizd az analytics.readonly tokent / az API-státuszt.</strong></p>'
       : '';
@@ -205,17 +313,109 @@ export async function handleReconciliation(env: Env): Promise<void> {
             crossOutcome.skippedLegs.map((l) => `${l.site_id}/${l.platform} (${l.reason})`).join(', ')
           )}. Ezek a legek MA nem adtak jelet — a hiányuk nem „tiszta".</p>`
         : '';
+    const businessFailNote = businessCheckFailed
+      ? `<p><strong>⚠️ A CRM business-source check MA NEM FUTOTT LE (${escapeHtml(reconDay)}).</strong>
+           A lekérdezés elbukott, vagy nincs D1 LEDGER, vagy a <code>0007</code> migráció nincs kint
+           az éles adatbázison. Ez NEM azt jelenti, hogy nincs eltérés — azt, hogy nem néztük meg.
+           Teendő: <code>npx wrangler d1 migrations apply event-gateway-ledger --remote</code>,
+           majd ellenőrzés, hogy a <code>business_counts</code> tábla létezik.</p>`
+      : '';
     const subjectSuffix = [
       crossCheckFailed ? ' + cross-check FAILED' : '',
-      crossCheckNotRunning ? ' + cross-check NOT RUNNING' : ''
+      crossCheckNotRunning ? ' + cross-check NOT RUNNING' : '',
+      businessCheckFailed ? ' + business-source NOT RUNNING' : ''
     ].join('');
     await sendAdminEmail(
       env,
       `Reconciliation drift: ${criticalCount} critical, ${warningCount} warning${subjectSuffix}`,
-      failNote + notRunningNote + skipNote + buildDriftEmail(summary.findings, crossFindings, since),
-      criticalCount > 0 || crossCheckFailed ? 'critical' : 'warning'
+      failNote +
+        notRunningNote +
+        businessFailNote +
+        skipNote +
+        buildDriftEmail(summary.findings, crossFindings, since) +
+        buildOfflineSection(offlineReports) +
+        buildBusinessSourceSection(businessFindings, reconDay),
+      criticalCount > 0 || crossCheckFailed || businessCheckFailed ? 'critical' : 'warning'
     );
   }
+}
+
+/**
+ * Az OFFLINE business-láb állapottáblája. Akkor is kimegy, ha nincs finding — a
+ * blokkolt és a még nem élesedett (UNARMED) láb ugyanúgy „nulla konverzió", mint a
+ * halott, csak MÁS a teendő. Enélkül a napi riport üres finding-listája
+ * megkülönböztethetetlen lenne a „minden rendben"-től.
+ */
+/**
+ * P1.2 — CRM business-source eltérések. Ezt a gateway-ledger SZERKEZETILEG nem tudja
+ * kimutatni: ha a CRM→gateway hívás el sem indul, a ledgerben nulla elvárás mellett a
+ * nulla kézbesítés egészségesnek látszik.
+ */
+function buildBusinessSourceSection(findings: BusinessSourceFinding[], date: string): string {
+  if (findings.length === 0) return '';
+  const rows = findings
+    .map(
+      (f) => `
+      <tr>
+        <td>${escapeHtml(f.site_id)}</td>
+        <td>${escapeHtml(f.event_name)}</td>
+        <td>${escapeHtml(f.kind)}</td>
+        <td>${f.crm_count}</td>
+        <td>${f.gateway_count}</td>
+        <td><strong>${escapeHtml(f.severity)}</strong></td>
+        <td>${escapeHtml(f.detail)}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+    <h3>CRM business-source (${escapeHtml(date)})</h3>
+    <p>A CRM napi aggregátuma (PII-mentes darabszám) vs. a gateway-be TÉNYLEGESEN
+       beérkezett lifecycle-státuszok. Az eltérés azt jelenti, hogy a CRM→gateway hívás
+       el sem indult — ezt a ledger önmagában nem látja.
+       A <code>business_source_missing</code> sor pedig azt, hogy MAGA a CRM-cron állt le.</p>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr><th>Site</th><th>Event</th><th>Kind</th><th>CRM</th><th>Gateway</th>
+            <th>Severity</th><th>Detail</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function buildOfflineSection(reports: OfflineLegReport[]): string {
+  if (reports.length === 0) return '';
+  const rows = reports
+    .map(
+      (r) => `
+      <tr>
+        <td>${escapeHtml(r.site_id)}</td>
+        <td>${escapeHtml(r.event_name)}</td>
+        <td><strong>${escapeHtml(r.state)}</strong>${r.blocked_by ? ` (${escapeHtml(r.blocked_by)})` : ''}</td>
+        <td>${r.received}</td>
+        <td>${r.expected}</td>
+        <td>${r.delivered}</td>
+        <td>${r.rejected}</td>
+        <td>${r.last_successful_upload ? escapeHtml(r.last_successful_upload) : '—'}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+    <h3>Offline business-láb (CRM lifecycle → Google Ads / Data Manager)</h3>
+    <p><strong>Expected</strong> = beérkezett − legitim policy-skip (consent-tiltás/visszavonás,
+       nem-elvárt platform, régiós szabály, dedup). A config-/adatminőség-/transport-hibából
+       eredő skip NEM vonódik le — az veszteség.</p>
+    <p><strong>BLOCKED_DEPENDENCY</strong>: hiányzó előfeltétel (OAuth secret / refresh token /
+       customer_id / conversion action) — a teendőt a health-check mondja meg, ezért innen
+       NEM megy külön riasztás. <strong>UNARMED</strong>: még nincs bizonyított sikeres
+       feltöltés, ezért a 24 órás regresszió-detektor nem alkalmazható (a 7 napos abszolút
+       igen). <strong>ARMED</strong>: van bizonyított feltöltés, minden detektor él.</p>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr><th>Site</th><th>Event</th><th>Állapot</th><th>Received</th><th>Expected</th>
+            <th>Delivered</th><th>Rejected</th><th>Utolsó sikeres feltöltés</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
 }
 
 function buildDriftEmail(

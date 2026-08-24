@@ -191,6 +191,25 @@ Business truth profilonként: leadgen → CRM vagy site-backend durable lead sto
 
 **Site-/profil-szintű döntés kell:** egyszerű leadgen → won-kori érték marad, dokumentáltan; job/invoicing-os tenant (painless) → `paid → revenue_confirmed`. **Retraction/refund üzleti modell** (refund / cancellation / conversion adjustment) — nem feltétlen első implementáció, de a `revenue_confirmed` szemantikáját ADDIG IS dokumentálni kell, hogy ne jelentsen többet a valóságnál. Kapcsolódó mapping-döntés: a webshop-kosaras `order` surface ma `quote_calculator_submitted`-ként megy, miközben az events.json-ban létezik `order_request_submitted` — vagy a CRM-mapping frissül, vagy dokumentált döntés marad Lead-ként.
 
+## 🔴 HARD OPEN ITEM — `revenue_confirmed ≠ won` (rögzítve: 2026-08-24 merge-gate review)
+
+**Nem most javítjuk** (más money-path változás fut, R0.2), de a tétel innentől NYITOTT és nevesített, nem „majd valamikor":
+
+> Ahol az üzleti rendszer KÉPES ténylegesen tudni a `paid` állapotot, ott a `revenue_confirmed` nem jelentheti a `won`-t. A painless CRM-ben teljes invoicing él (`invoices.status='paid'`, `payments`, `payment_allocations`), és **semmi nem köti a trackinghez** (consumer-grep: nulla találat) — miközben a `revenue_confirmed` egy kézzel beírt `leads.final_value`-t visz fel Google Adsbe konverziós értékként.
+
+**A célállapot szemantikája, amikor sorra kerül:**
+
+| CRM-esemény | tracking-event | mit jelent |
+|---|---|---|
+| `lezart_nyert` (won) | `booking_confirmed` / converted lead | az ügyletet megnyertük — becsült érték |
+| `invoices.status='paid'` | `revenue_confirmed` | **ténylegesen befolyt pénz**, a számla összegével |
+
+**Amíg ez nincs meg, két dolog KÖTELEZŐ:**
+1. a `revenue_confirmed` mai jelentése (won-kori becslés, kézi érték) minden riportban és doksiban **kimondva** — hogy ne jelentsen többet a valóságnál;
+2. a won VISSZAVONÁSA ma sem retraktál (`lead-status.ts:48-50` nullázza a `wonAt`/`conversionUploadedAt`-ot, de a **már feltöltött konverziót semmi nem vonja vissza**; `refund` event az `events.json`-ból is hiányzik) — a conversion adjustment / refund modell ugyanennek a tételnek a része, nem külön ügy.
+
+**Miért nem kozmetika:** a Google Ads a feltöltött értékre optimalizál. Egy won-kori becslés és egy befolyt összeg közti szisztematikus eltérés a bidding-et torzítja — csendben, mert minden mérőszám zöld marad.
+
 ---
 
 # P11 — Performance hardening (csak stabil tracking után)

@@ -1,6 +1,7 @@
 import type { Env } from './env';
 import { handleConversion } from './routes/conversion';
 import { handleLeadStatus } from './routes/lead-status';
+import { handleBusinessCounts } from './routes/business-counts';
 import { handleConsent } from './routes/consent';
 import { handleAdmin } from './routes/admin';
 import { handleAdminUI } from './routes/admin-ui';
@@ -88,6 +89,13 @@ export default {
       // Leads (admin-auth, server-to-server). Lásd routes/lead-status.ts.
       if (request.method === 'POST' && url.pathname === '/api/event/lead-status') {
         return await handleLeadStatus(request, env, ctx);
+      }
+
+      // P1.2 — napi PII-mentes CRM business-count aggregátum (per-site token, mint a
+      // lead-status). SZÁNDÉKOSAN nem az /admin/* alatt: az a globális ADMIN_API_TOKEN
+      // mögött van, és a CRM-be tenni a globális tokent tenant-izolációs visszalépés.
+      if (request.method === 'POST' && url.pathname === '/api/event/business-counts') {
+        return await handleBusinessCounts(request, env);
       }
 
       // Soborbo CMP (Fázis 1) — a saját consent-modul szerveroldala:

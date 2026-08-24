@@ -53,14 +53,30 @@ function healthReq(host: string) {
   });
 }
 
-async function health(host: string, envOver: Record<string, unknown>) {
-  const env = { ADMIN_API_TOKEN: TOKEN, ...kvReturning(offlineSite), ...envOver } as any;
+async function health(host: string, envOver: Record<string, unknown>, config: unknown = offlineSite) {
+  const env = { ADMIN_API_TOKEN: TOKEN, ...kvReturning(config), ...envOver } as any;
   const res = await handleAdmin(healthReq(host), env, ctx);
   return JSON.parse(await res.text()) as {
     overall: string;
     checks: Array<{ name: string; status: string; detail: string }>;
   };
 }
+
+/**
+ * BÖNGÉSZŐ-oldali Google Ads site: van `customer_id` (a cross-check GAQL-lába
+ * használja), de NINCS offline conversion action, és az `expected_platforms.offline`
+ * sem nevesíti a `gads`-ot. A konverziói AWCT + Enhanced Conversions a GTM-ből —
+ * a gateway OAuth-ja a pénzútja szempontjából irreleváns.
+ */
+const browserOnlyAdsSite = {
+  site_id: 'webshop',
+  country_code: 'HU',
+  currency: 'HUF',
+  require_consent: true,
+  meta: { pixel_id: '123456', access_token: 'T' },
+  gads: { customer_id: '1234567890', login_customer_id: null },
+  expected_platforms: { smoke: ['meta'] }
+};
 
 const find = (b: { checks: Array<{ name: string; status: string; detail: string }> }, name: string) =>
   b.checks.find((c) => c.name === name)!;
@@ -119,6 +135,60 @@ describe('P2 — hiányzó worker-secret esetén a site health RED, és a DIAGN�
     // A pénzút ép: minden OAuth-check PASS.
     expect(find(body, 'gads_oauth').status).toBe('PASS');
     expect(find(body, 'gads_oauth_secrets').status).toBe('PASS');
+  });
+});
+
+/**
+ * 2026-08-24 review #3 — a hard FAIL feltétele SZŰKÍTVE.
+ *
+ * RED TEST: a szűkítés előtt a puszta `gads.customer_id` elég volt a site-level
+ * FAIL-hez. Egy böngésző-oldali Ads site (AWCT + EC a GTM-ből, CRM/offline lifecycle
+ * NÉLKÜL) így minden nap pirosan állt volna egy olyan OAuth miatt, ami a pénzútját
+ * nem is érinti — és a riasztás-fáradtság pont azt a néma hibát fedné el, amiért az
+ * egész lánc létezik.
+ */
+describe('P2/review#3 — browser-only Ads site NEM lesz RED a gateway OAuth-tól', () => {
+  it('nincs offline action és nincs expected_platforms.offline → WARN, nem FAIL', async () => {
+    const body = await health(
+      'p2g.example.com',
+      { OAUTH_TOKENS: { get: async () => null, put: async () => {} } },
+      browserOnlyAdsSite
+    );
+    expect(find(body, 'gads_oauth_secrets').status).toBe('WARN');
+    expect(find(body, 'gads_oauth').status).toBe('WARN');
+    // …és a szöveg MEGINDOKOLJA, miért nem piros (különben „elnézésnek" olvasódna).
+    expect(find(body, 'gads_oauth_secrets').detail).toContain('browser-owned');
+    expect(find(body, 'gads_oauth_secrets').detail).not.toContain('OFFLINE MONEY PATH DOWN');
+    // Az overall a többi WARN miatt WARN, de NEM FAIL.
+    expect(body.overall).toBe('WARN');
+  });
+
+  it('ugyanaz a site conversion_actions-szel MÁR FAIL (a szűkítés nem nyit rést)', async () => {
+    const withAction = {
+      ...browserOnlyAdsSite,
+      gads: { ...browserOnlyAdsSite.gads, conversion_actions: { lead_qualified: '123' } }
+    };
+    const body = await health(
+      'p2h.example.com',
+      { OAUTH_TOKENS: { get: async () => null, put: async () => {} } },
+      withAction
+    );
+    expect(find(body, 'gads_oauth_secrets').status).toBe('FAIL');
+    expect(body.overall).toBe('FAIL');
+  });
+
+  it('conversion_actions nélkül, de expected_platforms.offline=[gads] → FAIL', async () => {
+    const expectsOffline = {
+      ...browserOnlyAdsSite,
+      expected_platforms: { smoke: ['meta'], offline: ['gads'] }
+    };
+    const body = await health(
+      'p2i.example.com',
+      { OAUTH_TOKENS: { get: async () => null, put: async () => {} } },
+      expectsOffline
+    );
+    expect(find(body, 'gads_oauth_secrets').status).toBe('FAIL');
+    expect(find(body, 'gads_oauth_secrets').detail).toContain('OFFLINE MONEY PATH DOWN');
   });
 });
 

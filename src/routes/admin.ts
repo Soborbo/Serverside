@@ -1,7 +1,7 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
-import { getSiteConfig } from '../lib/config';
+import { getSiteConfig, listMonitoredSiteConfigs } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
 import { getLeadTrail, isValidLeadId, markDoNotReplay } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
@@ -229,7 +229,16 @@ async function handleReconReport(request: Request, env: Env): Promise<Response> 
   const hours = Number.isFinite(hoursRaw) ? Math.min(Math.max(hoursRaw, 1), 168) : 24;
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-  const inputs = await fetchReconInputs(env, since);
+  // A site-configok az offline láb dependency-állapotához kellenek (customer_id /
+  // conversion action / OAuth). KV-hiba esetén üres lista → a láb NEM némul el,
+  // csak a `blocked_by` marad feloldatlan.
+  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigs>> = [];
+  try {
+    siteConfigs = await listMonitoredSiteConfigs(env);
+  } catch {
+    // már logolva a config-rétegben
+  }
+  const inputs = await fetchReconInputs(env, since, siteConfigs);
   if (inputs === null) {
     return json({ error: 'ledger_unavailable', detail: 'No D1 LEDGER binding or query failed' }, 503);
   }
@@ -468,6 +477,14 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
     // A hard rule: ha ez a site OFFLINE Google-lábat VÁR (van conversion action VAGY
     // az expected_platforms.offline nevesíti a gads-ot), akkor a törött OAuth nem
     // „figyelmeztetés" — a pénzút áll. RED, nem WARN, nem silent skip.
+    //
+    // A PUSZTA `customer_id` viszont NEM elég a piroshoz (2026-08-24 review). Egy
+    // site futhat úgy, hogy a Google Ads konverziói BÖNGÉSZŐ-oldaliak (AWCT +
+    // Enhanced Conversions a GTM-ből), és nincs CRM/offline lifecycle-lába — ott a
+    // gateway OAuth-ja teljesen irreleváns a pénzút szempontjából. A customer_id
+    // ilyenkor is jelen van (a cross-check GAQL-lába használja). Az ilyen site-ot
+    // pirosra festeni riasztás-fáradtságot termel, ami PONT azt a néma hibát fedné
+    // el, amiért az egész lánc létezik. Webshop/paywall profilon ez lesz a jellemző.
     const offlineExpected =
       (actions && Object.keys(actions).length > 0) ||
       (siteConfig.expected_platforms?.offline ?? []).includes('gads');
@@ -477,12 +494,17 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
 
     add(
       'gads_oauth_secrets',
-      missingOAuthSecrets.length === 0 ? 'PASS' : 'FAIL',
+      missingOAuthSecrets.length === 0 ? 'PASS' : offlineExpected ? 'FAIL' : 'WARN',
       missingOAuthSecrets.length === 0
         ? 'GADS_OAUTH_CLIENT_ID + GADS_OAUTH_CLIENT_SECRET present'
         : `MISSING worker secret(s): ${missingOAuthSecrets.join(', ')}${moneyPathNote}. ` +
           'Re-running the OAuth flow does NOT fix this — set them on the worker first ' +
-          '(client id: wrangler.toml [vars]; secret: `wrangler secret put GADS_OAUTH_CLIENT_SECRET`).'
+          '(client id: wrangler.toml [vars]; secret: `wrangler secret put GADS_OAUTH_CLIENT_SECRET`).' +
+          (offlineExpected
+            ? ''
+            : ' NOT site-level RED: this site has no offline conversion action and does not list ' +
+              "'gads' under expected_platforms.offline, so its Google Ads conversions are browser-owned " +
+              '(AWCT/EC) and do not depend on the gateway OAuth. Only the reconciliation GAQL leg is affected.')
     );
 
     // A developer token CSAK a reconciliation GAQL-lábát kapuzza (lib/cross-check.ts):
@@ -501,7 +523,7 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
       const token = await getAccessToken(siteConfig.gads.customer_id, env);
       add(
         'gads_oauth',
-        token ? 'PASS' : 'FAIL',
+        token ? 'PASS' : offlineExpected ? 'FAIL' : 'WARN',
         token
           ? 'access token obtained'
           : missingOAuthSecrets.length > 0
@@ -516,7 +538,7 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
         site_id: siteConfig.site_id,
         error: err instanceof Error ? err.message : String(err)
       });
-      add('gads_oauth', 'FAIL', `token fetch failed (see Worker logs)${moneyPathNote}`);
+      add('gads_oauth', offlineExpected ? 'FAIL' : 'WARN', `token fetch failed (see Worker logs)${moneyPathNote}`);
     }
   } else {
     add('gads_customer_id', 'WARN', 'no customer_id — Google Ads dispatch is a no-op for this site');
