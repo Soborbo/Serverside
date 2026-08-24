@@ -2,9 +2,9 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/Soborbo/claudeskills/soborbo-tracking/server/site-config.schema.json",
   "title": "Soborbo event-gateway per-site KV config",
-  "description": "Formal schema for the SITE_CONFIG KV value the gateway worker reads per hostname. The gads.conversion_actions enum is GENERATED from events.json (CANONICAL names only — the ingress canonicalizes legacy aliases before the lookup, so legacy-keyed maps never match at runtime); the canonical ../scripts/generate-site.mjs validates conversion_actions keys against ../src/events.json. This schema is a reference for the KV shape — keep the enum in sync with events.json. Model 2 / Run 6: the gateway sends NO GA4 (on-site GA4 is browser-owned, the offline GA4 leg is disabled) — the ga4 block is diagnostics-only. gads is Google-Ads-offline-only via the Data Manager API. meta.test_event_code MUST NOT be set in production KV (edge-cached config has twice routed real conversions into Meta's Test stream); the sanctioned test mechanism is the per-request code.",
+  "description": "THE single formal source of truth for the SITE_CONFIG KV value the gateway worker reads per hostname (src/lib/config.ts `SiteConfig`). scripts/generate-site.mjs derives its pass-through field list FROM THIS FILE — a SiteConfig field that is missing here is SILENTLY DROPPED when a site config is regenerated (the 2026-08-24 A8 finding: `consent` / `consent_strict` / `recon` / `monitoring` were dropped, which would have flipped an sbo consent pilot back to CookieYes on the next regeneration). Adding a field to SiteConfig therefore means adding it HERE in the same change; tests/generator-roundtrip.test.ts fails otherwise.\n\nWhat this schema does NOT do: it describes what the RUNTIME accepts, not what we are willing to create. `meta` and `gads` are optional here because config.ts declares them optional and live configs have existed without them (lomtalan lost its `meta` block on 2026-07-15 and the worker kept serving) — but generate-site.mjs still HARD-ERRORS on a missing `meta`/`gads` for a NEW site (--new-site). Model 2 / Run 6: the gateway sends NO GA4 (on-site GA4 is browser-owned, the offline GA4 leg is disabled) — the ga4 block is diagnostics-only. gads is Google-Ads-offline-only via the Data Manager API. meta.test_event_code MUST NOT be set in production KV (edge-cached config has twice routed real conversions into Meta's Test stream); the sanctioned test mechanism is the per-request code.",
   "type": "object",
-  "required": ["site_id", "country_code", "currency", "meta", "gads"],
+  "required": ["site_id", "country_code", "currency"],
   "additionalProperties": false,
   "patternProperties": {
     "^_comment": {}
@@ -22,33 +22,84 @@
       "type": "object",
       "additionalProperties": false,
       "patternProperties": { "^_comment": {} },
-      "description": "Soborbo CMP (Fázis 1-2, 2026-08): WHICH consent system runs on this site. Absent (every current site) === provider 'cookieyes' — zero behaviour change. provider 'sbo' enables the own CMP: /api/consent accepts decisions, the GA4 gate requires analytics_storage GRANTED, and the offline/replay leg resolves the consent_log's current revision via the lead's consent_id. FLIPPING TO 'sbo' IS A HUMAN, PER-SITE PILOT DECISION — never a default.",
+      "description": "Soborbo CMP (Fázis 1-2, 2026-08): WHICH consent system runs on this site. Absent (every current site) === provider 'cookieyes' — zero behaviour change. provider 'sbo' enables the own CMP: /api/consent accepts decisions, the GA4 gate requires analytics_storage GRANTED, and the offline/replay leg resolves the consent_log's current revision via the lead's consent_id. FLIPPING TO 'sbo' IS A HUMAN, PER-SITE PILOT DECISION — never a default. THIS BLOCK IS ROUND-TRIP CRITICAL: dropping it on regeneration silently reverts a pilot site to CookieYes.",
       "properties": {
-        "provider": { "type": "string", "enum": ["cookieyes", "sbo"] }
+        "provider": { "type": "string", "enum": ["cookieyes", "sbo"] },
+        "mode": {
+          "type": "string",
+          "enum": ["basic", "advanced"],
+          "description": "Google Consent Mode posture recorded on every decision (consent_log.consent_mode). Default 'basic': advanced's pre-consent cookieless pings are contested in the EEA and half the portfolio is HU."
+        }
       }
+    },
+    "allowed_origins": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "EXTRA allowed browser Origins ('https://foo.example.com' or a bare hostname). The site's own host + its apex/www sibling are ALWAYS allowed — this field only adds. Needed only when the site also posts conversions from another host (e.g. a separate landing domain). See src/lib/origin.ts."
     },
     "crm_token_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "SHA-256 hex of the per-site server-ingress token. Authorizes the site backend on /api/event/conversion-server and the CRM on /api/event/lead-status. Generated by generate-site.mjs; the plaintext lives only in crm-secret.env / deploy secrets."
+      "description": "SHA-256 hex of the per-site server-ingress token. Authorizes the site backend on /api/event/conversion-server and the CRM on /api/event/lead-status. Generated by generate-site.mjs; the plaintext lives only in crm-secret.env / deploy secrets. To REGENERATE an existing site's config without rotating the token, feed this hash back to the generator as `crm_token_sha256` (it is passed through verbatim) instead of supplying the plaintext."
+    },
+    "expected_platforms": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_comment": {} },
+      "description": "Which platform legs this site is EXPECTED to deliver on — the daily smoke's success criterion. It exists because a missing config and a deliberate omission look identical in the deliveries table: when lomtalan's `meta` block vanished from KV on 2026-07-15 the fan-out silently turned to 'skipped' and the daily smoke stayed green for five days. The expectation must therefore be recorded EXPLICITLY, never derived from the presence of a config block (deriving it is exactly what fails to notice the deletion). Absent → the digest falls back to observed history.",
+      "properties": {
+        "smoke": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Platforms that MUST be 'accepted' in the daily synthetic-lead run. Model 2: the browser fan-out's on-site sink is Meta (GA4 MP is off, so listing 'ga4' would alert forever on a leg that never delivers)."
+        },
+        "offline": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Platforms expected on the CRM lifecycle leg (lead-status → Google Ads via Data Manager). Deliberately NOT checked by the browser smoke — it needs its own authenticated offline synthetic test / OAuth health check."
+        }
+      }
+    },
+    "recon": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^_comment": {} },
+      "description": "Daily cross-platform reconciliation (src/lib/cross-check.ts): compares the ledger's event counts against the GA4 Data API and the Google Ads API for the same day. Absent → this site is skipped by the cross-check (the ledger-internal recon still runs). Both legs use the OAuth token stored for gads.customer_id.",
+      "properties": {
+        "ga4_property_id": {
+          "type": "string",
+          "pattern": "^\\d+$",
+          "description": "GA4 Data API NUMERIC property id (e.g. '453881143') — NOT the G-XXX measurement id. The analytics.readonly scope comes from the post-2026-07-16 re-consent; with an older token this leg logs and skips."
+        },
+        "gads_onsite_actions": {
+          "type": "object",
+          "description": "internal event_name -> the ON-SITE (browser/GTM gtag) Google Ads conversion action NAME as it appears in the account (e.g. 'Callback requested'). NOT the same as gads.conversion_actions — that one is the OFFLINE (lead-status → Data Manager) id map; this one audits the browser leg.",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "monitoring": {
+      "type": "boolean",
+      "description": "false → this site is EXCLUDED from the daily digest / zero-conversion alert (the fan-out and ledger are unaffected). For non-production configs: the deploy-smoke dummy, a half-finished placeholder-pixel site. Those never convert, so they would raise a '0 conversions' CRITICAL every single day — and that alert fatigue is precisely what would hide the silent failure the chain exists for. Absent/true → monitored."
     },
     "meta": {
       "type": "object",
       "required": ["pixel_id", "access_token"],
       "additionalProperties": false,
       "patternProperties": { "^_comment": {} },
+      "description": "OPTIONAL at runtime (config.ts `meta?`): a site can be onboarded before its CAPI access token exists, and a live site has lost this block before (lomtalan, 2026-07-15). Absent → the Meta CAPI leg is skipped cleanly rather than 401-ing on a placeholder token. generate-site.mjs still requires it for --new-site.",
       "properties": {
         "pixel_id": { "type": "string", "pattern": "^\\d{5,}$" },
         "access_token": { "type": "string", "minLength": 1 },
         "test_event_code": {
           "type": ["string", "null"],
-          "description": "FORBIDDEN in production KV (generator hard-errors without --allow-test-event-code). The edge-cached config has twice routed real conversions into Meta's Test stream. Use the per-request test code (TRACKING_TEST_LEAD_EMAIL keying) instead."
+          "description": "FORBIDDEN in production KV (generator hard-errors without --allow-test-event-code, and with the flag it refuses to emit a production kv-put script). The edge-cached config has twice routed real conversions into Meta's Test stream. Use the per-request test code (TRACKING_TEST_LEAD_EMAIL keying) instead."
         }
       }
     },
     "ga4": {
       "type": "object",
-      "description": "LEGACY / diagnostics-only. The gateway sends NO GA4: on-site GA4 is browser-owned (GTM), and the offline GA4 leg is disabled (without a real client_id every event would start a synthetic GA4 client). Only /debug-ga4 and old-DLQ retries read this. Omit for new sites.",
+      "description": "LEGACY / diagnostics-only. The gateway sends NO GA4: on-site GA4 is browser-owned (GTM), and the offline GA4 leg is disabled (without a real client_id every event would start a synthetic GA4 client). Only /debug-ga4 and old-DLQ retries read this. Omit for new sites — its absence is the CORRECT state, not a gap.",
       "required": ["measurement_id", "api_secret"],
       "additionalProperties": false,
       "patternProperties": { "^_comment": {} },
@@ -59,7 +110,7 @@
     },
     "gads": {
       "type": "object",
-      "description": "Google-Ads-OFFLINE-only (Model 2): Enhanced Conversions for Leads via the Data Manager API, posted from /api/event/lead-status. conversion_actions keys are typically the OFFLINE CRM events (lead_qualified, booking_confirmed, revenue_confirmed, …).",
+      "description": "Google-Ads-OFFLINE-only (Model 2): Enhanced Conversions for Leads via the Data Manager API, posted from /api/event/lead-status. conversion_actions keys are typically the OFFLINE CRM events (lead_qualified, booking_confirmed, revenue_confirmed, …). OPTIONAL at runtime (config.ts `gads?`) — a hand-written or migration config can arrive without it; generate-site.mjs still requires it for --new-site.",
       "required": ["customer_id"],
       "additionalProperties": false,
       "patternProperties": { "^_comment": {} },

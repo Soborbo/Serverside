@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,5 +178,125 @@ describe('generate-site.mjs — token-rotációs guard (F2-1)', () => {
     // Ugyanaz az input crm_token → ugyanaz a hash (nem generálódik új).
     expect(scA.crm_token_sha256).toBe(scB.crm_token_sha256);
     expect(a.stderr).not.toContain('GENERÁLVA');
+  });
+});
+
+/**
+ * vNext P0.3 — CONSENT-KÖTELES PIACOK (a UK-rés).
+ *
+ * RED TEST: a fix előtt a kapu `EEA_COUNTRIES`-nak hívta magát, és a `GB` — jogilag
+ * helyesen — nem volt EGT-tag, tehát kimaradt belőle. A KÖVETKEZMÉNY viszont hibás
+ * volt: egy UK-site SEMMILYEN require_consent-figyelmeztetést nem kapott, pont azon a
+ * piacon, ahol a PECR + UK GDPR előzetes hozzájárulást követel a süti-alapú
+ * marketing-trackinghez. A fix visszavonásával (GB kivétele a halmazból) az első két
+ * teszt bukik.
+ */
+describe('generate-site.mjs — consent-köteles piacok (P0.3)', () => {
+  const gbSite = (): Record<string, any> => ({
+    ...baseConfig(),
+    site_id: 'ukguard',
+    hostnames: ['ukguard.co.uk'],
+    country_code: 'GB',
+    currency: 'GBP',
+    require_consent: false
+  });
+
+  it('GB + marketing-tracking + require_consent:false + ÚJ site → HARD ERROR', () => {
+    const r = runGen(gbSite(), ['--new-site']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('require_consent');
+    expect(r.stderr).toContain('GB');
+    expect(r.stderr).toContain('PECR');
+  });
+
+  it('GB + require_consent hiányzik teljesen + ÚJ site → HARD ERROR (nem csak false-ra)', () => {
+    const cfg = gbSite();
+    delete cfg.require_consent;
+    const r = runGen(cfg, ['--new-site']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('require_consent');
+  });
+
+  it('GB + require_consent:true → átmegy', () => {
+    const cfg = gbSite();
+    cfg.require_consent = true;
+    const r = runGen(cfg, ['--new-site']);
+    expect(r.status).toBe(0);
+  });
+
+  it('MEGLÉVŐ site regenerálása fail-open configgal → hangos WARNING, de nem blokkol', () => {
+    // A regenerálást nem szabad blokkolni: enélkül pont a legacy configokat nem
+    // lehetne javítani, és a P0.2 round-trip is futtathatatlan lenne rajtuk.
+    const r = runGen(gbSite());
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('require_consent');
+    expect(r.stderr).toContain('Figyelmeztetések');
+  });
+
+  it('US site → nincs consent-kapu (nem consent-köteles piac)', () => {
+    const cfg = gbSite();
+    cfg.country_code = 'US';
+    cfg.currency = 'USD';
+    const r = runGen(cfg, ['--new-site']);
+    expect(r.status).toBe(0);
+  });
+});
+
+/**
+ * vNext P0.4 — a `test_event_code` bypass MARADÉK-RÉSE.
+ *
+ * Az alap hard gate megvolt (flag nélkül exit 1), de `--allow-test-event-code`-dal a
+ * kód a KV-configba is beíródott, ÉS a legenerált `kv-put.sh` egy azonnal futtatható
+ * production-parancs volt — pontosan az a recept, amivel kétszer szivárgott éles
+ * konverzió a Meta Test streambe.
+ *
+ * RED TEST: a fix előtt az opt-inos futás `kv-put.sh`-t írt, benne csupasz
+ * `wrangler kv key put` sorokkal, kapu nélkül.
+ */
+describe('generate-site.mjs — test_event_code bypass nem termel production-kimenetet (P0.4)', () => {
+  const withTestCode = (): Record<string, any> => {
+    const c = baseConfig();
+    c.meta.test_event_code = 'TEST_GUARD';
+    return c;
+  };
+
+  it('opt-innel NINCS kv-put.sh (a production-nevű script nem jön létre)', () => {
+    const r = runGen(withTestCode(), ['--allow-test-event-code']);
+    expect(r.status).toBe(0);
+    expect(existsSync(join(r.out, 'kv-put.sh'))).toBe(false);
+    expect(existsSync(join(r.out, 'kv-put.TEST-EVENT-CODE.sh'))).toBe(true);
+  });
+
+  it('a teszt-script FUTTATVA megáll (exit != 0), és nem hív wranglert', () => {
+    const r = runGen(withTestCode(), ['--allow-test-event-code']);
+    const script = join(r.out, 'kv-put.TEST-EVENT-CODE.sh');
+    // A guard a fájl legelején van: a `wrangler kv key put` sorok mögötte állnak,
+    // tehát a script nem futtathat KV-írást a kapu kinyitása nélkül.
+    const run = spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin' } });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('REFUSING');
+    expect(run.stdout ?? '').not.toContain('wrangler kv key put');
+  });
+
+  it('a kapu CSAK explicit env-változóval nyílik (eldobható teszt-namespace-hez)', () => {
+    const r = runGen(withTestCode(), ['--allow-test-event-code']);
+    const body = readFileSync(join(r.out, 'kv-put.TEST-EVENT-CODE.sh'), 'utf8');
+    expect(body).toContain('SBO_ALLOW_TEST_EVENT_CODE_KV_WRITE');
+    expect(body).toContain('CLAUDE.md 17');
+  });
+
+  it('az INTEGRATION.md tetején BLOKKOLÓ banner áll, nem egy checklist-sor a közepén', () => {
+    const r = runGen(withTestCode(), ['--allow-test-event-code']);
+    const checklist = readFileSync(join(r.out, 'INTEGRATION.md'), 'utf8');
+    expect(checklist.split('\n')[0]).toContain('TESZT-BUILD');
+    expect(checklist).toContain('NEM PRODUCTION');
+  });
+
+  it('test_event_code NÉLKÜL az opt-in flag semmit nem változtat (production-út ép)', () => {
+    const r = runGen(baseConfig(), ['--allow-test-event-code']);
+    expect(r.status).toBe(0);
+    expect(existsSync(join(r.out, 'kv-put.sh'))).toBe(true);
+    expect(existsSync(join(r.out, 'kv-put.TEST-EVENT-CODE.sh'))).toBe(false);
+    expect(readFileSync(join(r.out, 'INTEGRATION.md'), 'utf8')).not.toContain('TESZT-BUILD');
   });
 });
