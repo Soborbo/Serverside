@@ -11,6 +11,7 @@ import {
   OFFLINE_SKIP_CLASSIFICATION,
   ALL_SKIP_REASONS,
   summarize,
+  fetchReconInputs,
   DEFAULT_OFFLINE_THRESHOLDS,
   type SiteReconInput,
   type OfflineLegInput
@@ -500,5 +501,72 @@ describe('#71 HIGH — a CSAK 7 napos ablakban létező láb is megszületik', (
     const l = legs.get('painless')![0];
     expect(deriveOfflineState(l)).toBe('BLOCKED_DEPENDENCY');
     expect(computeOfflineDrift(l)).toEqual([]);
+  });
+});
+
+/**
+ * 2026-08-24 Codex-review a #71 hotfixen — P2.
+ *
+ * A `monitoring`-szűrő kapcsolója KIZÁRÓLAG a felsorolás TELJESSÉGE lehet, nem a lista
+ * HOSSZA. Egy sikeres felsorolás is adhat üres listát — akkor, ha MINDEN site
+ * `monitoring: false`. Az „üres → ne szűrj" szabály ilyenkor pont a kifejezetten
+ * kikapcsolt site-okat engedné vissza, és a történelmi lead_status soraikból a 7 napos
+ * kulcs-unión át hamis `offline_zero_delivery` keletkezne.
+ *
+ * Ez a rés a KULCS-UNIÓ FIXSZEL LETT SÚLYOSABB: előtte egy `monitoring: false` site
+ * 24 órás sor híján lábat sem kapott.
+ *
+ * A tesztek a VALÓDI hívási ponton mennek át (`fetchReconInputs`), nem a szabály
+ * újrafogalmazásán: egy szabály-restatement teszt akkor is zöld maradna, ha a
+ * tényleges kifejezés elromlik.
+ */
+describe('#71 Codex P2 — a szűrő kapcsolója a TELJESSÉG, nem a lista hossza', () => {
+  /** Egy site-nak VAN 7 napos lifecycle-sora, de 24 órás nincs, és sosem volt accepted. */
+  function ledgerWithHistoricalLifecycle() {
+    const rows = (sql: string) => {
+      if (sql.includes('AS received')) {
+        return { results: [{ site_id: 'dummy-site', event_name: 'revenue_confirmed', received: 6 }] };
+      }
+      return { results: [] };
+    };
+    return {
+      prepare: (sql: string) => ({
+        bind: () => ({ all: async () => rows(sql) }),
+        all: async () => rows(sql)
+      })
+    };
+  }
+
+  const env = () => ({ LEDGER: ledgerWithHistoricalLifecycle() }) as any;
+  const SINCE = '2026-08-23T00:00:00.000Z';
+
+  it('TELJES felsorolás + ÜRES lista (minden site monitoring:false) → NINCS láb, nincs finding', async () => {
+    // Ez a rés: az „üres → ne szűrj" szabály a kifejezetten KIKAPCSOLT site-ot engedte
+    // vissza, és a történelmi sorából hamis offline_zero_delivery keletkezett volna.
+    const inputs = await fetchReconInputs(env(), SINCE, [], true);
+    expect(inputs).not.toBeNull();
+    expect(inputs!.flatMap((i) => i.offline_legs ?? [])).toEqual([]);
+    expect(summarize(inputs!).findings).toEqual([]);
+  });
+
+  it('NEM teljes felsorolás + üres lista → a láb MEGSZÜLETIK (a csend rosszabb)', async () => {
+    const inputs = await fetchReconInputs(env(), SINCE, [], false);
+    const legs = inputs!.flatMap((i) => i.offline_legs ?? []);
+    expect(legs).toHaveLength(1);
+    expect(legs[0].site_id).toBe('dummy-site');
+    // …és a 7 napos abszolút detektor szól rá.
+    expect(computeOfflineDrift(legs[0]).map((f) => f.kind)).toContain('offline_zero_delivery');
+  });
+
+  it('TELJES felsorolás + a site RAJTA VAN a listán → a láb megszületik', async () => {
+    const cfg = { site_id: 'dummy-site', country_code: 'HU', currency: 'HUF' } as any;
+    const inputs = await fetchReconInputs(env(), SINCE, [cfg], true);
+    expect(inputs!.flatMap((i) => i.offline_legs ?? [])).toHaveLength(1);
+  });
+
+  it('TELJES felsorolás + MÁS site van a listán → a láb kimarad', async () => {
+    const cfg = { site_id: 'masik', country_code: 'HU', currency: 'HUF' } as any;
+    const inputs = await fetchReconInputs(env(), SINCE, [cfg], true);
+    expect(inputs!.flatMap((i) => i.offline_legs ?? [])).toEqual([]);
   });
 });

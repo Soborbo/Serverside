@@ -828,11 +828,19 @@ async function fetchOfflineLegs(
   // addig összegyűjtött RÉSZLISTÁT adja vissza. Ha ezt teljesnek hinnénk, 15 site-ból
   // 8 után elbukó listázás mellett a maradék 7 site offline sorai kiszűrődnének,
   // findingot nem termelnének, és a monitor tisztának látszana — pontosan az a
-  // hibaosztály, ami ellen az egész lánc épült. Nem teljes lista (vagy üres lista,
-  // pl. on-demand hívás) → NEM szűrünk: a fölösleges sor olcsóbb, mint a csend.
-  const monitored = configsComplete && siteConfigs.length > 0
-    ? new Set(siteConfigs.map((c) => c.site_id))
-    : null;
+  // hibaosztály, ami ellen az egész lánc épült. Nem teljes lista → NEM szűrünk: a
+  // fölösleges sor olcsóbb, mint a csend. (Az on-demand hívás alapértelmezése
+  // `configsComplete = false`, tehát az is ide esik.)
+  //
+  // A KAPCSOLÓ KIZÁRÓLAG A TELJESSÉG, NEM A LISTA HOSSZA (2026-08-24 Codex-review, P2).
+  // Egy SIKERES felsorolás is adhat ÜRES listát — akkor, ha minden site
+  // `monitoring: false`. Az „üres → ne szűrj" szabály ilyenkor pont a kifejezetten
+  // kikapcsolt site-okat engedné vissza a mérésbe, és a történelmi `lead_status`
+  // soraikból a 7 napos kulcs-unión át hamis `offline_zero_delivery` keletkezne —
+  // vagyis a saját kulcs-unió-fixem tágította volna ki ennek a résnek a hatását
+  // (előtte 24 órás sor híján ezek a site-ok lábat sem kaptak). Teljes felsorolás
+  // esetén tehát ÜRES Set a szűrő (= mindent kizár), nem `null`.
+  const monitored = configsComplete ? new Set(siteConfigs.map((c) => c.site_id)) : null;
   const keep = (r: { site_id: string }) => !monitored || monitored.has(r.site_id);
   const received24 = (recv24.results ?? []).filter(keep);
   // A szűrőnek MINDKÉT ablakra állnia kell: a 7 napos kulcsok azóta önálló lábat
