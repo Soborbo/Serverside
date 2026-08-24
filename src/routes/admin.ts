@@ -1,7 +1,7 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { authenticateAdmin } from '../lib/admin-auth';
-import { getSiteConfig } from '../lib/config';
+import { getSiteConfig, listMonitoredSiteConfigs } from '../lib/config';
 import { getAccessToken } from '../lib/gads-oauth';
 import { getLeadTrail, isValidLeadId, markDoNotReplay } from '../lib/ledger';
 import { fetchReconInputs, summarize, DEFAULT_THRESHOLDS } from '../lib/reconciliation';
@@ -229,7 +229,16 @@ async function handleReconReport(request: Request, env: Env): Promise<Response> 
   const hours = Number.isFinite(hoursRaw) ? Math.min(Math.max(hoursRaw, 1), 168) : 24;
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-  const inputs = await fetchReconInputs(env, since);
+  // A site-configok az offline láb dependency-állapotához kellenek (customer_id /
+  // conversion action / OAuth). KV-hiba esetén üres lista → a láb NEM némul el,
+  // csak a `blocked_by` marad feloldatlan.
+  let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigs>> = [];
+  try {
+    siteConfigs = await listMonitoredSiteConfigs(env);
+  } catch {
+    // már logolva a config-rétegben
+  }
+  const inputs = await fetchReconInputs(env, since, siteConfigs);
   if (inputs === null) {
     return json({ error: 'ledger_unavailable', detail: 'No D1 LEDGER binding or query failed' }, 503);
   }

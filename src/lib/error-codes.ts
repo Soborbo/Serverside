@@ -219,6 +219,25 @@ export enum TrackingErrorCode {
   // a check a bevezetése óta EGYETLEN napon sem futott le, és ez sehol nem látszott).
   RECON_CROSS_CHECK_NOT_RUNNING = 'TRK-950-011',
 
+  // ── P1.1 business-leg (CRM lifecycle → Google Ads offline / Data Manager) ──
+  // A ledger-belso recon a BONGESZO-fan-outot meri; ezek az uzleti darabszam es a
+  // tenylegesen leszallitott offline konverzio viszonyat. A `lead_status_total` mezo
+  // 2026-08-24-ig LETEZETT es feltoltodott, de senki nem olvasta — egy szandekosan
+  // kikapcsolt Google offline-lab mellett a monitor zolden ment at.
+  /** Elvart kezbesites van, accepted NULLA — a lab halott (24h regresszio VAGY 7 napos abszolut). */
+  RECON_OFFLINE_ZERO_DELIVERY = 'TRK-950-012',
+  /** Reszleges kieses: az elvart kezbesitesek toredeke ert celba. */
+  RECON_OFFLINE_COVERAGE_DRIFT = 'TRK-950-013',
+  /** A Google elutasitja a feltolteseket (auth / allowlist / formatum). */
+  RECON_OFFLINE_VENDOR_FAILURE = 'TRK-950-014',
+  /**
+   * A lab MERHETETLEN, mert hianyzik egy eloofeltetel (OAuth secret / refresh token /
+   * customer_id / conversion action). SZANDEKOSAN NEM drift-finding: a hiba ismert es a
+   * health-check mar jelzi, egy masodik riasztas ugyanarrol csak zajt termel. Viszont a
+   * napi recon NEM lehet nema rola — ez a kod teszi greppelhetove es riportalhatova.
+   */
+  RECON_OFFLINE_BLOCKED = 'TRK-950-015',
+
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
 
@@ -364,6 +383,14 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Ledger event count diverges from the platform-side (GA4 / Google Ads) daily conversion count beyond threshold',
   [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]:
     'Cross-platform reconciliation query failed (D1 / Google Ads API / GA4 Data API) — that leg skipped for the day',
+  [TrackingErrorCode.RECON_OFFLINE_ZERO_DELIVERY]:
+    'Offline business leg dead: statuses received, zero conversions delivered to Google',
+  [TrackingErrorCode.RECON_OFFLINE_COVERAGE_DRIFT]:
+    'Offline business leg partial loss: delivered well below expected',
+  [TrackingErrorCode.RECON_OFFLINE_VENDOR_FAILURE]:
+    'Offline business leg: Google rejects a high share of uploads',
+  [TrackingErrorCode.RECON_OFFLINE_BLOCKED]:
+    'Offline business leg unmeasurable: a dependency (OAuth secret / refresh token / customer_id / conversion action) is missing',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]:
     'Cross-platform reconciliation is not running (no recon config, or every leg skipped) — the Model 2 browser/GTM blind spot is unmonitored',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
@@ -413,6 +440,9 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'critical',
   [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]: 'critical',
   [TrackingErrorCode.FANOUT_SETUP_FAILED]: 'critical',
+  // A halott offline business-lab ugyanaz a karkep, mint a hianyzo config-blokk:
+  // a penz nem er celba, es magatol soha nem javul meg.
+  [TrackingErrorCode.RECON_OFFLINE_ZERO_DELIVERY]: 'critical',
 
   [TrackingErrorCode.META_API_REJECTED]: 'warning',
   [TrackingErrorCode.META_API_TIMEOUT]: 'warning',
@@ -470,6 +500,11 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.RECON_QUERY_FAILED]: 'warning',
   [TrackingErrorCode.RECON_CROSS_PLATFORM_DRIFT]: 'warning',
   [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]: 'warning',
+  [TrackingErrorCode.RECON_OFFLINE_COVERAGE_DRIFT]: 'warning',
+  [TrackingErrorCode.RECON_OFFLINE_VENDOR_FAILURE]: 'warning',
+  // SZANDEKOSAN 'warning': a blokkolt lab hibaja ISMERT (a health-check jelzi), es a
+  // recon csak lathatova teszi. Critical-la emelve duplan riasztana ugyanarrol.
+  [TrackingErrorCode.RECON_OFFLINE_BLOCKED]: 'warning',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'warning',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
   // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)
