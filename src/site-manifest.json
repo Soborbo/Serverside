@@ -1,22 +1,22 @@
 {
-  "source_commit": "8a5dbbd83fe81275464df68cb7b3c0c9e76a0c5c",
+  "source_commit": "db819bc6e2133694134588866479a44484aa9ad9",
   "sites": {
     "agykontroll.co.uk": "sha256:8d2191206f1cda09e274bbd66f9f3618bb8e4cc3644fc8c4a7a446afebc35727",
     "beautyflow.pro": "sha256:ac23c2e03252f23b87c59a6ffbc322876cbc4d1d9688e277e89dfc4a18f752b9",
     "event-gateway.golaxo.workers.dev": "sha256:e272b6f95e9913def1201371f6b69f4980dc6bfdc27ff8480e365d4f8113969e",
     "lomtalan.hu": "sha256:879f09ff67a2ce00d99d5eff842cbccd5447ad74c01d90b020e86f1fecaf21a1",
-    "olcsokontenerhaz.hu": "sha256:1286927cd359432be52bcfd7f41c7c1edd7873e2af95c3dc1ef8f45f4f0602e9",
+    "olcsokontenerhaz.hu": "sha256:d520259806c30c5b701093d8b4de69c80f234efaec3ff23c84f6e8e5c5383b7c",
     "painlessremovals.com": "sha256:c19dbbd2882ce1a20ee02f71c1f445e75bccc7a38155b851ff1408be2bcdf51c",
-    "skinlabhungary.hu": "sha256:b8622288b6aeefdaa711a5598958db75c92e08f73c940afe89026da111d145bc",
-    "szelloztessokosan.hu": "sha256:7654a244ceb0e65f375dfab540dda9f2ee9944a733bdc107132e164dab004584",
+    "skinlabhungary.hu": "sha256:08bcf37c57d1c65b5ae6a522bb68c5da475cc43cfd6b1a73fe33162bced3a526",
+    "szelloztessokosan.hu": "sha256:2be02e358e5154e32705e3867000fdcc2e356b258d1094daa5303dc87c8dc221",
     "trapezlemezes.hu": "sha256:81e6371584d0dd07a0db2644a7481ebe9879a521979735ef73be2b02c8b3ee4a",
     "www.agykontroll.co.uk": "sha256:8d2191206f1cda09e274bbd66f9f3618bb8e4cc3644fc8c4a7a446afebc35727",
     "www.beautyflow.pro": "sha256:ac23c2e03252f23b87c59a6ffbc322876cbc4d1d9688e277e89dfc4a18f752b9",
     "www.lomtalan.hu": "sha256:879f09ff67a2ce00d99d5eff842cbccd5447ad74c01d90b020e86f1fecaf21a1",
-    "www.olcsokontenerhaz.hu": "sha256:1286927cd359432be52bcfd7f41c7c1edd7873e2af95c3dc1ef8f45f4f0602e9",
+    "www.olcsokontenerhaz.hu": "sha256:d520259806c30c5b701093d8b4de69c80f234efaec3ff23c84f6e8e5c5383b7c",
     "www.painlessremovals.com": "sha256:c19dbbd2882ce1a20ee02f71c1f445e75bccc7a38155b851ff1408be2bcdf51c",
-    "www.skinlabhungary.hu": "sha256:b8622288b6aeefdaa711a5598958db75c92e08f73c940afe89026da111d145bc",
-    "www.szelloztessokosan.hu": "sha256:7654a244ceb0e65f375dfab540dda9f2ee9944a733bdc107132e164dab004584",
+    "www.skinlabhungary.hu": "sha256:08bcf37c57d1c65b5ae6a522bb68c5da475cc43cfd6b1a73fe33162bced3a526",
+    "www.szelloztessokosan.hu": "sha256:2be02e358e5154e32705e3867000fdcc2e356b258d1094daa5303dc87c8dc221",
     "www.trapezlemezes.hu": "sha256:81e6371584d0dd07a0db2644a7481ebe9879a521979735ef73be2b02c8b3ee4a"
   }
 }
