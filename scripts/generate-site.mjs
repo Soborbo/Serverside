@@ -182,17 +182,26 @@ function validate(cfg, opts = {}) {
     }
   }
 
-  // GA4 — OPCIONÁLIS: migration site (pl. beautyflow) kihagyhatja, ha a böngésző
-  // GA4-e már GTM-ből tüzel — a szerver-oldali MP itt duplázna (GA4 nem dedup-ol
-  // event_id-re). Hiányzó blokk → a Worker GA4 MP lába no-op skip (SiteConfig.ga4?).
+  // GA4 — a HIÁNYA a HELYES állapot (Modell 2 / Run 6): a gateway NEM küld GA4-et.
+  // Az on-site GA4 a böngészőé (GTM), az offline GA4-láb pedig kikapcsolt (valódi
+  // client_id nélkül minden esemény új szintetikus GA4-clientbe esne). A `ga4` blokk
+  // LEGACY/diagnosztikai: már csak a /debug-ga4 és a régi ga4-DLQ-rekordok retry-ja
+  // olvassa. A korábbi warning („kimarad ennél a site-nál") azt sugallta, hogy a blokk
+  // KELLENE — új site-nál pont fordítva: ha van, azt kell indokolni.
   if (cfg.ga4 === undefined || cfg.ga4 === null) {
-    warn('ga4 blokk hiányzik — a szerver-oldali GA4 MP láb (offline augment) kimarad ennél a site-nál.');
+    // Nincs warning: ez az elvárt állapot.
   } else if (typeof cfg.ga4 !== 'object') {
     err('ga4 blokk objektum kell legyen (vagy hagyd el teljesen).');
   } else {
     if (!/^G-[A-Z0-9]+$/.test(String(cfg.ga4.measurement_id || '')))
       err(`ga4.measurement_id érvénytelen (G-XXXX formátum kell), kapott: ${cfg.ga4.measurement_id}`);
     if (!cfg.ga4.api_secret) err('ga4.api_secret kötelező (MP api_secret a GA4 admin felületről).');
+    warn(
+      'ga4 blokk JELEN VAN — a gateway NEM küld GA4-et (Modell 2 / Run 6): az on-site GA4 a böngészőé, ' +
+        'az offline GA4-láb kikapcsolt. A blokkot már csak a /debug-ga4 és a régi ga4-DLQ-retry olvassa, ' +
+        'viszont egy élő api_secretet tárol a KV-ben. Új site-nál hagyd el; meglévőnél a kivezetés a ' +
+        'Fázis-0 E-2 tétele (visszavonás a GA4 adminban, majd törlés a KV-ből).'
+    );
   }
 
   // Google Ads — ugyanaz az optionality-szabály, mint a metánál (config.ts `gads?`:

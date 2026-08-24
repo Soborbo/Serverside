@@ -1,10 +1,24 @@
 # Cloudflare Setup
 
-## Google Tag Gateway
-```
-Dashboard → domain → Speed → Optimization → Content Optimization → Google Tag Gateway → Enable
-```
-Helps reduce some ad blocker impact. Verify: Network tab → GTM requests go through your domain.
+## Google Tag Gateway — DEFAULT OFF
+
+<!-- TRUTH-ANCHOR: tag-gateway-default-off -->
+**Do not turn this on as part of an install.** Cloudflare's zone-level Google Tag
+Gateway auto-injection is **off by default and stays off** (fleet decision,
+2026-08-24 — `Serverside docs/2026-08-fleet-conformance.md` §5.2, "Tag Gateway
+injektálás KI, fokozatosan").
+
+Why it is off, not merely unused: the zone-level injection puts `gtm.start` **before**
+the page's own consent default. On an sbo-CMP site that is a pre-consent GTM start —
+the exact thing the synchronous consent boot exists to prevent — and on any site it
+risks a second container instance alongside the one `Tracking.astro` loads. The
+first-party proxying it buys (some ad-blocker resistance) is a **performance/
+measurement trade-off to be decided per site with a measurement**, not a default
+(vNext P11: "minden performance-változás A/B-méréssel, nem intuícióval").
+
+If a specific site is ever switched on deliberately, it is a documented per-site
+decision: verify in the Network tab that there is **exactly one** GTM container
+instance and that nothing starts before the consent default.
 
 ## Environment Variables
 

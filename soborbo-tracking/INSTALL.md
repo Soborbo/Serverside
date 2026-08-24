@@ -66,12 +66,16 @@ hands over what is genuinely un-fetchable.
 5. **Hostnames** — apex + www (e.g. `example.com`, `www.example.com`).
 6. **`site_id`** — short slug (e.g. `trapezlemez`).
 7. **Market** — `country_code` + `currency` (e.g. HU/HUF, GB/GBP).
-8. **`require_consent`** — `true` for EEA markets (HU/EU/DE/FR/IT/ES…), else `false`.
+8. **`require_consent`** — `true` on every consent-required market:
+   `GB`, `HU`, `EU`, `DE`, `FR`, `IT`, `ES`. **`GB` is in that list**: the UK is not
+   in the EEA, but PECR + UK GDPR still require prior consent for cookie-based
+   marketing tracking. The generator hard-errors on a new site that omits it.
 9. **CRM webhook details** — does the site backend forward leads to a CRM, and does
    the CRM response carry the record id (`{success, id}`)? That id becomes `lead_id`.
 10. **Greenfield or migration?** — is there ALREADY a live browser GA4 on this site?
     NOTE (Model 2): the gateway sends **no GA4 at all** (browser owns on-site GA4;
     the offline GA4 leg is disabled) → a live browser GA4 can never double-count.
+    <!-- TRUTH-ANCHOR: server-sends-no-ga4 -->
 11. **OAuth consent** — confirm they'll approve the one-time Google Ads OAuth (Step 4,
     `datamanager` scope) when prompted. Only needed if there is a `customer_id`.
 12. **Checkout flow (e-commerce sites only)** — `lead-gen` (forms only) /
@@ -114,8 +118,10 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
 3. **Env** (`.env` / Worker vars): the market vars `PUBLIC_TRACKING_COUNTRY` /
    `PUBLIC_TRACKING_CURRENCY` / `PUBLIC_TRACKING_LOCALE` (keep in sync with the
    gateway KV `country_code`/`currency`). See `examples/.env.example`.
-4. **Astro config**: `output: 'server'` + `@astrojs/cloudflare` adapter. Enable
-   Google Tag Gateway (`docs/cloudflare-setup.md`).
+4. **Astro config**: `output: 'server'` + `@astrojs/cloudflare` adapter. Do **not**
+   turn on Cloudflare's Google Tag Gateway — it is default OFF fleet-wide and its
+   zone-level injection starts GTM before the page's consent default
+   (`docs/cloudflare-setup.md`).
 5. **Conversion call sites**:
    - Forms: wrap in `<TrackedForm …>` (browser leg + hidden `event_id` for Step 3).
    - Clicks: `<PhoneLink/>`, `<CallbackButton/>` (dataLayer-only by design),
@@ -178,7 +184,10 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
                "conversion_actions": { "lead_qualified": "…", "booking_confirmed": "…" } }
    }
    ```
-   No `ga4` block for new sites (the gateway sends no GA4). No `test_event_code`
+   No `ga4` block for new sites — its ABSENCE is the correct state, not a gap. The
+   block is legacy/diagnostics-only (`/debug-ga4` + old ga4-DLQ retries) and it
+   stores a live `api_secret` in KV, so the generator warns when one IS present.
+   No `test_event_code`
    (the generator hard-errors). `gads.conversion_actions` keys are the **offline
    CRM events**, canonical names only.
 2. **Generate** — run the repo's **single canonical** generator from the Serverside
@@ -208,10 +217,14 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
 
 ## Step 5 — Google Ads OAuth (once per `customer_id`, only if Ads is configured)
 
+<!-- TRUTH-ANCHOR: google-offline-path-is-data-manager -->
 `GET /api/event/oauth-init` with the admin token (`X-Admin-Token`) → populates the
-OAUTH_TOKENS KV. The OAuth scope MUST include **`datamanager`** — the offline Google
-Ads leg uploads via the **Data Manager API** (the legacy `uploadClickConversions` is
-closed to new adopters; no developer token needed). Without OAuth, Google Ads
+OAUTH_TOKENS KV. The OAuth scope MUST include **`datamanager`** — the **Data Manager
+API is THE Google offline path** (`src/lib/datamanager.ts`); the legacy
+`uploadClickConversions` leg (`src/lib/gads.ts`) is **dormant**, kept only as dead
+code for reference, and closed to new adopters since 2026-06-15. Do not wire
+anything new to it; its `conversionDateTime` format rule (CLAUDE.md §6) does not
+apply to the Data Manager path, which wants RFC3339. Without OAuth, Google Ads
 uploads fail. Prompt the user to complete the one-time consent (Step 0 #11).
 Tip: run the gateway with `DATAMANAGER_VALIDATE_ONLY=1` first to dry-run the ingest.
 
@@ -246,7 +259,8 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
 
 - **Secrets never in git** — CAPI token + per-site token only in KV/worker secrets.
 - **`test_event_code` never in KV** — generator hard-errors; per-request only.
-- **EEA → `require_consent: true`** + CookieYes wired.
+- **Consent-required market → `require_consent: true`** (`GB`, `HU`, `EU`, `DE`,
+  `FR`, `IT`, `ES` — GB included, PECR) + a CMP wired.
 - **Default branch ≠ always main** — verify before merging (Step 1).
 - **TOML top-level keys above tables**; inspect the generated wrangler.json.
 - **Repo call-site audit** before enforcing/changing any gate (Step 3.5).
@@ -261,11 +275,23 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
 
 ## CMP mode (Fázis 2 — pilot only, default: CookieYes)
 
-Every site runs CookieYes by default (`PUBLIC_TRACKING_CONSENT_PROVIDER` unset).
+<!-- TRUTH-ANCHOR: cmp-default-cookieyes-sbo-is-pilot -->
+**Where the fleet actually stands today:** every live site runs **CookieYes**, and
+that is the DEFAULT — both when `PUBLIC_TRACKING_CONSENT_PROVIDER` is unset on the
+site and when the KV `consent` block is absent on the gateway. The own CMP (`sbo`)
+is **pilot-stage**: the engine and client code are merged and inert on `main`
+(PR #67), the flip is two manual switches (site env + KV `consent.provider`), and
+zero sites are flipped. The intended END STATE is sbo fleet-wide — but CookieYes is
+**not "legacy" yet**, and no doc should describe it that way while it is what every
+site is actually running.
+
 **Do NOT flip a site to the own CMP as part of an install** — it is a human,
 per-site pilot decision with its own runbook
-(`Serverside docs/cmp-fazis2-pilot-runbook.md`). What the mode changes when set
-to `sbo`:
+(`Serverside docs/cmp-fazis2-pilot-runbook.md`), and it has an open prerequisite:
+there is **no CookieYes → sbo consent migration** (zero lines of it exist), so on
+flip day every previous CookieYes accept is gone and the banner returns for
+everyone until the `legacyConsentMigrationPolicy` decision is made. What the mode
+changes when set to `sbo`:
 
 - `<Tracking />` renders the synchronous consent-boot (all-denied default, GTM
   loads ONLY after a positive decision) instead of the CookieYes+advanced flow.
