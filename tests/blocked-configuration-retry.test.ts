@@ -156,7 +156,7 @@ describe('A konfigurációs blokk külön retry-keretet kap', () => {
         get: async () => ({
           site_id: 'lomtalan',
           country_code: 'HU',
-          meta: { pixel_id: '1', access_token: 'T' }
+          meta: { pixel_id: '1234567890', access_token: 'T' }
         })
       },
       DEAD_LETTER: {
