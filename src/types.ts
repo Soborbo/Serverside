@@ -113,6 +113,12 @@ export interface ConversionRequestPayload {
   // hiánya vagy hibás formája a forrást „nem elérhető"-vé teszi, de a konverziót
   // SOHA nem buktathatja el.
   consent_sources?: unknown;
+  // PECR read-gate telemetria (2. brief). A kliens jelenti, ha a consent-kapu
+  // storage-OLVASÁST blokkolt ezen az oldalletöltésen (és mely kulcsokét).
+  // Tisztán megfigyelés: nincs rá elutasítási szabály, és a consent-döntést nem
+  // befolyásolja. Lásd lib/storage-telemetry.ts.
+  storage_read_blocked?: unknown;
+  storage_read_blocked_keys?: unknown;
   // Soborbo CMP (Fázis 1): MELYIK consent-döntéshez tartozik ez az event. A saját
   // CMP sütijéből jön; a CookieYes-oldalakon soha nincs jelen, és a hiánya NEM
   // hiba (a receipten NULL marad). Tisztán KÖTÉS a consent_log bizonyítékához —

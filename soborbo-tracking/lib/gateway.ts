@@ -21,6 +21,9 @@
  */
 
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
+import {
+  getFbp, getFbcCookie, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
+} from './persistence';
 import { CLIENT_LIB_VERSION } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
@@ -250,7 +253,6 @@ export function collectConsentSources(): ConsentSourcesPayload {
 // persisted in localStorage (the conversion often happens on a different page
 // than the landing). Last-touch wins for click IDs/UTMs; the landing context
 // (landing_page, referrer) is first-touch.
-const ATTR_STORAGE_KEY = '__sb_attribution';
 const ATTR_CLICK_PARAMS = [
   'gclid',
   'gbraid',
@@ -277,8 +279,12 @@ const ATTR_UTM_PARAMS = [
 ];
 
 function readStoredAttribution(): AttributionParams {
+  // PECR: az OLVASÁS is engedélyköteles. Ez a kulcs marketing-scope (click ID-k +
+  // UTM-ek), ezért ugyanazon az EGY read-gate-en megy át, mint a persistence.ts
+  // getterei — nem egy másodikon. Consent nélkül üres objektum, és a blokk
+  // bekerül a `storage_read_blocked_keys` telemetriába.
   try {
-    const raw = localStorage.getItem(ATTR_STORAGE_KEY);
+    const raw = readMarketingLocalStorage(ATTR_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as AttributionParams) : {};
   } catch {
     return {};
@@ -409,10 +415,21 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     return false;
   }
 
-  const fbp = getCookie('_fbp');
-  const fbc = getCookie('_fbc');
+  // Meta browser ids. Cookie READ is terminal-storage access under PECR, so it
+  // goes through the same marketing gate as the rest of the package
+  // (persistence.ts getFbp/getFbc) — not a second, ungated `getCookie` path.
+  // `_ga` / `_ga_<stream>` stay here: GA4's own cookies are analytics-scoped and
+  // the browser GA4 leg owns them (Model 2); the gateway sends no GA4.
+  const fbp = getFbp() || undefined;
+  const fbc = getFbcCookie() || undefined;
   const clientId = extractGAClientId(getCookie('_ga'));
   const sessionId = extractGASessionId();
+  // Az attribúció-gyűjtés IS olvas storage-ot (`__sb_attribution`) — ezért előbb
+  // fut le, és CSAK utána készül a telemetria-pillanatkép. Fordítva a saját
+  // blokkja kimaradna a jelentésből, vagyis a mérőműszer pont azt a hozzáférést
+  // nem látná, amiért készült.
+  const attribution = payload.attribution || collectAttribution();
+  const readBlocked = getStorageReadBlocked();
 
   const body = JSON.stringify({
     ...payload,
@@ -424,7 +441,12 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     // Fázis D telemetria — a döntést NEM befolyásolja, csak jelenti, mit láttak
     // a párhuzamos consent-források ebben a pillanatban.
     consent_sources: collectConsentSources(),
-    attribution: payload.attribution || collectAttribution(),
+    // PECR read-gate telemetria: blokkolt-e a consent-kapu storage-OLVASÁST ezen
+    // az oldalletöltésen. GRANTED consent melletti magas arány = betöltési
+    // verseny (a CookieYes API még nem töltött be, amikor olvastunk volna).
+    storage_read_blocked: readBlocked.blocked,
+    storage_read_blocked_keys: readBlocked.keys,
+    attribution,
     event_source_url: payload.event_source_url || location.href
   });
 

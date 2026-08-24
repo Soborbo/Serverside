@@ -11,6 +11,7 @@ import type { ConsentLogEntry, ConsentMetricEntry, ConsentLogState } from './con
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
+import type { StorageReadTelemetry } from './storage-telemetry';
 
 /**
  * D1 ledger — append-only bizonyíték a beérkező konverziókról, a vendor-
@@ -439,6 +440,13 @@ export interface ConsentReceiptInput {
    */
   sources?: ConsentReceiptSources;
   /**
+   * PECR read-gate telemetria (2. brief): blokkolt-e a kliens consent-kapuja
+   * storage-OLVASÁST ezen az oldalletöltésen. `undefined` = a kliens nem
+   * jelentett (régi lib / szerver-ingress) → a receipten NULL, ami NEM azonos a
+   * „jelentett, és nem volt blokk" 0-val.
+   */
+  storage?: StorageReadTelemetry;
+  /**
    * Soborbo CMP: MELYIK consent-döntéshez tartozik ez az event. A CookieYes-
    * oldalakon MINDIG undefined → a receipten NULL, és ez NEM hiba. Ahol a saját
    * CMP fut, ez köti a konverziót a `consent_log` bizonyítékához.
@@ -482,8 +490,8 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
          (id, event_id, lead_id, site_id, ad_user_data, ad_personalization, ad_storage, analytics_storage, require_consent, ad_allowed, received_at,
           src_cookie_analytics, src_cookie_marketing, src_api_analytics, src_api_marketing, src_server_analytics, src_server_marketing,
           source_used, source_consistent, ingress_kind, client_lib_version, consent_age_s, finding_codes,
-          consent_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          storage_read_blocked, storage_read_blocked_keys, consent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -511,6 +519,8 @@ export async function recordConsentReceipt(env: Env, c: ConsentReceiptInput): Pr
         // heurisztikát nem találunk ki rá.
         s?.consent_age_s ?? null,
         s?.finding_codes ?? null,
+        c.storage === undefined ? null : c.storage.blocked ? 1 : 0,
+        c.storage?.keys ?? null,
         c.consent_id ?? null
       )
       .run();

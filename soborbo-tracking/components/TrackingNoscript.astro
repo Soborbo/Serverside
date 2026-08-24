@@ -1,9 +1,19 @@
 ---
-/** <TrackingNoscript /> — Place right after <body>. */
-interface Props { gtmId: string; }
-const { gtmId } = Astro.props;
+/**
+ * <TrackingNoscript /> — Place right after <body>.
+ *
+ * THE GTM `ns.html` IFRAME IS GONE (2026-08), deliberately. Without JS there is
+ * no consent panel and no consent state, so the iframe loaded GTM — and whatever
+ * tags it carries — for a visitor who had no way to decide. Under PECR/GDPR that
+ * is a non-essential load without consent; there is no "the user has JS off"
+ * exemption. Its measurement value in 2026 is negligible (the noscript fallback
+ * cannot run any of the JS tags it would nominally enable).
+ *
+ * The component itself is kept — the prop and every `<TrackingNoscript />`
+ * call-site in the sites stay valid — so removing the iframe needs no
+ * coordinated edit across the fleet. Do NOT put the iframe back.
+ */
+interface Props { gtmId: string }
+// Consumed only to keep the existing call-site signature working.
+const { gtmId: _gtmId } = Astro.props;
 ---
-<noscript>
-  <iframe src={`https://www.googletagmanager.com/ns.html?id=${gtmId}`}
-    height="0" width="0" style="display:none;visibility:hidden"></iframe>
-</noscript>

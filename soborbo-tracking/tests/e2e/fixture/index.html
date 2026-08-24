@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <title>soborbo-tracking · PECR storage-access fixture</title>
+  <!--
+    STORAGE-ACCESS MŰSZER — ez a blokk MINDEN más szkript ELŐTT fut.
+
+    Miért nem elég a „nincs localStorage kulcs" assert: az ellenőrizni való nem az,
+    hogy MARADT-e adat, hanem hogy HOZZÁNYÚLTUNK-e. A PECR alatt az OLVASÁS is
+    engedélyköteles művelet, tehát a tesztnek magát a hozzáférést kell látnia —
+    ezért a Storage.prototype és a document.cookie leíróját patcheljük.
+  -->
+  <script>
+    (function () {
+      window.__access = { ls: [], ss: [], cookieGet: 0, cookieSet: [] };
+      // A teszt-scaffolding (consent beállítása, seed) ne kerüljön a naplóba.
+      window.__recording = true;
+
+      // A vödröt MINDIG a `window.__access`-ből olvassuk ki hívásidőben — a
+      // `resetAccess()` új objektumot tesz oda, és egy elkapott referencia
+      // csendben a régi tömbbe gyűjtene tovább (a teszt zöld lenne nulla adaton).
+      function wrapStorage(proto, bucketName) {
+        for (const method of ['getItem', 'setItem', 'removeItem']) {
+          const native = proto[method];
+          proto[method] = function (key, value) {
+            if (window.__recording) window.__access[bucketName].push({ op: method, key: String(key) });
+            return native.call(this, key, value);
+          };
+        }
+      }
+      wrapStorage(Storage.prototype, 'ls');
+      // sessionStorage és localStorage ugyanazt a prototípust osztja; a kulcsnév
+      // (sb_session vs sb_tracking) különíti el őket az assertekben.
+
+      const desc =
+        Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
+        Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+      Object.defineProperty(document, 'cookie', {
+        configurable: true,
+        get() {
+          if (window.__recording) window.__access.cookieGet++;
+          return desc.get.call(document);
+        },
+        set(v) {
+          if (window.__recording) window.__access.cookieSet.push(String(v).split('=')[0]);
+          return desc.set.call(document, v);
+        }
+      });
+    })();
+  </script>
+  <script type="module" src="./main.ts"></script>
+</head>
+<body>
+  <h1>PECR storage-access fixture</h1>
+  <p>A tesztek a <code>window.__t</code> API-n keresztül vezérlik a libet.</p>
+</body>
+</html>
