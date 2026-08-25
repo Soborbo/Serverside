@@ -11,7 +11,7 @@
     },
     "lib/consent-banner-a11y.ts": {
       "sha256": "97423924644ad503658a8065fc96dfc2d5396491a4d815bf00bb1189cd4a3290",
-      "bytes": 3186,
+      "bytes": 3099,
       "role": "browser"
     },
     "lib/consent-banner-ui.ts": {
@@ -21,107 +21,107 @@
     },
     "lib/consent-migration.ts": {
       "sha256": "ba798f7d3070a6732f0076bebee8bffce608afca363b36d63bd3ff1105ae8e79",
-      "bytes": 4147,
+      "bytes": 4078,
       "role": "browser"
     },
     "lib/consent-sbo-state.ts": {
       "sha256": "e5cfa1b2a4b1b5cb8f19d7f6ba71a0e8cb9f5db31387ecf99f9076cd2de00197",
-      "bytes": 7682,
+      "bytes": 7514,
       "role": "browser"
     },
     "lib/consent-sbo.ts": {
       "sha256": "687df30cfaada01cdc7feb9989f5cd3574428b9e04f133e3e702a30ed50dda8f",
-      "bytes": 13562,
+      "bytes": 13249,
       "role": "browser"
     },
     "lib/consent.ts": {
       "sha256": "8bfe9c961fef5306ff03646b69d9a0107f9fc291ad39644137e3c0fcfe596ac3",
-      "bytes": 6913,
+      "bytes": 6747,
       "role": "browser"
     },
     "lib/conversion-commit.ts": {
       "sha256": "c1b48fc405dfbac78f9bfe4532082c805affdd8edcac579244edc18bdabf95a3",
-      "bytes": 11517,
+      "bytes": 11238,
       "role": "browser"
     },
     "lib/event-contract.ts": {
       "sha256": "a54de1339d4c8899b6b2664a4984da9d27113e450c4e9b00801f84a44a482519",
-      "bytes": 2362,
+      "bytes": 2307,
       "role": "browser"
     },
     "lib/events.ts": {
       "sha256": "9f8c5acc1dae9f052b28c6f5713f53be6e19e6271029dfa9018bd558b0cfa1c9",
-      "bytes": 14722,
+      "bytes": 14384,
       "role": "browser"
     },
     "lib/gateway.ts": {
       "sha256": "af54ac2c87c25f850baab21118f563026286dd0a9d97e490941932c2d9f25925",
-      "bytes": 24231,
+      "bytes": 23650,
       "role": "browser"
     },
     "lib/index.ts": {
       "sha256": "30b8a76d519e20d0dfe2b5429c15d470a2a3ea8b0ca75db22a99a3fdb52f8722",
-      "bytes": 22047,
+      "bytes": 21600,
       "role": "browser"
     },
     "lib/observability.ts": {
       "sha256": "05ec3cd844aa0a10609945ad0d066308dca613cceff3ae0258093d2e476b0134",
-      "bytes": 8982,
+      "bytes": 8840,
       "role": "browser"
     },
     "lib/persistence.ts": {
       "sha256": "b07910786c60217207373d929800fac32d3380c055ba42820192f9cb91657e6f",
-      "bytes": 27117,
+      "bytes": 26498,
       "role": "browser"
     },
     "lib/submit.ts": {
       "sha256": "79872b7f69a52e63643f1ed619ce639b26b4aa7dc4704d42ee7ac8986d8638a2",
-      "bytes": 5692,
+      "bytes": 5558,
       "role": "browser"
     },
     "lib/uuid.ts": {
       "sha256": "2b28c4066dd357559901983828199663e73c42c39f251f70c68e46ffcc9d9775",
-      "bytes": 1138,
+      "bytes": 1115,
       "role": "browser"
     },
     "components/CallbackButton.astro": {
       "sha256": "16591b6d85e54fd83bb6161547fe3598339fa72e00441ba09aa0399977de4905",
-      "bytes": 2208,
+      "bytes": 2162,
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
       "sha256": "967e6a8cd5acb6e276b34e06ec7bb30b1cfd2a189a6e6c3b11e1d432f12a155d",
-      "bytes": 9173,
+      "bytes": 8959,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
       "sha256": "51727df261cabecb8d291fdef92d522a04d2b87b458100970e03475227eede84",
-      "bytes": 3499,
+      "bytes": 3416,
       "role": "browser"
     },
     "components/PhoneLink.astro": {
       "sha256": "53d2db832b925d857919334ab8efef14c0a8282d4489a24f5f1bab0025d716ae",
-      "bytes": 713,
+      "bytes": 696,
       "role": "browser"
     },
     "components/RevealContact.astro": {
       "sha256": "cea1fbd4f81697d8a88c3108a70b3bd51252261601ccb813ca5749daab64aab7",
-      "bytes": 2785,
+      "bytes": 2730,
       "role": "browser"
     },
     "components/TrackedForm.astro": {
       "sha256": "bff662e73b6d87bfaa5a4ba001c8d4deaba4a85d0bf5804d7dc30ff92282b4c7",
-      "bytes": 10938,
+      "bytes": 10692,
       "role": "browser"
     },
     "components/Tracking.astro": {
       "sha256": "254fd75341eb1374e37315062eaf64c8221c7260246fc222275dbb99838973db",
-      "bytes": 9111,
+      "bytes": 8923,
       "role": "browser"
     },
     "components/TrackingNoscript.astro": {
       "sha256": "0cc18e189cc98653349d41fe439a5f7d6b28f34ed3435a1de5adc1a9c3684626",
-      "bytes": 921,
+      "bytes": 902,
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
@@ -131,12 +131,12 @@
     },
     "server/backend/smoke.ts": {
       "sha256": "166f4115ef7cc1bb0fd61fa903d5a88911943e1c8283eeb0d54b487d84ccee1d",
-      "bytes": 3362,
+      "bytes": 3290,
       "role": "backend"
     },
     "server/backend/worker.ts": {
       "sha256": "970a0d5e8b63f39ef8c19c5797bb9b8486cf3bed0d536be21fc869f23cc468d2",
-      "bytes": 2014,
+      "bytes": 1973,
       "role": "backend"
     }
   }

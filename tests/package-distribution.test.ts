@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { collectVersions, versionMismatches } from '../scripts/check-package-version.mjs';
 import { compareVendoredCopy, verdict } from '../scripts/check-vendored-copy.mjs';
 import { hashContent, buildManifest } from '../scripts/gen-dist-manifest.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * F9 · P4 — a csomag-terjesztés őrei.
@@ -64,6 +66,21 @@ describe('verzió-tekintély', () => {
 describe('dist-manifest', () => {
   it('a sorvég NEM drift — a repót Windowson és Linuxon is szerkesztjük', () => {
     expect(hashContent('a\r\nb')).toBe(hashContent('a\nb'));
+  });
+
+  it('a manifeszt MINDEN mezője platform-független — a `bytes` is', () => {
+    // Ez a teszt egy VALÓDI CI-bukásból született. A `bytes` eredetileg
+    // `statSync`-ből jött: Windowson (CRLF) 27-ből 24 fájl NAGYOBB, mint
+    // Linuxon (LF), így a manifeszt platformonként más lett, és a CI driftet
+    // jelentett egy változatlan csomagra. A hash normalizálása mit sem ért,
+    // amíg mellette egy nem-normalizált mező visszahozta ugyanazt a csapdát.
+    const m = buildManifest();
+    for (const [rel, meta] of Object.entries(m.files) as Array<[string, any]>) {
+      const text = readFileSync(join('soborbo-tracking', rel), 'utf8');
+      expect(meta.bytes, `${rel}: a méret nem normalizált tartalomból számol`).toBe(
+        Buffer.byteLength(text.replace(/\r\n/g, '\n'), 'utf8')
+      );
+    }
   });
 
   it('az éles manifeszt a terjesztendő fájlokat fedi (lib + components + backend)', () => {

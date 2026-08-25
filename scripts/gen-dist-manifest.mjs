@@ -78,8 +78,12 @@ function walk(dir, exts, acc = [], base = dir) {
  * pirosnak mutat, senki nem nézné többé. A tartalmi eltérés így marad az
  * egyetlen jel.
  */
+export function normalizeEol(text) {
+  return text.replace(/\r\n/g, '\n');
+}
+
 export function hashContent(text) {
-  return crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n'), 'utf8').digest('hex');
+  return crypto.createHash('sha256').update(normalizeEol(text), 'utf8').digest('hex');
 }
 
 export function buildManifest() {
@@ -89,9 +93,15 @@ export function buildManifest() {
     const abs = path.join(PKG_DIR, group.dir);
     for (const file of walk(abs, group.exts)) {
       const rel = path.relative(PKG_DIR, file).split(path.sep).join('/');
+      const text = fs.readFileSync(file, 'utf8');
       files[rel] = {
-        sha256: hashContent(fs.readFileSync(file, 'utf8')),
-        bytes: fs.statSync(file).size,
+        sha256: hashContent(text),
+        // A méret is NORMALIZÁLT tartalomból számol, nem `statSync`-ből. A
+        // lemezes méret Windowson (CRLF) nagyobb, mint Linuxon (LF) — a
+        // manifeszt így platformonként MÁS lett volna, és a CI ezt driftnek
+        // látta (pontosan így is bukott először). A hash mit sem ért volna, ha
+        // mellette egy nem-normalizált mező visszahozza ugyanazt a csapdát.
+        bytes: Buffer.byteLength(normalizeEol(text), 'utf8'),
         role: group.role
       };
     }
