@@ -43,6 +43,7 @@
  */
 
 import { hasMarketingConsent } from './consent';
+import { registerMarketingPurgeHook } from './persistence';
 import { pushLeadConversion, pushContactConversion } from './events';
 import { report } from './observability';
 
@@ -149,6 +150,11 @@ export function discardPendingConversions(): void {
     /* private mode / nincs sessionStorage — nincs mit törölni */
   }
 }
+
+// A letett konverzió is a marketing-jogalapon áll: a visszavonás EGY közös
+// kapun (purgeMarketingStorage) mindent elvisz, nem csak ott, ahol a hívó
+// történetesen emlékezett rá.
+registerMarketingPurgeHook(discardPendingConversions);
 
 /**
  * A konverzió LETÉTELE tüzelés nélkül. A hívó felelőssége, hogy csak

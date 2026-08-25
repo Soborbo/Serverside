@@ -377,3 +377,65 @@ describe('generate-site.mjs — a generált checklist provider-aware (review #4)
     );
   });
 });
+
+/**
+ * vNext P6.4 — Enhanced Conversions NEM opcionális (INV-009).
+ *
+ * A `conversion_actions` hiánya eddig sima warning volt, és pontosan úgy
+ * viselkedett, ahogy a néma hibák szoktak: a site „be van kötve", az eventek
+ * beérkeznek, a Google felé viszont EGYETLEN konverzió sem megy fel, mert nincs
+ * mire leképezni — a skip ráadásul szándékosnak látszik a monitorozásban
+ * (PLATFORM_NOT_CONFIGURED).
+ */
+describe('P6.4 — google_ads engedélyezve ⇒ EC-kontraktus kötelező', () => {
+  const gadsSite = (): Record<string, any> => ({
+    ...baseConfig(),
+    site_id: 'ecguard',
+    hostnames: ['ecguard.hu'],
+    gads: { customer_id: '1234567890', login_customer_id: null }
+  });
+
+  it('customer_id megadva, conversion_actions HIÁNYZIK + ÚJ site → HARD ERROR', () => {
+    const r = runGen(gadsSite(), ['--new-site']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('TRK-CFG-002');
+    expect(r.stderr).toContain('conversion_actions');
+  });
+
+  it('a hibaüzenet KIMONDJA, hogy a láb némán nulla konverziót szállítana', () => {
+    const r = runGen(gadsSite(), ['--new-site']);
+    expect(r.stderr).toContain('NÉMÁN');
+  });
+
+  it('ÜRES conversion_actions objektum sem elég (nem csak a hiányzó kulcsra fog)', () => {
+    const cfg = gadsSite();
+    cfg.gads.conversion_actions = {};
+    const r = runGen(cfg, ['--new-site']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('TRK-CFG-002');
+  });
+
+  it('legalább egy conversionAction → átmegy', () => {
+    const cfg = gadsSite();
+    cfg.gads.conversion_actions = { lead_qualified: '99887766' };
+    const r = runGen(cfg, ['--new-site']);
+    expect(r.status).toBe(0);
+  });
+
+  it('customer_id NÉLKÜL nincs kapu — a Google Ads egyszerűen nincs bekötve', () => {
+    const cfg = gadsSite();
+    cfg.gads.customer_id = null;
+    const r = runGen(cfg, ['--new-site']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).not.toContain('TRK-CFG-002');
+  });
+
+  it('MEGLÉVŐ site regenerálása → hangos WARNING, de nem blokkol', () => {
+    // Ugyanaz a szabály, mint a consent-kapunál: a regenerálás blokkolása
+    // lehetetlenné tenné a P0.2 round-trip futtatását pont a hibás configokon.
+    const r = runGen(gadsSite());
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('TRK-CFG-002');
+    expect(r.stderr).toContain('Figyelmeztetések');
+  });
+});

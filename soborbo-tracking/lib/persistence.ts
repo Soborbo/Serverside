@@ -154,9 +154,44 @@ export function normalizeEmail(email: string): string {
  * Used everywhere: dataLayer, hidden fields, Sheets. (The gateway re-normalizes
  * server-side using the KV `country_code`, so the server path is market-correct too.)
  */
+/**
+ * Nemzeti trunk-`0`-t használó hívókódok — a szerver `src/lib/hash.ts`
+ * TRUNK_PREFIX_COUNTRIES táblájának TÜKÖRKÉPE. A két oldalnak bitre ugyanazt a
+ * számot kell előállítania, különben a böngésző-Pixel és a CAPI/EC MÁS hash-t
+ * kap ugyanarra az emberre, és a match NÉMÁN elromlik.
+ *
+ * FIGYELEM: csak az kerülhet ide, aki TÉNYLEGESEN trunk-`0`-t használ. Olaszország,
+ * Spanyolország, Csehország, Szlovákia, Lengyelország megtartja a vezető nullát
+ * (vagy nincs is trunk-nullája) — őket kivenni a listából KÖTELEZŐ.
+ */
+const TRUNK_PREFIX_DIAL_CODES = new Set(['44', '36', '49', '33', '31', '32', '43', '41', '40']);
+
+/**
+ * `+CC0…` → `+CC…`. A `+44 (0)7123 456 789` írásmód a UK/EU-ban általános, és
+ * E.164-ben a hívókód utáni `0` SOHA nem érvényes.
+ *
+ * EZ VOLT EGY NÉMA HIBA: a kliens korai `return`-nel kilépett minden `+`-szal
+ * kezdődő számnál, tehát `+4407123456789`-et adott, míg a szerver `+447123456789`-et.
+ * A CLAUDE.md 1. pontja pont ezt a példát írja elő — a kettő eltérése minden
+ * `+44 (0)` alakot beíró látogatónál elrontotta az EC/CAPI match-et.
+ */
+function stripTrunkPrefix(plus: string): string {
+  for (const codeLen of [3, 2]) {
+    const candidate = plus.slice(1, 1 + codeLen);
+    if (
+      TRUNK_PREFIX_DIAL_CODES.has(candidate) &&
+      plus.length > 1 + codeLen &&
+      plus[1 + codeLen] === '0'
+    ) {
+      return '+' + candidate + plus.slice(2 + codeLen);
+    }
+  }
+  return plus;
+}
+
 export function normalizePhone(raw: string, country: Market = trackingConfig.country): string {
   let p = raw.replace(/[\s\-(). ]/g, '');
-  if (p.startsWith('+')) return p.replace(/[^\d+]/g, '').slice(0, 20);
+  if (p.startsWith('+')) return stripTrunkPrefix(p.replace(/[^\d+]/g, '')).slice(0, 20);
   if (p.startsWith('07') && p.length === 11) p = '+44' + p.slice(1);
   else if (p.startsWith('06') && p.length === 11) p = '+36' + p.slice(2);
   else if (country === 'HU') {
@@ -516,11 +551,44 @@ function matchingCookieNames(match: VendorCookieMatch): string[] {
  * visszavonás után. A látogató épp azt kérte, hogy ne maradjon. (2026-08-25-i
  * jogi átvilágítás megállapítása.)
  */
+/**
+ * EPHEMERAL identity-horgok (P6.2).
+ *
+ * A visszavonásnak nem csak a TÁROLT adatot kell elvinnie, hanem a memóriában
+ * és a DOM-ban élő Enhanced-Conversions oldalcsatornát is. Ezt eddig semmi nem
+ * tette: a `purgeMarketingStorage` sütiket és localStorage-kulcsokat törölt, az
+ * EC-adatot viszont csak egy 5 másodperces időzítő söpörte — vagyis a
+ * visszavonás pillanatában a nyers e-mail/telefon ott maradt a lapon.
+ *
+ * MIÉRT HOROG, ÉS NEM KÖZVETLEN HÍVÁS. A `persistence.ts` nem importálhatja az
+ * `events.ts`-t: az utóbbi INNEN hozza a normalizálókat, tehát körkörös
+ * import lenne. A regisztráció megfordítja a függést, és nyitva hagyja az utat
+ * további ephemeral tároknak (pl. a P5 pending-konverziók).
+ */
+type PurgeHook = () => void;
+const marketingPurgeHooks = new Set<PurgeHook>();
+
+/** Egy ephemeral marketing-tár bejelentkezése a visszavonás-takarításra. */
+export function registerMarketingPurgeHook(hook: PurgeHook): void {
+  marketingPurgeHooks.add(hook);
+}
+
+/** Teszt-segéd: a horgok leszedése (a modul-állapot izolálásához). */
+export function clearMarketingPurgeHooks(): void {
+  marketingPurgeHooks.clear();
+}
+
 export function purgeMarketingStorage(): void {
   removeMarketingLocalStorage();
   expireCookie('_fbp');
   expireCookie('_fbc');
   for (const name of matchingCookieNames(VENDOR_COOKIES.marketing)) expireCookie(name);
+  // Az ephemeral (memória/DOM) identity ugyanennek a jogalapnak az alapján él.
+  // Egy horog hibája NEM akaszthatja meg a többi takarítást: a részleges purge
+  // rosszabb, mint a hangos, de teljes.
+  for (const hook of marketingPurgeHooks) {
+    try { hook(); } catch { /* a purge sosem dobhat */ }
+  }
 }
 
 /**
