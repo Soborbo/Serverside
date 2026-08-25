@@ -34,8 +34,9 @@ declare global {
   }
 }
 
-import { isSboConsentProvider } from './config';
+import { isSboConsentProvider, trackingConfig } from './config';
 import { readSboConsent, SBO_CONSENT_EVENT } from './consent-sbo-state';
+import { report } from './observability';
 
 export type ConsentCategory = 'necessary' | 'functional' | 'analytics' | 'performance' | 'advertisement';
 
@@ -56,7 +57,8 @@ function getCookieYesConsent(): Record<ConsentCategory, boolean> | null {
  * kategória → false).
  */
 function getSboConsentAsCategories(): Record<ConsentCategory, boolean> | null {
-  const s = readSboConsent();
+  // KAPUZÓ olvasás: a policy-verzió eltérése = nincs érvényes döntés.
+  const s = readSboConsent(trackingConfig.policyVersion);
   if (!s) return null;
   return {
     necessary: true,
@@ -91,16 +93,34 @@ function isDevMode(): boolean {
   catch { return false; }
 }
 
+/**
+ * INV-008 — ISMERETLEN consent esetén mit teszünk.
+ *
+ * A válasz: FAIL-CLOSED (deny), hacsak a site EXPLICIT nem kérte a
+ * dev-kényelmet (`PUBLIC_TRACKING_DEV_CONSENT_ALLOW=1`) ÉS tényleg dev-buildben
+ * vagyunk. Korábban a puszta `import.meta.env.DEV` elég volt — prodban az is
+ * deny-t adott, de az implicit „ismeretlen → engedd" szemantika pont az a
+ * hibaosztály, amit a Fázis D vizsgált: egy elrontott build-flag mellett
+ * csendben éles is lehetne.
+ *
+ * Az engedés SOHA nem néma: minden ilyen döntés TRK-4003-at jelent.
+ */
+function allowOnUnknownConsent(category: 'analytics' | 'marketing'): boolean {
+  const allow = isDevMode() && trackingConfig.devConsentAllow;
+  if (allow) report('CONSENT_DEV_FALLBACK_ALLOW', { category });
+  return allow;
+}
+
 export function hasMarketingConsent(): boolean {
   const c = getProviderConsent();
-  if (!c) return isDevMode();
+  if (!c) return allowOnUnknownConsent('marketing');
   // Ads/marketing category in CookieYes is `advertisement`, NOT `marketing`.
   return c.advertisement === true;
 }
 
 export function hasAnalyticsConsent(): boolean {
   const c = getProviderConsent();
-  if (!c) return isDevMode();
+  if (!c) return allowOnUnknownConsent('analytics');
   return c.analytics === true;
 }
 

@@ -35,6 +35,19 @@ export interface TrackingConfig {
   policyVersion: string;
   /** A consent-szabályrendszer címkéje (consent_log.ruleset). */
   ruleset: string;
+  /**
+   * INV-008 — szabad-e ISMERETLEN consent mellett engedni FEJLESZTŐI módban.
+   *
+   * Alapból NEM. A korábbi viselkedés az volt, hogy döntés hiányában a kapuk
+   * `import.meta.env.DEV`-et adtak vissza, vagyis dev-buildben MINDENT
+   * engedtek. Prodban ez deny volt, tehát nem szivárgott — de az implicit
+   * „ismeretlen → engedd" szemantika pont az a hibaosztály, amit az egész
+   * Fázis D vizsgált, és egy elrontott build-flag mellett csendben éles is
+   * lehetne. Mostantól a dev-kényelem EXPLICIT opt-in:
+   * `PUBLIC_TRACKING_DEV_CONSENT_ALLOW=1`, és minden bekapcsolása diagnosztikát
+   * ír (TRK-4003) — nincs néma engedés.
+   */
+  devConsentAllow: boolean;
 }
 
 function readEnv(key: string): string | undefined {
@@ -64,6 +77,7 @@ export const trackingConfig: TrackingConfig = {
   consentProvider: readEnv('PUBLIC_TRACKING_CONSENT_PROVIDER') === 'sbo' ? 'sbo' : 'cookieyes',
   policyVersion: readEnv('PUBLIC_TRACKING_POLICY_VERSION') || 'policy-unset',
   ruleset: readEnv('PUBLIC_TRACKING_RULESET') || 'eea_uk',
+  devConsentAllow: readEnv('PUBLIC_TRACKING_DEV_CONSENT_ALLOW') === '1',
 };
 
 /** EGY helyen definiált provider-kérdés — ne szóródjon `=== 'sbo'` összehasonlítás. */

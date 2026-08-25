@@ -69,12 +69,18 @@ const isSbo = consentProvider === 'sbo';
 )}
 
 {isSbo && (
-  <script is:inline define:vars={{ gtmId }}>
+  <script is:inline define:vars={{ gtmId, policyVersion: trackingConfig.policyVersion }}>
     /* Soborbo consent-boot (CMP Fázis 2.1) — inline, SZINKRON, minden más előtt.
        A parser a lib/consent-sbo-state.ts párja (formátum:
-       v1.<a>.<m>.<rev>.<decision>.<consent_id>.<ts>) — bundler nélkül, mert a
-       döntésnek a GTM-ről AZELŐTT kell megszületnie, hogy bármi aszinkron
-       betöltődne. Basic mód: nincs wait_for_update — nincs mire várni. */
+       v2.<a>.<m>.<rev>.<decision>.<consent_id>.<ts>.<policy_version>) — bundler
+       nélkül, mert a döntésnek a GTM-ről AZELŐTT kell megszületnie, hogy bármi
+       aszinkron betöltődne. Basic mód: nincs wait_for_update — nincs mire várni.
+
+       ⚠️ EZ A PARSER KÉZZEL DUPLIKÁLT. A `tests/consent-boot-parity.test.ts`
+       kiemeli ezt a szkriptet a komponensből, és UGYANAZOKRA a fixture-ökre
+       futtatja, mint a TS-parsert: ha a kettő szétcsúszik, a teszt bukik.
+       Enélkül egy formátumváltás után a GTM-kapu és a lib MÁST gondolna
+       ugyanarról a sütiről — némán. */
     (function(w,d){
       w.dataLayer = w.dataLayer || [];
       function gtag(){w.dataLayer.push(arguments);}
@@ -100,11 +106,25 @@ const isSbo = consentProvider === 'sbo';
         var m = d.cookie.match(/(?:^|;\s*)sbo_consent=([^;]*)/);
         if (m) {
           var p = decodeURIComponent(m[1]).split('.');
-          if (p.length === 7 && p[0] === 'v1' &&
+          var okShape = p.length === 8 && p[0] === 'v2' &&
               (p[1] === '0' || p[1] === '1') && (p[2] === '0' || p[2] === '1') &&
               /^[1-9][0-9]{0,4}$/.test(p[3]) &&
               (p[4]==='accept_all'||p[4]==='reject_all'||p[4]==='custom'||p[4]==='withdrawn') &&
-              /^[A-Za-z0-9_:-]{8,64}$/.test(p[5]) && /^[0-9]{1,12}$/.test(p[6])) {
+              /^[A-Za-z0-9_:-]{8,64}$/.test(p[5]) && /^[0-9]{1,12}$/.test(p[6]) &&
+              /^[A-Za-z0-9_:-]{1,64}$/.test(p[7]);
+          /* A decision és a kategóriák egymásból következnek — az ellentmondó
+             süti eldobandó, ugyanúgy, ahogy a TS-parserben. */
+          var okMatch = okShape && (p[4] === 'accept_all'
+              ? (p[1] === '1' && p[2] === '1')
+              : p[4] === 'custom'
+                ? (p[1] !== p[2])
+                : (p[1] === '0' && p[2] === '0'));
+          /* A hozzájárulás AHHOZ a szöveghez szól, amit a látogató olvasott:
+             más policy-verzió = nincs döntés → a banner újra kérdez. */
+          var okPolicy = okMatch && p[7] === policyVersion;
+          /* Lejárat (180 nap) — a süti max-age mellé, defenzíven. */
+          var okFresh = okPolicy && (Math.floor(Date.now()/1000) - parseInt(p[6], 10)) <= 15552000;
+          if (okFresh) {
             st = { a: p[1] === '1', m: p[2] === '1' };
           }
         }

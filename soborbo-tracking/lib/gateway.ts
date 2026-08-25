@@ -25,7 +25,7 @@ import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
   getFbp, getFbcCookie, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
 } from './persistence';
-import { CLIENT_LIB_VERSION, isSboConsentProvider } from './config';
+import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
 import { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS } from './event-contract';
@@ -120,7 +120,7 @@ function getConsentState(): ConsentState | undefined {
   // Nincs döntés → undefined → a Worker a require_consent szabálya szerint dönt,
   // pontosan úgy, mint a hiányzó CookieYes-süti esetén.
   if (isSboConsentProvider()) {
-    const s = readSboConsent();
+    const s = readSboConsent(trackingConfig.policyVersion);
     if (!s) return undefined;
     const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
     return {
@@ -256,7 +256,7 @@ export function collectConsentSources(): ConsentSourcesPayload {
   // továbbra sincs). A cookie/api snapshotok NEM váltanak jelentést: alattuk
   // változatlanul a CookieYes olvasata megy — a párhuzamos mérési ablak (2.4)
   // receipt-oldali evidenciája pont ez.
-  const sboState = !hasOverride && isSboConsentProvider() ? readSboConsent() : null;
+  const sboState = !hasOverride && isSboConsentProvider() ? readSboConsent(trackingConfig.policyVersion) : null;
   const sourceUsed: ConsentSourcesPayload['source_used'] = hasOverride
     ? 'override'
     : sboState
@@ -477,7 +477,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
     // ezen keresztül oldja fel az offline/replay ág a consent_log AKTUÁLIS
     // állapotát. CookieYes-provider alatt undefined (a mező ki sem megy), a
     // szerveren NULL — nem hiba.
-    consent_id: isSboConsentProvider() ? readSboConsent()?.consentId : undefined,
+    consent_id: isSboConsentProvider() ? readSboConsent(trackingConfig.policyVersion)?.consentId : undefined,
     // Fázis D telemetria — a döntést NEM befolyásolja, csak jelenti, mit láttak
     // a párhuzamos consent-források ebben a pillanatban.
     consent_sources: collectConsentSources(),

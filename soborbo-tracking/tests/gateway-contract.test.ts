@@ -2,11 +2,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sendToWorker, type ConversionPayload } from '../lib/gateway';
 import { SERVER_INGRESS_ONLY_EVENTS, BROWSER_GATEWAY_EVENTS } from '../lib/event-contract';
 import { getDiagnostics, clearDiagnostics } from '../lib/observability';
-import { setCookie, setUrl, resetAll } from './helpers';
+import { setCookie, setUrl, resetAll, setCkyConsent } from './helpers';
 
+/**
+ * A CookieYes-döntés MINDKÉT felülete: a süti (amit a payload telemetriája
+ * olvas) ÉS a `getCkyConsent()` API (amiből a consent-KAPUK döntenek).
+ *
+ * Korábban itt csak a süti szerepelt, és a tesztek némán a dev-fallbackon
+ * futottak (ismeretlen consent → engedd). Amikor az INV-008 miatt a fallback
+ * explicit opt-inné vált, ez a rejtett függés azonnal kiderült — a teszt
+ * ugyanis nem azt mérte, amit hitt magáról.
+ */
 function ckyCookie(ad: boolean, an: boolean): void {
   setCookie('cookieyes-consent',
     `consent:yes,necessary:yes,functional:yes,analytics:${an ? 'yes' : 'no'},advertisement:${ad ? 'yes' : 'no'},other:yes`);
+  setCkyConsent({ analytics: an, marketing: ad });
 }
 
 function basePayload(): ConversionPayload {

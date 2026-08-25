@@ -223,6 +223,12 @@ export function applySboDecision(
   input: SboDecisionInput,
   ctx: SboDecisionContext
 ): SboConsentState {
+  // A `prev` olvasása SZÁNDÉKOSAN policy-verzió-kapu NÉLKÜL történik. A kapu
+  // arra való, hogy egy RÉGI szöveghez adott döntés ne kapuzza a trackinget —
+  // de az AUDIT-LÁNCOT nem szabad elvágnia: a `consent_id` a preferencia-lánc
+  // stabil azonosítója, a `revision` pedig monoton. Ha itt is kapuznánk, egy
+  // szövegváltozás után minden látogató új consent_id-t és revision=1-et kapna,
+  // és a „mit döntött korábban" bizonyíték-lánc elszakadna.
   const prev = readSboConsent();
 
   const state: SboConsentState = {
@@ -231,7 +237,9 @@ export function applySboDecision(
     revision: (prev?.revision ?? 0) + 1,
     decision: decisionKind(input, prev),
     consentId: prev?.consentId ?? generateUUID(),
-    decidedAtSec: Math.floor(Date.now() / 1000)
+    decidedAtSec: Math.floor(Date.now() / 1000),
+    // A döntés AHHOZ a szöveghez kötődik, amit a látogató ÉPP most olvasott.
+    policyVersion: trackingConfig.policyVersion
   };
 
   writeSboConsentCookie(state);

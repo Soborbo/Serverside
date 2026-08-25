@@ -7,6 +7,7 @@ import {
   purgeMarketingStorage, purgeAnalyticsStorage, clearTrackingData,
 } from '../lib/persistence';
 import { setCkyConsent, clearCkyConsent, setUrl, setCookie, resetAll } from './helpers';
+import { trackingConfig } from '../lib/config';
 
 /**
  * PECR read-gate (2. brief · S1).
@@ -156,18 +157,26 @@ describe('blokkolt-olvasás telemetria (a betöltési verseny 2. mérése)', () 
     expect(r.keys.sort()).toEqual(['_fbc', '_fbp', 'sb_first_touch', 'sb_tracking'].sort());
   });
 
-  it('DEV-ben az API hiánya NEM blokkol (a fejlesztői kényelem változatlan)', () => {
-    // A lib consent-kapuja API nélkül `isDevMode()`-ot ad: dev-ben enged,
-    // PRODBAN deny-all. A prod-ág itt NEM tesztelhető: a Vite az
-    // `import.meta.env.DEV`-et fordítási időben literálra cseréli, tehát
-    // futásidőben nem állítható át. Azt az ágat — a lassan töltő CookieYes
-    // mellett is BELEEGYEZŐ látogatót, vagyis a betöltési versenyt — a
-    // Playwright-suite fedi, ami PRODUCTION bundle-t tölt be
-    // (tests/e2e/storage-access.spec.ts, „CMP never loads" eset).
+  it('DEV-ben az API hiánya NEM blokkol — DE csak EXPLICIT opt-in mellett (INV-008)', () => {
+    // A dev-kényelem megmaradt, viszont már nem implicit: a
+    // `PUBLIC_TRACKING_DEV_CONSENT_ALLOW=1` kapcsolja be. Az implicit
+    // „ismeretlen → engedd" pont az a hibaosztály, amit a Fázis D vizsgált —
+    // prodban eddig is deny volt, de egy elrontott build-flag mellett csendben
+    // éles is lehetett volna.
+    trackingConfig.devConsentAllow = true;
     clearCkyConsent();
     resetStorageReadBlocked();
     expect(getStoredData()).not.toBeNull();
     expect(getStorageReadBlocked().blocked).toBe(false);
+    trackingConfig.devConsentAllow = false;
+  });
+
+  it('opt-in NÉLKÜL az ismeretlen consent FAIL-CLOSED, dev-ben is', () => {
+    trackingConfig.devConsentAllow = false;
+    clearCkyConsent();
+    resetStorageReadBlocked();
+    expect(getStoredData()).toBeNull();
+    expect(getStorageReadBlocked().blocked).toBe(true);
   });
 
   it('kulcsokat jelent, sosem értékeket', () => {
