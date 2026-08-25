@@ -142,8 +142,15 @@ independently — keep them in sync with the `PUBLIC_TRACKING_*` values.
 | Backend gateway dispatch (forms → Meta CAPI) | ❌ | ❌ | ✅ (CookieYes cookie read server-side) |
 | Gateway OFFLINE (lead-status): Google Ads (Data Manager) | ❌ | ❌ | ✅ |
 
-Every client function checks consent; the backend reads the SAME CookieYes cookie
-(`readConsentFromCookie`) so the two legs cannot disagree; the gateway re-checks
+Every client function checks consent; the backend reads the SAME cookie
+(`readConsentFromCookie` — CookieYes cookie, or `sbo_consent` v2 on sites running
+our own CMP) so the two legs cannot disagree. That parity is enforced by
+`tests/consent-backend-parity.test.ts`: the backend parser is a HAND-DUPLICATED
+copy of the browser one (the module is vendored per-site and cannot import it),
+and it silently drifted once already — the browser moved to the v2 cookie while
+the backend still demanded v1, which on an `sbo` site would have made every
+server-side read return "no decision". On such sites pass
+`{ expectedPolicyVersion: env.TRACKING_POLICY_VERSION }`. The gateway re-checks
 server-side (`require_consent` for EEA) — defense in depth. Click-ID capture is
 gated on ad consent, and consent is THREE-state (granted/denied/unknown — see
 INVARIANTS #11).
