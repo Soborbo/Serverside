@@ -236,4 +236,14 @@ describe('purge visszavonáskor', () => {
     // purgeMarketingStorage, ami igen.
     expect(document.cookie).toContain('_fbp=fb.1.100.200');
   });
+
+  it('clearTrackingData a Google sütiket sem bántja (a purgeAnalyticsStorage igen, ez NEM)', () => {
+    setCookie('_ga', 'GA1.1.111.222');
+    setCookie('_fbp', 'fb.1.100.200');
+    getSessionId();
+    clearTrackingData();
+    expect(sessionStorage.getItem('sb_session')).toBeNull();
+    expect(document.cookie).toContain('_ga=GA1.1.111.222');
+    expect(document.cookie).toContain('_fbp=fb.1.100.200');
+  });
 });
