@@ -474,20 +474,56 @@ function removeMarketingLocalStorage(): void {
 }
 
 /**
+ * Vendor cookies whose NAME is fixed. The GA4 stream cookie (`_ga_<STREAM>`) and
+ * the Google Ads linker family carry a per-property suffix, so those are matched
+ * by prefix from `document.cookie` — a hard-coded list would silently miss the
+ * actual property's cookie, which is the whole point of the purge.
+ */
+const VENDOR_PREFIXES = {
+  /** GA4: client id + per-stream session state. */
+  analytics: ['_ga'],
+  /** Google Ads conversion linker (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`). */
+  marketing: ['_gcl_']
+} as const;
+
+/** Every cookie NAME currently visible to JS that starts with one of the prefixes. */
+function cookieNamesByPrefix(prefixes: readonly string[]): string[] {
+  if (typeof document === 'undefined') return [];
+  const names = new Set<string>();
+  for (const part of document.cookie.split(';')) {
+    const name = part.split('=')[0].trim();
+    if (name && prefixes.some((p) => name === p || name.startsWith(p))) names.add(name);
+  }
+  return [...names];
+}
+
+/**
  * Marketing consent withdrawn → drop the attribution at rest: `sb_tracking`,
- * `sb_first_touch`, and the Meta `_fbp` / `_fbc` cookies where technically
- * possible (see `expireCookie` limits).
+ * `sb_first_touch`, `__sb_attribution`, the Meta `_fbp` / `_fbc` cookies, and the
+ * Google Ads linker cookies (`_gcl_*`) where technically possible (see
+ * `expireCookie` limits).
+ *
+ * MIÉRT A GOOGLE-SÜTIK IS: a Consent Mode denied jele megállítja a KÜLDÉST, de a
+ * már kiírt azonosítót nem törli — a `_gcl_au` 90 napig a böngészőben maradna a
+ * visszavonás után. A látogató épp azt kérte, hogy ne maradjon. (2026-08-25-i
+ * jogi átvilágítás megállapítása.)
  */
 export function purgeMarketingStorage(): void {
   removeMarketingLocalStorage();
   expireCookie('_fbp');
   expireCookie('_fbc');
+  for (const name of cookieNamesByPrefix(VENDOR_PREFIXES.marketing)) expireCookie(name);
 }
 
-/** Analytics consent withdrawn → drop `sb_session` and the in-memory session. */
+/**
+ * Analytics consent withdrawn → drop `sb_session`, the in-memory session, and a
+ * GA4 sütijeit (`_ga`, `_ga_<STREAM>`). Ugyanaz az indok, mint a marketing ágon:
+ * a denied jel a küldést állítja meg, a 2 évre kiírt azonosítót nem.
+ */
 export function purgeAnalyticsStorage(): void {
   ssRm(SESSION_KEY);
   memorySession = null;
+  for (const name of cookieNamesByPrefix(VENDOR_PREFIXES.analytics)) expireCookie(name);
 }
 
 /**
