@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "compliance": "node tests/compliance/run.mjs",
-    "compliance:selftest": "node tests/compliance/selftest/run-selftest.mjs"
+    "compliance:selftest": "node tests/compliance/selftest/run-selftest.mjs",
+    "check:lockfile": "node scripts/check-lockfile-complete.mjs package-lock.json && node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260717.1",
@@ -23,5 +24,8 @@
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.112.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
