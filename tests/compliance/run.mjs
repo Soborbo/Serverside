@@ -37,6 +37,8 @@ import {
   evaluateCookiePolicy,
   evaluateWithdrawal
 } from './lib/checks.mjs';
+import { buildInventory, evaluateInventory, evaluateAnalyticsOnly } from './lib/inventory.mjs';
+import { scanSource, evaluateStaticScan, compareStaticToRuntime } from './lib/static-scan.mjs';
 import { buildMarkdown } from './lib/report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,7 +52,7 @@ function parseArgs(argv) {
   const args = {
     site: null,
     browser: 'chromium',
-    scenarios: 'A,B,C,D,GPC',
+    scenarios: 'A,B,C,D,E,GPC',
     timeout: DEFAULT_NAV_TIMEOUT_MS,
     // A flotta-lista és a kimenet felülírható — az önteszt (selftest/) ezzel fut
     // a saját, HELYI fixture-jén, hogy a harness működése élő oldal nélkül is
@@ -379,6 +381,11 @@ async function runSite(browserName, browser, site, args, outDir) {
     result.cookie_policy = policy;
     result.checks.push(...evaluateCookiePolicy(policy));
 
+    // F7 — statikus forrás-scan MÉG a context lezárása előtt (utána nincs page).
+    const staticScan = await fetchStaticSources(context, page, site.url);
+    result.static_scan = staticScan;
+    result.checks.push(...evaluateStaticScan(staticScan));
+
     await context.close();
 
     // ── B) Elfogad mindent ─────────────────────────────────────────────────
@@ -417,10 +424,33 @@ async function runSite(browserName, browser, site, args, outDir) {
       result.checks.push(...evaluateWithdrawal(w));
     }
 
+    // ── E) Analytics-only (részleges consent) ──────────────────────────────
+    if (args.scenarioSet.has('E')) {
+      const e = await runAnalyticsOnlyScenario(browser, site, args, blockedFirstPartyWrites);
+      result.scenarios.E_analytics_only = e;
+      result.checks.push(...evaluateAnalyticsOnly(e));
+    }
+
     // ── GPC) Sec-GPC (csak megfigyelés) ────────────────────────────────────
     if (args.scenarioSet.has('GPC')) {
-      result.scenarios.E_sec_gpc = await runGpcScenario(browser, site, args, blockedFirstPartyWrites);
+      result.scenarios.GPC_sec_gpc = await runGpcScenario(browser, site, args, blockedFirstPartyWrites);
     }
+
+    // ── F7) Vendor-leltár MINDEN lefutott fázisból ─────────────────────────
+    // A `null` felvétel (le sem futott fázis) NEM üres felvétel — a buildInventory
+    // kihagyja, hogy a leltár ne állítsa: „ott semmi nem futott".
+    const inventory = buildInventory(
+      [
+        { phase: 'A_before_decision', capture: result.scenarios.A_before_decision || null },
+        { phase: 'B_accept_all', capture: result.scenarios.B_accept_all || null },
+        { phase: 'C_reject_all', capture: result.scenarios.C_reject_all || null },
+        { phase: 'E_analytics_only', capture: result.scenarios.E_analytics_only?.skipped ? null : result.scenarios.E_analytics_only || null }
+      ],
+      site.url
+    );
+    result.inventory = inventory;
+    result.checks.push(...evaluateInventory(inventory));
+    result.checks.push(...compareStaticToRuntime(result.static_scan, inventory));
   } catch (err) {
     result.status = 'ERROR';
     result.error = String(err && err.message ? err.message : err).slice(0, 400);
@@ -459,6 +489,133 @@ async function runDecisionScenario(browser, site, args, kind, blocked) {
     await context.close().catch(() => {});
   }
   return out;
+}
+
+/**
+ * E) ANALYTICS-ONLY — a részleges consent forgatókönyve (F7 · P8).
+ *
+ * A B (elfogad mindent) és a C (elutasít mindent) két SZÉLSŐ eset. A legtöbb
+ * CMP-integráció ezekre van bekötve, és pont ezért csúszik át rajtuk némán egy
+ * „minden vagy semmi" implementáció. A valódi próba a részleges döntés: ha a
+ * látogató analitikát IGEN, marketinget NEM mond, a Meta/Ads lábnak némának kell
+ * maradnia.
+ *
+ * MIÉRT MAGVETETT SÜTI, NEM KATTINTGATÁS: a beállítás-panel kategória-kapcsolóit
+ * megbízhatóan végigkattintani CMP-nként és nyelvenként más — és egy elrontott
+ * kattintás-sorozat CSENDBEN „elfogad mindent"-et adna, amit a szcenárió
+ * elutasítás-hiánynak könyvelne. A döntést ezért a CMP SAJÁT süti-formátumában
+ * ültetjük be, betöltés ELŐTT, majd ELLENŐRIZZÜK, hogy a CMP el is fogadta:
+ * ha a banner mégis megjelenik, a szcenárió N-A (a beültetett döntés nem érvényes),
+ * NEM pedig hamis PASS.
+ */
+function seededConsentCookie(site) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  let host;
+  try {
+    host = new URL(site.url).hostname;
+  } catch {
+    return null;
+  }
+  if (site.cmp === 'sbo') {
+    // v2 formátum: v2.<analytics>.<marketing>.<revision>.<decision>.<id>.<ts>.<policy>
+    // A policy-verziót a site adja (`policy_version` a sites.json-ban); eltérés
+    // esetén a saját CMP-nk SZÁNDÉKOSAN újrakérdez — ezt a banner-ellenőrzés fogja meg.
+    const policy = site.policy_version || '2026-08-a';
+    return {
+      name: 'sbo_consent',
+      value: `v2.1.0.1.custom.sbo-compliance-probe.${nowSec}.${policy}`,
+      domain: host,
+      path: '/'
+    };
+  }
+  // CookieYes: `analytics:yes, advertisement:no`.
+  return {
+    name: 'cookieyes-consent',
+    value: encodeURIComponent(
+      'consentid:sbo-compliance-probe,consent:yes,necessary:yes,functional:no,analytics:yes,performance:no,advertisement:no'
+    ),
+    domain: host,
+    path: '/'
+  };
+}
+
+async function runAnalyticsOnlyScenario(browser, site, args, blocked) {
+  const requests = [];
+  const out = { skipped: true, site_url: site.url };
+  const cookie = seededConsentCookie(site);
+  if (!cookie) {
+    out.reason = 'A site URL-jéből nem tudtunk sütit képezni — az analytics-only forgatókönyv nem futott le.';
+    return out;
+  }
+
+  const context = await newInstrumentedContext(browser, site, args);
+  await installSafetyNet(context, site.url, blocked, args.relay);
+  recordRequests(context, requests);
+  try {
+    await context.addCookies([cookie]);
+  } catch (err) {
+    out.reason = `A magvetett consent-sütit nem sikerült beállítani (${String(err).slice(0, 120)}).`;
+    await context.close().catch(() => {});
+    return out;
+  }
+  const page = await context.newPage();
+  try {
+    const t0 = Date.now();
+    await page.goto(site.url, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(SETTLE_MS);
+
+    // ELLENŐRZÉS: a CMP elfogadta-e a beültetett döntést. Ha a banner ott van,
+    // a döntés NEM érvényes (rossz formátum / policy-verzió / más CMP) — ilyenkor
+    // a felvétel a „nincs döntés" állapotot mérné, ami hamis PASS-t adna.
+    const banner = await probeBanner(page, site.cmp);
+    if (banner && banner.banner_visible) {
+      out.reason =
+        'A magvetett analytics-only döntést a CMP NEM fogadta el (a banner újra megjelent) — ' +
+        'a forgatókönyv nem mért részleges consentet.';
+      out.banner = banner;
+      return out;
+    }
+
+    const cap = await capture(context, page, requests, t0);
+    out.skipped = false;
+    out.seeded_cookie = cookie.name;
+    Object.assign(out, cap);
+  } catch (err) {
+    out.reason = `Hiba az analytics-only forgatókönyvben: ${String(err && err.message ? err.message : err).slice(0, 200)}`;
+  } finally {
+    await context.close().catch(() => {});
+  }
+  return out;
+}
+
+/**
+ * F7 — a STATIKUS forrás letöltése: az oldal HTML-je + a benne hivatkozott,
+ * ELSŐ FÉL-beli szkriptek. Harmadik fél szkriptjeit SZÁNDÉKOSAN nem töltjük le:
+ * azok tartalmáért nem mi felelünk, a leltárban pedig már szerepelnek.
+ *
+ * Hiba esetén `null` — ami a `evaluateStaticScan`-ben N-A lesz, nem PASS. A
+ * „nem néztük" és a „néztük, tiszta" nem mosható össze.
+ */
+async function fetchStaticSources(context, page, siteUrl, maxScripts = 12) {
+  try {
+    const html = await page.content();
+    const scriptUrls = await page
+      .evaluate(() => [...document.querySelectorAll('script[src]')].map((s) => s.src))
+      .catch(() => []);
+    const firstParty = scriptUrls.filter((u) => isFirstParty(u, siteUrl)).slice(0, maxScripts);
+    const sources = [{ url: siteUrl, text: html }];
+    for (const url of firstParty) {
+      try {
+        const res = await context.request.get(url, { timeout: 20_000 });
+        if (res.ok()) sources.push({ url, text: await res.text() });
+      } catch {
+        /* egyetlen le nem töltött szkript nem teheti vakká az egész scant */
+      }
+    }
+    return scanSource(sources);
+  } catch {
+    return null;
+  }
 }
 
 /**

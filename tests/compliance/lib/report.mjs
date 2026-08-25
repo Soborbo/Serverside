@@ -103,6 +103,37 @@ function evidenceBlock(check) {
   return `\n\n<details><summary>bizonyíték</summary>\n\n\`\`\`json\n${trimmed}\n\`\`\`\n\n</details>`;
 }
 
+/**
+ * F7 — vendor-leltár egy site-ról, fázisonként.
+ *
+ * A táblázat legfontosabb sorai az ISMERETLEN vendorok (előre rendezve): azok,
+ * amikről a regiszter nem mond semmit. Az `'other'` gyűjtőkategória korábban pont
+ * ezt tüntette el — egy sose látott mérőszkript ugyanúgy nézett ki, mint egy
+ * webfont.
+ *
+ * Hiányzó leltár → KIMONDJUK, hogy nincs. Üres szakasz azt sugallná, hogy nincs
+ * mit jelenteni.
+ */
+export function inventoryTable(inventory) {
+  const lines = ['**Vendor-leltár (F7)**', ''];
+  if (!inventory || !inventory.rows || inventory.rows.length === 0) {
+    lines.push('_Nem készült vendor-leltár ehhez a site-hoz (a fázisok nem futottak le)._', '');
+    return lines;
+  }
+  const phases = inventory.phases || [];
+  lines.push(`| Vendor | Osztály | Ismert | ${phases.join(' | ')} | Első előfordulás |`);
+  lines.push(`| --- | --- | --- | ${phases.map(() => '---').join(' | ')} | --- |`);
+  for (const row of inventory.rows) {
+    const counts = phases.map((ph) => row.counts[ph] ?? 0);
+    lines.push(
+      `| ${row.known ? row.name : `⚠️ ${row.host ?? row.key}`} | ${row.consent_class ?? '—'} | ` +
+        `${row.known ? 'igen' : '**NEM**'} | ${counts.join(' | ')} | ${row.first_seen_phase} |`
+    );
+  }
+  lines.push('');
+  return lines;
+}
+
 export function buildMarkdown(run) {
   const { started_at, finished_at, browsers, test_country, results, run_command, relay_mode } = run;
   const lines = [];
@@ -262,6 +293,7 @@ export function buildMarkdown(run) {
       lines.push(`- ${statusMark(c.status)} **${c.id}** — ${c.detail}${evidenceBlock(c)}`);
     }
     lines.push('');
+    lines.push(...inventoryTable(r.inventory));
   }
 
   lines.push('---');

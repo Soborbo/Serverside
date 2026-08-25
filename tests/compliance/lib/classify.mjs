@@ -5,37 +5,16 @@
  * tests/compliance/compliance-lib.test.ts).
  */
 
+import { VENDOR_REGISTRY, classifyVendor } from './vendor-registry.mjs';
+
 /** @typedef {'ga4'|'gtm'|'google_ads'|'meta'|'cmp'|'gateway'|'other'} RequestCategory */
 
-const RULES = [
-  // ELSŐ FÉLEN PROXYZOTT Google-mérés (Google Tag Gateway / server-side tagging):
-  // a hit a site SAJÁT domainjén megy, egyedi útvonal-prefixszel
-  // (`/meres/ga/g/c`, `/f807/gs/ccm/collect`), tehát sem a domain-, sem az
-  // útvonal-minta nem fogja meg. A `tid=G-|GT-|AW-` query viszont egyértelmű.
-  // Enélkül a legfontosabb ellenőrzés (megy-e mérés consent ELŐTT) pont a
-  // proxyzott site-okon adna hamis PASS-t — a flotta felén.
-  { category: 'google_ads', re: /[?&]tid=AW-/i },
-  { category: 'ga4', re: /[?&]tid=(G|GT)-/i },
-  // SORREND SZÁMÍT: a DOMAIN-találat erősebb, mint az útvonal-minta. A
-  // `stats.g.doubleclick.net/j/collect` a GA4→Ads híd (Google Signals /
-  // remarketing) — mindkét minta illik rá, de HIRDETÉSI végpont, és a riportban
-  // az a hasznos besorolás (a „megy-e Ads-ping elutasítás után" kérdés miatt).
-  // A megfelelőségi ítéletet ez nem érinti: mindkét kategória consent-kötött.
-  { category: 'google_ads', re: /(^|\.)googleadservices\.com|(^|\.)doubleclick\.net|(^|\.)googlesyndication\.com|google\.[a-z.]+\/(pagead|ads|ccm)\//i },
-  // GA4 / Universal Analytics mérés
-  { category: 'ga4', re: /(^|\.)google-analytics\.com|(^|\.)analytics\.google\.com|\/(g|j|mp)\/collect/i },
-  // A GTM konténer maga (és a gtag.js loader)
-  { category: 'gtm', re: /(^|\.)googletagmanager\.com/i },
-  // Meta Pixel
-  { category: 'meta', re: /(^|\.)facebook\.(com|net)|(^|\.)fbcdn\.net/i },
-  // A CMP maga (esszenciális — a bannernek be KELL töltenie)
-  // A `-` is határ: a CookieYes VALÓDI CDN-je `cdn-cookieyes.com` (nem aldomain).
-  // Enélkül a CMP saját szkriptje `other`-nek látszana — a riport pedig azt
-  // sugallná, hogy az oldal ismeretlen harmadik felet tölt.
-  { category: 'cmp', re: /(^|\.|-)cookieyes\.com|(^|\.)cookielaw\.org|(^|\.)cookiebot\.com/i },
-  // A saját gateway-ünk
-  { category: 'gateway', re: /\/api\/event\/|tracking\.soborbo\.co\.uk/i }
-];
+/**
+ * A LEGACY hét kategória. A szabályok MAGA a `vendor-registry.mjs` — egyetlen
+ * forrás, hogy a riport vendor-oszlopa és a megfelelőségi ítélet ne tudjon
+ * széttartani (két lista előbb-utóbb két igazságot mond).
+ */
+const LEGACY_CATEGORIES = new Set(['ga4', 'gtm', 'google_ads', 'meta', 'cmp', 'gateway']);
 
 /** A marketing/analitika kategóriák, amiknek consent ELŐTT nem szabadna futniuk. */
 export const CONSENT_BOUND_CATEGORIES = ['ga4', 'google_ads', 'meta', 'gateway'];
@@ -46,8 +25,23 @@ export const CONSENT_BOUND_CATEGORIES = ['ga4', 'google_ads', 'meta', 'gateway']
  * előtt) — ezt külön ellenőrzés értékeli, nem ez a lista.
  */
 export function classifyRequest(url) {
-  for (const rule of RULES) if (rule.re.test(url)) return rule.category;
+  for (const v of VENDOR_REGISTRY) {
+    if (v.re.test(url)) return LEGACY_CATEGORIES.has(v.category) ? v.category : 'other';
+  }
   return 'other';
+}
+
+/**
+ * F7 — RÉSZLETES besorolás: melyik NEVESÍTETT vendor, milyen consent-osztályban.
+ *
+ * A különbség a `classifyRequest`-hez képest nem kozmetikai: az ISMERETLEN
+ * harmadik fél itt `known: false`-szal jön vissza, tehát a hívó nevesített
+ * megállapítást tud belőle csinálni. A legacy függvény ugyanezt `'other'`-ként
+ * adja — abból viszont a riportban semmi nem látszik, és pont ez volt a baj:
+ * egy új heatmap-szkript és egy webfont megkülönböztethetetlen volt.
+ */
+export function classifyRequestDetailed(url, siteUrl) {
+  return classifyVendor(url, siteUrl, isFirstParty);
 }
 
 /** Első fél-e a kérés (a mért site saját registrable domainje). */
