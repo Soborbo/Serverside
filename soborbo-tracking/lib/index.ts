@@ -64,11 +64,16 @@ export {
   commitPendingConversion,
   peekPendingConversions,
   discardPendingConversions,
+  hasBufferedIdentity,
   PENDING_TTL_MS,
   type ConversionKind,
   type PendingConversion,
+  type ConversionIdentity,
   type CommitOutcome
 } from './conversion-commit';
+// P5.2 — fetch/XHR submit-út: submit → backend → siker-kontraktus → commit,
+// mind ugyanabban a dokumentumban (nincs navigáció, nincs token-szükséglet).
+export { submitTrackedFormAsync, type AsyncSubmitResult, type AsyncSubmitOptions } from './submit';
 // Ingress contract — which events may use the browser path at all.
 export { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS, OFFLINE_EVENTS } from './event-contract';
 // Observability — stable diagnostic codes (see docs/OBSERVABILITY-CODES.md).
@@ -215,13 +220,19 @@ export function stageLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
   const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
   if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
 
-  stagePendingConversion({
-    kind: 'lead', eventId,
-    email: params.email, phone: params.phone,
-    firstName: params.firstName, lastName: params.lastName,
-    value: params.value, currency: params.currency || trackingConfig.currency,
-    gclid: gclid || undefined
-  });
+  // A TÁROLT rekord PII-mentes (INV-002); az identity a modul-privát memóriabeli
+  // pufferbe megy, és csak az azonos dokumentumban záruló fetch-utat szolgálja ki.
+  stagePendingConversion(
+    {
+      kind: 'lead', eventId,
+      value: params.value, currency: params.currency || trackingConfig.currency,
+      gclid: gclid || undefined
+    },
+    {
+      email: params.email, phone: params.phone,
+      firstName: params.firstName, lastName: params.lastName,
+    },
+  );
   return { success: true, consentBlocked: false, eventId, gclid, fbclid };
 }
 
@@ -232,11 +243,10 @@ export function stageContactSubmit(
   const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
   if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
 
-  stagePendingConversion({
-    kind: 'contact', eventId,
-    email: params.email, phone: params.phone,
-    gclid: gclid || undefined
-  });
+  stagePendingConversion(
+    { kind: 'contact', eventId, gclid: gclid || undefined },
+    { email: params.email, phone: params.phone },
+  );
   return { success: true, consentBlocked: false, eventId, gclid, fbclid };
 }
 

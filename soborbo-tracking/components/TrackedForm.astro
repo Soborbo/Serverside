@@ -35,6 +35,18 @@ interface Props {
    * siker-oldalnak KELL commitolnia. Site-onként, ellenőrzéssel.
    */
   commitOnSuccess?: boolean;
+  /**
+   * P5.2 — `'navigate'` (alapértelmezés): klasszikus, natív form-submit; a
+   * konverziót a KÖSZÖNŐ-OLDAL commitolja (`commitOnSuccess` + aláírt token).
+   * `'fetch'`: a submit XHR-rel megy, megvárjuk a backend siker-válaszát, és a
+   * konverzió UGYANEBBEN a dokumentumban ég el — token nélkül, mert nem hagyjuk
+   * el a lapot. A fetch-mód MINDIG stagel (különben visszaesnénk a
+   * submit-előtti tüzelésre, amit a P5 zár).
+   *
+   * A backend siker-szerződése fetch-módban:
+   *   { "ok": true, "event_id": "<a rejtett mezőből>", "redirect": "/koszonjuk" }
+   */
+  submitMode?: 'navigate' | 'fetch';
   method?: 'POST' | 'GET';
   eventType?: 'lead' | 'contact';
   contentName?: string;
@@ -57,7 +69,8 @@ const {
   emailField = 'email', phoneField = 'phone',
   firstNameField = 'firstName', lastNameField = 'lastName',
   valueField = 'price', formId = `tracked-form-${++formIdCounter}`,
-  abandonTimeout = 60_000, commitOnSuccess = false, class: className, ...rest
+  abandonTimeout = 60_000, commitOnSuccess = false, submitMode = 'navigate',
+  class: className, ...rest
 } = Astro.props;
 ---
 
@@ -70,6 +83,7 @@ const {
   data-form-id={formId}
   data-abandon-timeout={abandonTimeout.toString()}
   data-commit-on-success={commitOnSuccess ? '1' : null}
+  data-submit-mode={submitMode === 'fetch' ? 'fetch' : null}
   data-f-email={emailField}
   data-f-phone={phoneField}
   data-f-fname={firstNameField}
@@ -94,6 +108,7 @@ const {
     populateHiddenFields, waitForTracking,
     initFormAbandonTracking,
     stageLeadSubmit, stageContactSubmit,
+    submitTrackedFormAsync,
   } from '../lib';
 
   function setupTrackedForms() {
@@ -147,7 +162,12 @@ const {
         // mezők (event_id!) ugyanúgy töltődnek, tehát a backend és a
         // szerver-oldali gateway-láb egy bitet sem változik — csak a BÖNGÉSZŐ
         // lába csúszik a siker-oldalra, ahol a szerver már igazolta a leadet.
-        const commitOnSuccess = form.dataset.commitOnSuccess === '1';
+        //
+        // A fetch-mód MINDIG stagel: ott a commit ugyanennek a folyamnak a vége,
+        // a backend siker-válasza után. Ha itt tüzelnénk, visszaesnénk a
+        // submit-előtti konverzióra, vagyis a javítás értelmét vesztené.
+        const fetchMode = form.dataset.submitMode === 'fetch';
+        const commitOnSuccess = fetchMode || form.dataset.commitOnSuccess === '1';
 
         let result;
         if (cfg.eventType === 'contact') {
@@ -170,6 +190,28 @@ const {
         }
 
         populateHiddenFields(form, result);
+
+        // ── P5.2 fetch-út ────────────────────────────────────────────
+        // Nincs navigáció: megvárjuk a backend választ, és CSAK a szerződés
+        // szerinti sikerre commitolunk. Minden más ág (nem-2xx, hálózat,
+        // időtúllépés, értelmezhetetlen válasz, eltérő event_id) konverzió
+        // NÉLKÜL zárul, és `sb:conversion-failed` eseményt küld, hogy a site
+        // meg tudja mutatni a hibát a felhasználónak.
+        if (fetchMode) {
+          try {
+            const outcome = await submitTrackedFormAsync({ form, eventId: result.eventId });
+            form.dispatchEvent(new CustomEvent(
+              outcome.ok ? 'sb:conversion-committed' : 'sb:conversion-failed',
+              { bubbles: true, detail: outcome },
+            ));
+            if (outcome.ok && outcome.redirect) window.location.assign(outcome.redirect);
+          } finally {
+            // Sikertelen submit után a látogató javíthat és újraküldhet.
+            isSubmitting = false;
+          }
+          return;
+        }
+
         await waitForTracking(600);
 
         // Re-submit. The isSubmitting guard makes the re-fired submit event a
