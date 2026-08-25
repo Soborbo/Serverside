@@ -33,6 +33,10 @@ export const TRACKING_CODES = {
   CONSENT_STORED:          { code: 'TRK-4000', severity: 'info',  message: 'Consent decision stored by the gateway (204)' },
   CONSENT_POST_RETRYABLE:  { code: 'TRK-4001', severity: 'warn',  message: 'Consent POST not stored (429/5xx/network) — decision kept pending, resent later with the SAME consent_event_id' },
   CONSENT_POST_REJECTED:   { code: 'TRK-4002', severity: 'error', message: 'Consent POST rejected (4xx) — dropped from the pending queue; the cookie state still applies locally' },
+  // INV-008 — ISMERETLEN consent mellett engedtünk, mert a site EXPLICIT kérte a
+  // dev-kényelmet. Prodban ez sosem fordulhat elő (DEV=false); ha mégis látod
+  // éles logban, a build rossz flaggel készült.
+  CONSENT_DEV_FALLBACK_ALLOW: { code: 'TRK-4003', severity: 'warn', message: 'Unknown consent ALLOWED by the explicit dev fallback (PUBLIC_TRACKING_DEV_CONSENT_ALLOW=1) — must never happen in production' },
   // 5xxx — P5 `commit-after-business-success`. A böngésző-konverzió a backend
   // SIKERE után ég el; ezek a kódok mondják meg, mi lett a letett konverzióval.
   CONVERSION_COMMITTED:    { code: 'TRK-5000', severity: 'info',  message: 'Staged browser conversion committed after backend success' },

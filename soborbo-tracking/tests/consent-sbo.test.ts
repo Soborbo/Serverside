@@ -49,6 +49,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * A döntés-időbélyeg SZÁNDÉKOSAN friss: a v2-es süti-parse élesített LEJÁRAT-
+ * ellenőrzést tartalmaz (180 nap), tehát egy fix, régi konstans időbélyeg
+ * MINDEN ilyen fixture-t érvénytelenné tenne — és a teszt nem azt mérné, amit
+ * hisz róla. A `POLICY` a tesztkörnyezet tényleges policy-verziója.
+ */
+const freshSec = () => Math.floor(Date.now() / 1000) - 60;
+const POLICY = trackingConfig.policyVersion;
+
 describe('sbo_consent süti-codec', () => {
   const state: SboConsentState = {
     analytics: true,
@@ -56,24 +65,28 @@ describe('sbo_consent süti-codec', () => {
     revision: 3,
     decision: 'custom',
     consentId: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
-    decidedAtSec: 1_756_000_000
+    decidedAtSec: freshSec(),
+    policyVersion: POLICY
   };
 
   it('roundtrip: encode → parse azonos állapotot ad', () => {
     expect(parseSboConsentCookie(encodeSboConsentCookie(state))).toEqual(state);
   });
 
+  const ts = () => String(freshSec());
   it.each([
-    ['rossz verzió', 'v2.1.0.3.custom.a1b2c3d4-e5f6.1756000000'],
-    ['hiányzó mező', 'v1.1.0.3.custom.a1b2c3d4-e5f6'],
-    ['ismeretlen decision', 'v1.1.0.3.maybe.a1b2c3d4-e5f6.1756000000'],
-    ['decision↔kategória ellentmondás (accept_all, de marketing=0)', 'v1.1.0.3.accept_all.a1b2c3d4-e5f6.1756000000'],
-    ['revision=0', 'v1.1.0.0.custom.a1b2c3d4-e5f6.1756000000'],
-    ['nem-numerikus revision', 'v1.1.0.x.custom.a1b2c3d4-e5f6.1756000000'],
-    ['rövid consent_id', 'v1.1.0.3.custom.abc.1756000000'],
-    ['üres', ''],
+    ['ismeretlen verzió (v3)', () => `v3.1.0.3.custom.a1b2c3d4-e5f6.${ts()}.${POLICY}`],
+    ['RÉGI v1-es süti — a formátumváltás után nincs döntés', () => `v1.1.0.3.custom.a1b2c3d4-e5f6.${ts()}`],
+    ['hiányzó mező', () => `v2.1.0.3.custom.a1b2c3d4-e5f6.${ts()}`],
+    ['ismeretlen decision', () => `v2.1.0.3.maybe.a1b2c3d4-e5f6.${ts()}.${POLICY}`],
+    ['decision↔kategória ellentmondás (accept_all, de marketing=0)', () => `v2.1.0.3.accept_all.a1b2c3d4-e5f6.${ts()}.${POLICY}`],
+    ['revision=0', () => `v2.1.0.0.custom.a1b2c3d4-e5f6.${ts()}.${POLICY}`],
+    ['nem-numerikus revision', () => `v2.1.0.x.custom.a1b2c3d4-e5f6.${ts()}.${POLICY}`],
+    ['rövid consent_id', () => `v2.1.0.3.custom.abc.${ts()}.${POLICY}`],
+    ['üres policy-verzió', () => `v2.1.0.3.custom.a1b2c3d4-e5f6.${ts()}.`],
+    ['üres', () => ''],
   ])('szigorú parse: %s → null (banner újra)', (_label, raw) => {
-    expect(parseSboConsentCookie(raw)).toBeNull();
+    expect(parseSboConsentCookie(raw())).toBeNull();
   });
 
   it('readSboConsent a document.cookie-ból olvas, szinkron', () => {
@@ -98,7 +111,7 @@ describe('provider-elágazás — a cookieyes-út bitre változatlan', () => {
       'sbo_consent',
       encodeSboConsentCookie({
         analytics: true, marketing: true, revision: 1,
-        decision: 'accept_all', consentId: 'a1b2c3d4-e5f6', decidedAtSec: 1_756_000_000
+        decision: 'accept_all', consentId: 'a1b2c3d4-e5f6', decidedAtSec: freshSec(), policyVersion: POLICY
       })
     );
     setCkyConsent({ analytics: false, marketing: false });
@@ -115,7 +128,7 @@ describe('provider-elágazás — a cookieyes-út bitre változatlan', () => {
       'sbo_consent',
       encodeSboConsentCookie({
         analytics: false, marketing: false, revision: 1,
-        decision: 'reject_all', consentId: 'a1b2c3d4-e5f6', decidedAtSec: 1_756_000_000
+        decision: 'reject_all', consentId: 'a1b2c3d4-e5f6', decidedAtSec: freshSec(), policyVersion: POLICY
       })
     );
     expect(hasAnalyticsConsent()).toBe(false);
@@ -126,7 +139,7 @@ describe('provider-elágazás — a cookieyes-út bitre változatlan', () => {
       'sbo_consent',
       encodeSboConsentCookie({
         analytics: true, marketing: false, revision: 2,
-        decision: 'custom', consentId: 'a1b2c3d4-e5f6', decidedAtSec: 1_756_000_000
+        decision: 'custom', consentId: 'a1b2c3d4-e5f6', decidedAtSec: freshSec(), policyVersion: POLICY
       })
     );
     setCkyConsent({ analytics: false, marketing: false });

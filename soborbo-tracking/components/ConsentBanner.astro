@@ -46,6 +46,10 @@ const css = consentBannerCss();
     postBannerShown,
   } from '../lib/consent-sbo';
   import { getDevice } from '../lib/persistence';
+  // A11y: fókuszcsapda + ESC + fókusz-visszaadás. KÜLÖN modulban, hogy
+  // tesztelhető legyen — a komponens bundle-ölt szkriptjét jsdom nem tudja
+  // futtatni, tehát itt bent NULLA fedés lenne rajta.
+  import { createPanelKeydownHandler, panelFocusables, restoreFocus } from '../lib/consent-banner-a11y';
 
   declare global {
     interface Window {
@@ -120,7 +124,7 @@ const css = consentBannerCss();
       panel.hidden = true;
       overlay.hidden = true;
       document.removeEventListener('keydown', onPanelKeydown, true);
-      if (lastFocused instanceof HTMLElement) lastFocused.focus();
+      restoreFocus(lastFocused);
     }
 
     function decide(analytics: boolean, marketing: boolean): void {
@@ -137,32 +141,8 @@ const css = consentBannerCss();
     }
 
     // ── Panel (modal, fókuszcsapdával) ──────────────────────────────────────
-    function panelFocusables(): HTMLElement[] {
-      return Array.from(
-        panel.querySelectorAll<HTMLElement>('button, input, a[href]')
-      ).filter((el) => !el.hasAttribute('disabled'));
-    }
-
-    function onPanelKeydown(e: KeyboardEvent): void {
-      if (panel.hidden) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closePanel();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const f = panelFocusables();
-      if (f.length === 0) return;
-      const first = f[0];
-      const last = f[f.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
+    // A viselkedés a `lib/consent-banner-a11y.ts`-ben él és ott van tesztelve.
+    const onPanelKeydown = createPanelKeydownHandler({ panel, onEscape: () => closePanel() });
 
     function openPanel(): void {
       lastFocused = document.activeElement;
@@ -177,7 +157,7 @@ const css = consentBannerCss();
       panel.hidden = false;
       if (shownAt === null) shownAt = performance.now();
       document.addEventListener('keydown', onPanelKeydown, true);
-      panelFocusables()[0]?.focus();
+      panelFocusables(panel)[0]?.focus();
     }
 
     function closePanel(): void {
@@ -190,7 +170,7 @@ const css = consentBannerCss();
         showBanner();
       } else {
         root.hidden = true;
-        if (lastFocused instanceof HTMLElement) lastFocused.focus();
+        restoreFocus(lastFocused);
       }
     }
 
