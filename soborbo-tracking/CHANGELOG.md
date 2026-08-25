@@ -10,6 +10,30 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.4.0 (2026-08-25)
+
+### Javítva — a Google klikk-ID-k kölcsönös kizárását nem tartotta be a tároló
+
+Egy kattintás `gclid`-et VAGY `gbraid`-et VAGY `wbraid`-et ad, sosem többet. A
+`collectAttribution` viszont kulcsonként merge-ölt a tárolóval, ezért egy
+VISSZATÉRŐ fizetett látogatónál a RÉGI `gclid` ott maradt az ÚJ `gbraid`
+mellett — a payload két, egymásnak ellentmondó klikk-azonosítót vitt.
+
+Az offline / Enhanced Conversions feltöltés ezekből köti a konverziót a
+kattintáshoz: két ID mellett vagy rossz kattintáshoz köt, vagy a vendor dönt
+helyettünk. Mindkettő néma attribúció-hiba, ami a riportokban egészségesnek
+látszik.
+
+Mostantól a friss jelekből determinisztikusan EGY ID marad
+(`gclid` > `gbraid` > `wbraid`), és a tárolt testvérek is takarítódnak. A
+legacy tároló, ami a hibás korszakból többet őriz, GYÓGYUL: a `gclid` marad.
+
+A hibát a painless forkja már javította, a kanonikus csomag nem. Az F9/3.4
+transzport-migrációja derítette ki: a delegálás enélkül REGRESSZIÓ lett volna
+azon a site-on, ahol a védelem már megvolt. 6 teszt (a javítás nélkül 5 bukik).
+
+---
+
 ## 6.3.1 (2026-08-25)
 
 ### Javítva — a csomagon belül KÉT, egymásnak ellentmondó szabály élt az `event_id`-re
