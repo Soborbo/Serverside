@@ -1,48 +1,20 @@
 import type { Env } from '../env';
 import { logStructured } from '../types';
 import { TrackingErrorCode } from './error-codes';
+import { listMonitoredSiteConfigsWithCompleteness } from './config';
 
 /**
  * P1.2 — CRM business-source reconciliation (gateway-fél).
  *
- * A MEGFOGANDÓ HIBAMÓD: a P1.1 offline láb azt méri, hogy a gateway-be BEÉRKEZETT
- * lifecycle-státuszok eljutottak-e a Google-ig. Azt NEM látja, ha a CRM→gateway hívás
- * EL SEM INDUL — olyankor `received = 0`, és nulla elvárás mellett a nulla kézbesítés
- * tökéletesen egészségesnek látszik. Ez a gateway-ledger SZERKEZETI vakfoltja: a
- * hiányzó hívásról definíció szerint nincs nyoma a ledgerben.
- *
- * A megoldás egy PII-MENTES napi aggregátum, amit a CRM a MEGLÉVŐ cron-driveréről
- * pushol. Nem teljes event-sync (az második ledger lenne), nem lead-szintű join
- * (fölösleges PII-felület, és a lead_id a gateway-ben már megvan).
+ * A gateway ledger önmagában nem tudja észrevenni azt az esetet, amikor a CRM→gateway
+ * hívás el sem indul. Ezért a CRM naponta egy PII-mentes, teljes lifecycle-snapshotot
+ * küld: csak (event_name, count) párokat.
  */
 
-/** A `date` KÖTELEZŐEN YYYY-MM-DD (UTC-nap). Időbélyeg nem, mert a recon napra egyeztet. */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-// Egy CRM-nap reális felső korlátja event-típusonként. A cap NEM üzleti szabály, hanem
-// cardinality-/hibavédelem: egy elgépelt vagy megszaladt aggregátor ne írjon abszurd
-// számot a ledgerbe, amit aztán a recon örökös CRITICAL-ként olvas.
 const MAX_COUNT = 1_000_000;
-// Egy POST-ban legfeljebb ennyi event-típus. A kanonikus offline eventek száma egy
-// számjegyű; a bőséges korlát a payload-robbanás ellen véd.
 const MAX_ENTRIES = 64;
 
-/**
- * Szerver-oldali JELZŐSOR: „ezen a napon EZ a site jelentkezett".
- *
- * MIÉRT KELL (2026-08-24 Codex-review, P2): egy nulla-lifecycle-es napon a CRM
- * dokumentált `GROUP BY` lekérdezése ÜRES tömböt ad. Ha ilyenkor semmit nem írunk,
- * a site-nak nincs sora arra a napra — és a `findSilentBusinessSources` „a CRM-cron
- * leállt"-ot jelentene, holott a cron LEFUTOTT és sikeresen hívott. Vagyis a
- * hallgatás-detektor pont a normális, eseménytelen napokon adna hamis riasztást.
- *
- * A jelzősor MINDEN sikeres beküldésnél kiíródik (nem csak üresnél), hogy a
- * „jelentkezett-e ma" kérdés EGYSÉGES legyen. `count` mindig 0, és a drift-számítás
- * EXPLICIT kihagyja — nem üzleti darabszám, hanem életjel.
- *
- * Az `event_name` szándékosan olyan alakú, amit a validáció SOHA nem enged be a
- * kliens felől (a kanonikus events.json-ban nincs ilyen név), tehát nem ütközhet.
- */
 export const BUSINESS_REPORT_HEARTBEAT = '__report__';
 
 export interface BusinessCountEntry {
@@ -52,14 +24,18 @@ export interface BusinessCountEntry {
 
 export interface BusinessCountsPayload {
   date: string;
+  /** A CRM-ben készült snapshot időpontja. Retry-sorrend helyett SOURCE ordering. */
+  generated_at: string;
   counts: BusinessCountEntry[];
 }
 
-/**
- * Szigorú validáció, mert ez SZERVER-SZERVER ingress: a hívónak KONKRÉT 400-at kell
- * kapnia, hogy javíthasson. (A böngésző-ág 204-es „nyeljük el" szabálya ide nem
- * vonatkozik — CLAUDE.md 12.)
- */
+function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 20) return false;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return false;
+  return new Date(ms).toISOString() === value;
+}
+
 export function validateBusinessCounts(
   payload: unknown,
   allowedEventNames: ReadonlySet<string>
@@ -72,9 +48,6 @@ export function validateBusinessCounts(
   if (typeof p.date !== 'string' || !DATE_RE.test(p.date)) {
     return { ok: false, error: 'date must be YYYY-MM-DD (UTC day)' };
   }
-  // A regex CSAK az alakot nézi: a `2025-02-30` és a `2026-00-00` átmenne rajta, 200-at
-  // kapna, és egy olyan dátum alá íródna, amit a napi recon SOHA nem kérdez le — vagyis
-  // a monitor arra a payloadra csendben megszűnne. Round-trip ellenőrzés kell.
   const [yy, mm, dd] = p.date.split('-').map(Number);
   const parsed = new Date(Date.UTC(yy, mm - 1, dd));
   if (
@@ -84,10 +57,12 @@ export function validateBusinessCounts(
   ) {
     return { ok: false, error: `date is not a real calendar day: ${p.date}` };
   }
-  // Jövőbeli nap → majdnem biztosan időzóna-hiba a hívónál. Csendben elfogadva egy
-  // örökre üres napot hozna létre, amihez a recon soha nem talál párt.
   const today = new Date().toISOString().slice(0, 10);
   if (p.date > today) return { ok: false, error: `date is in the future (today=${today})` };
+
+  if (!isCanonicalIsoTimestamp(p.generated_at)) {
+    return { ok: false, error: 'generated_at must be a canonical UTC ISO timestamp' };
+  }
 
   if (!Array.isArray(p.counts)) return { ok: false, error: 'counts must be an array' };
   if (p.counts.length > MAX_ENTRIES) {
@@ -102,11 +77,11 @@ export function validateBusinessCounts(
     }
     const e = raw as Record<string, unknown>;
     if (typeof e.event_name !== 'string' || !allowedEventNames.has(e.event_name)) {
-      // Ismeretlen event-név elutasítva: a kanonikus events.json az egyetlen forrás,
-      // és egy elgépelt név csendben egy soha nem egyeztetett sort hozna létre.
       return { ok: false, error: `unknown event_name: ${String(e.event_name)}` };
     }
-    if (seen.has(e.event_name)) return { ok: false, error: `duplicate event_name: ${e.event_name}` };
+    if (seen.has(e.event_name)) {
+      return { ok: false, error: `duplicate event_name: ${e.event_name}` };
+    }
     seen.add(e.event_name);
     if (
       typeof e.count !== 'number' ||
@@ -119,30 +94,19 @@ export function validateBusinessCounts(
     entries.push({ event_name: e.event_name, count: e.count });
   }
 
-  return { ok: true, value: { date: p.date, counts: entries } };
+  return {
+    ok: true,
+    value: { date: p.date, generated_at: p.generated_at, counts: entries }
+  };
 }
 
 /**
- * TELJES NAPI SNAPSHOT-CSERE, nem részleges upsert (2026-08-24 review, MEDIUM).
+ * Teljes napi snapshot-csere, monoton source-orderinggel.
  *
- * A payload a CRM adott napi TELJES aggregátuma, ezért a tárolásnak is teljes cserének
- * kell lennie. A korábbi „csak upsert" modell csak azokra az event-nevekre volt
- * javító hatású, amiket a MÁSODIK payload is tartalmazott:
- *
- *     első report:      lead_qualified = 5
- *     javított report:  counts = []          →  a régi 5 BENT MARADT
- *
- * …és a recon egy olyan üzleti darabszámhoz mérte a gateway-t, amit a CRM már
- * visszavont. Ezért: a nap NEM-heartbeat sorainak törlése, majd a heartbeat + az
- * aktuális snapshot beszúrása — mind EGY `batch()`-ben, ami D1-en tranzakció, tehát
- * nincs olyan pillanat, amikor a nap üresen látszik.
- *
- * Az alternatíva (a CRM küldjön minden kanonikus lifecycle-eventet `count: 0`-val)
- * elvetve: az megkövetelné, hogy a CRM ismerje a teljes event-listát, és minden új
- * offline event csendben rést nyitna.
- *
- * `false` visszatérés = a sorok NEM biztos, hogy tárolódtak → a hívó 500-at kapjon,
- * hogy retry-olhasson (a néma elnyelés pont az a hibaosztály, ami ellen a P1.2 szól).
+ * A `received_at` NEM használható orderingre: egy régi snapshot retryja később érkezhet,
+ * mint egy frissebb snapshot. A külön `business_count_snapshots` sor a CRM által adott
+ * `generated_at`-ot őrzi. Egy stale retry batch-e lefut ugyan, de a feltételes DELETE/
+ * INSERT-ek semmit nem módosítanak.
  */
 export async function storeBusinessCounts(
   env: Env,
@@ -151,30 +115,60 @@ export async function storeBusinessCounts(
 ): Promise<boolean> {
   if (!env.LEDGER) return false;
   const receivedAt = new Date().toISOString();
+
   try {
+    const snapshot = env.LEDGER.prepare(
+      `INSERT INTO business_count_snapshots (site_id, date, generated_at, received_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(site_id, date) DO UPDATE SET
+         generated_at = excluded.generated_at,
+         received_at = excluded.received_at
+       WHERE excluded.generated_at >= business_count_snapshots.generated_at`
+    ).bind(siteId, payload.date, payload.generated_at, receivedAt);
+
+    const clear = env.LEDGER.prepare(
+      `DELETE FROM business_counts
+       WHERE site_id = ?1 AND date = ?2 AND event_name != ?3
+         AND EXISTS (
+           SELECT 1 FROM business_count_snapshots
+           WHERE site_id = ?1 AND date = ?2 AND generated_at = ?4
+         )`
+    ).bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT, payload.generated_at);
+
     const insert = env.LEDGER.prepare(
       `INSERT INTO business_counts (site_id, date, event_name, count, received_at)
-       VALUES (?1, ?2, ?3, ?4, ?5)
+       SELECT ?1, ?2, ?3, ?4, ?5
+       WHERE EXISTS (
+         SELECT 1 FROM business_count_snapshots
+         WHERE site_id = ?1 AND date = ?2 AND generated_at = ?6
+       )
        ON CONFLICT(site_id, date, event_name)
        DO UPDATE SET count = excluded.count, received_at = excluded.received_at`
     );
-    // A nap korábbi ÜZLETI sorainak törlése — így egy javított snapshotból KIMARADÓ
-    // event-név is eltűnik, nem csak a benne szereplők frissülnek. A heartbeat sort
-    // NEM töröljük: az életjel, nem darabszám (és úgyis újraíródik alább).
-    const clear = env.LEDGER.prepare(
-      `DELETE FROM business_counts WHERE site_id = ?1 AND date = ?2 AND event_name != ?3`
-    ).bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT);
 
-    // A jelzősor MINDIG megy — ez teszi megkülönböztethetővé a „nulla esemény volt"
-    // napot a „meg sem szólalt a CRM" naptól. Enélkül egy eseménytelen nap hamis
-    // business_source_missing riasztást adna.
     const rows = [
+      snapshot,
       clear,
-      insert.bind(siteId, payload.date, BUSINESS_REPORT_HEARTBEAT, 0, receivedAt),
+      insert.bind(
+        siteId,
+        payload.date,
+        BUSINESS_REPORT_HEARTBEAT,
+        0,
+        receivedAt,
+        payload.generated_at
+      ),
       ...payload.counts.map((c) =>
-        insert.bind(siteId, payload.date, c.event_name, c.count, receivedAt)
+        insert.bind(
+          siteId,
+          payload.date,
+          c.event_name,
+          c.count,
+          receivedAt,
+          payload.generated_at
+        )
       )
     ];
+
     await env.LEDGER.batch(rows);
     return true;
   } catch (err) {
@@ -198,7 +192,6 @@ export interface BusinessCountRow {
   count: number;
 }
 
-/** A gateway-be TÉNYLEGESEN beérkezett lifecycle-státuszok ugyanarra a napra. */
 export interface LedgerLifecycleRow {
   site_id: string;
   date: string;
@@ -214,17 +207,13 @@ export interface BusinessSourceFinding {
   date: string;
   kind: BusinessSourceKind;
   severity: 'warning' | 'critical';
-  /** A CRM szerinti darabszám. */
   crm_count: number;
-  /** A gateway-ledgerbe beérkezett darabszám. */
   gateway_count: number;
   detail: string;
 }
 
 export interface BusinessSourceThresholds {
-  /** Ennél kevesebb CRM-esemény alatt nem riasztunk (1 hiány 1-ből = 100%, de zaj). */
   minSample: number;
-  /** Az elveszett hányad küszöbe. */
   lossWarn: number;
   lossCrit: number;
 }
@@ -235,27 +224,21 @@ export const DEFAULT_BUSINESS_SOURCE_THRESHOLDS: BusinessSourceThresholds = {
   lossCrit: 0.3
 };
 
-const rowKey = (siteId: string, date: string, eventName: string) => `${siteId} ${date} ${eventName}`;
+const rowKey = (siteId: string, date: string, eventName: string) =>
+  `${siteId} ${date} ${eventName}`;
 
-/**
- * CRM-aggregátum ↔ gateway lead_status összevetés.
- *
- * SZÁNDÉKOSAN EGYIRÁNYÚ: csak a CRM > gateway eltérés a finding. A fordított irány
- * (gateway > CRM) nem hiba — a gateway kaphat lifecycle-státuszt más forrásból is
- * (manuális replay, másik backend), és a CRM aggregátuma a saját napjára vonatkozik,
- * ami a UTC-nap határán legális ±1 eltérést ad.
- */
 export function computeBusinessSourceDrift(
   crmRows: BusinessCountRow[],
   ledgerRows: LedgerLifecycleRow[],
   t: BusinessSourceThresholds = DEFAULT_BUSINESS_SOURCE_THRESHOLDS
 ): BusinessSourceFinding[] {
   const ledger = new Map<string, number>();
-  for (const r of ledgerRows) ledger.set(rowKey(r.site_id, r.date, r.event_name), r.count);
+  for (const r of ledgerRows) {
+    ledger.set(rowKey(r.site_id, r.date, r.event_name), r.count);
+  }
 
   const findings: BusinessSourceFinding[] = [];
   for (const c of crmRows) {
-    // A jelzősor életjel, nem üzleti darabszám — sosem termel driftet.
     if (c.event_name === BUSINESS_REPORT_HEARTBEAT) continue;
     if (c.count < t.minSample) continue;
     const got = ledger.get(rowKey(c.site_id, c.date, c.event_name)) ?? 0;
@@ -278,13 +261,6 @@ export function computeBusinessSourceDrift(
   return findings;
 }
 
-/**
- * Elhallgatott site-ok: korábban jelentett, ma nem.
- *
- * A megfigyelt előzményhez mérünk, nem konfigurált listához — egy sosem-jelentkező
- * site nem riaszt (nincs bekötve), egy elhallgató igen. Ugyanaz az elv, mint a napi
- * digest `expected_platforms`-fallbackjénél.
- */
 export function findSilentBusinessSources(
   priorRows: BusinessCountRow[],
   todayRows: BusinessCountRow[],
@@ -308,10 +284,24 @@ export function findSilentBusinessSources(
     }));
 }
 
+function filterToMonitored<T extends { site_id: string }>(
+  rows: T[],
+  monitored: ReadonlySet<string> | null
+): T[] {
+  return monitored === null ? rows : rows.filter((r) => monitored.has(r.site_id));
+}
+
 /**
- * A recon két lekérdezése + az összevetés. `null` = a lekérdezés elbukott VAGY nincs
- * LEDGER binding — a hívó ezt NEM keverheti össze a „nincs eltéréssel".
+ * `monitoring:false` site-ok csak TELJES config-felsorolás esetén zárhatók ki.
+ * Részleges KV-listából negatív következtetést nem vonunk le: olyankor inkább bővebb,
+ * kevésbé pontos riport legyen, mint néma kiesés.
  */
+async function resolveBusinessMonitoringScope(env: Env): Promise<ReadonlySet<string> | null> {
+  const listed = await listMonitoredSiteConfigsWithCompleteness(env);
+  if (!listed.complete) return null;
+  return new Set(listed.configs.map((c) => c.site_id));
+}
+
 export async function fetchBusinessSourceFindings(
   env: Env,
   date: string,
@@ -319,23 +309,12 @@ export async function fetchBusinessSourceFindings(
 ): Promise<BusinessSourceFinding[] | null> {
   if (!env.LEDGER) return null;
   try {
-    const [crm, ledgerRows, prior] = await Promise.all([
+    const [crm, ledgerRows, prior, monitored] = await Promise.all([
       env.LEDGER.prepare(
         `SELECT site_id, date, event_name, count FROM business_counts WHERE date = ?1`
       )
         .bind(date)
         .all<BusinessCountRow>(),
-      // A napot az `occurred_at` (a CRM-ben MIKOR TÖRTÉNT) dönti el, NEM a `created_at`
-      // (mikor vette fel a gateway). A CRM aggregátuma is az esemény idejére csoportosít,
-      // tehát a két oldalnak UGYANAZT a napot kell jelentenie. A `created_at` használata
-      // egy UTC-éjfélen átnyúló outbox-retrynél az eredeti napot hiányosnak, a következőt
-      // pedig figyelmen kívül hagyott többletnek mutatná — és a 3-as minimum mellett már
-      // EGY késve érkezett kérés is hamis CRITICAL-t adna. Az outbox lease/retry miatt ez
-      // nem elméleti eset. (Codex-review, 2026-08-24.)
-      //
-      // A P1.1 offline láb SZÁNDÉKOSAN marad `created_at`-en: ott a lead_status beérkezést
-      // a SAJÁT kézbesítéseivel vetjük össze, tehát mindkét oldal gateway-oldali idő —
-      // ott az `occurred_at` vinné el a két oldalt egymástól.
       env.LEDGER.prepare(
         `SELECT site_id, substr(occurred_at, 1, 10) AS date, status AS event_name, COUNT(*) AS count
          FROM lead_status
@@ -350,13 +329,17 @@ export async function fetchBusinessSourceFindings(
          WHERE date >= ?1 AND date < ?2`
       )
         .bind(priorSinceDate, date)
-        .all<BusinessCountRow>()
+        .all<BusinessCountRow>(),
+      resolveBusinessMonitoringScope(env)
     ]);
 
-    const crmRows = crm.results ?? [];
+    const crmRows = filterToMonitored(crm.results ?? [], monitored);
+    const lifecycleRows = filterToMonitored(ledgerRows.results ?? [], monitored);
+    const priorRows = filterToMonitored(prior.results ?? [], monitored);
+
     return [
-      ...computeBusinessSourceDrift(crmRows, ledgerRows.results ?? []),
-      ...findSilentBusinessSources(prior.results ?? [], crmRows, date)
+      ...computeBusinessSourceDrift(crmRows, lifecycleRows),
+      ...findSilentBusinessSources(priorRows, crmRows, date)
     ];
   } catch (err) {
     logStructured({
