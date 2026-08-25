@@ -2,7 +2,7 @@ import type { Env } from '../env';
 import type { SiteConfig } from './config';
 import { type HashedUserData, normalizePostalCode, normalizeCountry } from './hash';
 import type { ConsentState } from './consent';
-import { getAccessToken } from './gads-oauth';
+import { getAccessTokenDetailed } from './gads-oauth';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './error-codes';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
@@ -36,15 +36,74 @@ const DATAMANAGER_ENDPOINT = 'https://datamanager.googleapis.com/v1/events:inges
 const DATAMANAGER_API_TIMEOUT_MS = 5000;
 const DATAMANAGER_ACCOUNT_TYPE = 'GOOGLE_ADS';
 
-function classifyError(
+/**
+ * Vendor-hiba OSZTÁLYOZÁSA — a retryability miatt, nem esztétikából.
+ *
+ * A korábbi változat egyetlen `warning` súlyú kódba (`DATAMANAGER_API_REJECTED`)
+ * gyűjtött minden 4xx-et ÉS 5xx-et. Következmény: a ledgerben egy Google-oldali
+ * kiesés megkülönböztethetetlen volt egy véglegesen rossz payloadtól, holott az
+ * egyik RETRYABLE, a másik TERMINAL — a retry-logika és a riasztás is rossz
+ * döntést hozott rájuk.
+ *
+ * A `details` is bemenet, nem csak a `message`: a Google felső szintű üzenete
+ * generikus („There was a problem with the request."), az érdemi ok — az
+ * `ErrorInfo.reason`, a `fieldViolations` — a `details[]`-ben van. Ezért futott
+ * a `NOT_ALLOWLISTED` felismerés eddig szinte mindig mellé.
+ */
+export function classifyError(
   status: number,
-  apiMessage: string | undefined
+  apiMessage: string | undefined,
+  details?: unknown
 ): TrackingErrorCode {
-  if (status === 401 || status === 403) return TrackingErrorCode.DATAMANAGER_AUTH_REJECTED;
+  if (status === 401) return TrackingErrorCode.DATAMANAGER_AUTH_REJECTED;
+  // 403 ≠ 401. A 401 lejárt tokent jelent (magától megoldódik a refreshsel), a
+  // 403 hiányzó scope-ot vagy fiók-hozzáférést — ez operátori teendő.
+  if (status === 403) return TrackingErrorCode.DATAMANAGER_PERMISSION_DENIED;
   if (status === 429) return TrackingErrorCode.DATAMANAGER_RATE_LIMITED;
-  if (apiMessage && /not.allowlisted|NOT_ALLOWLISTED/i.test(apiMessage))
+
+  const haystack = [apiMessage ?? '', details !== undefined ? safeJson(details) : ''].join(' ');
+
+  if (/not.?allowlisted|NOT_ALLOWLISTED/i.test(haystack))
     return TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED;
+
+  if (status >= 500) return TrackingErrorCode.DATAMANAGER_SERVER_ERROR;
+
+  if (
+    status === 400 &&
+    /INVALID_ARGUMENT|fieldViolations|BadRequest|VALIDATION/i.test(haystack)
+  ) {
+    return TrackingErrorCode.DATAMANAGER_VALIDATION_FAILED;
+  }
+
   return TrackingErrorCode.DATAMANAGER_API_REJECTED;
+}
+
+function safeJson(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Klikk-azonosító alaki ellenőrzés.
+ *
+ * MIÉRT KELL. A klikk-ID a CRM-ből érkezik, ahol egy elrontott mentés
+ * ('undefined', csonka URL-részlet, idézőjelek) simán bekerülhet. Egy szemét
+ * gclid nem CSAK azt a mezőt rontja el: a Data Manager az EGÉSZ eventet
+ * elutasítja 400-zal, tehát egy rossz karakter miatt olyan konverzió vész el,
+ * amit a hashelt identity amúgy párosítana. Ezért a hibás azonosítót ELDOBJUK
+ * (hangosan), és az event a többi jellel megy fel.
+ *
+ * A minta szándékosan megengedő: a Google nem publikál pontos formátumot, így
+ * csak a nyilvánvalóan hibásat zárjuk ki (üres, túl rövid, nem base64url-szerű,
+ * túl hosszú).
+ */
+const CLICK_ID_PATTERN = /^[A-Za-z0-9_-]{10,512}$/;
+
+export function isValidClickId(value: string): boolean {
+  return CLICK_ID_PATTERN.test(value);
 }
 
 // Google Consent Mode signal → Data Manager Consent enum. Anything that is not
@@ -98,14 +157,17 @@ export async function sendToDataManager(
     };
   }
 
-  const accessToken = await getAccessToken(customerId, env);
-  if (!accessToken) {
+  // A KONKRÉT OK utazik tovább a ledgerbe (hiányzó secret / visszavont
+  // hozzájárulás / Google-outage / időtúllépés), nem egy „nincs token" gyűjtő.
+  const tokenResult = await getAccessTokenDetailed(customerId, env);
+  if ('error_code' in tokenResult) {
     return {
       success: false,
-      error_code: TrackingErrorCode.GADS_NO_ACCESS_TOKEN,
-      error: 'No access token available'
+      error_code: tokenResult.error_code,
+      error: tokenResult.error
     };
   }
+  const accessToken = tokenResult.accessToken;
 
   // --- userData.userIdentifiers -------------------------------------------
   const userIdentifiers: Record<string, unknown>[] = [];
@@ -135,9 +197,32 @@ export async function sendToDataManager(
 
   // Click ID — exactly one, by priority. At CRM/offline time it's usually
   // absent (ECL matches via hashed PII), but forward it if present.
-  if (payload.gclid) event.adIdentifiers = { gclid: payload.gclid };
-  else if (payload.gbraid) event.adIdentifiers = { gbraid: payload.gbraid };
-  else if (payload.wbraid) event.adIdentifiers = { wbraid: payload.wbraid };
+  //
+  // ALAKILAG ELLENŐRIZVE: egy szemét klikk-ID az EGÉSZ eventet 400-ba viszi, és
+  // vele veszne a hashelt identity párosítása is. A hibásat eldobjuk — hangosan.
+  for (const [kind, raw] of [
+    ['gclid', payload.gclid],
+    ['gbraid', payload.gbraid],
+    ['wbraid', payload.wbraid]
+  ] as const) {
+    if (!raw) continue;
+    if (!isValidClickId(raw)) {
+      logStructured({
+        level: 'warn',
+        error_code: TrackingErrorCode.DATAMANAGER_INVALID_CLICK_ID,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.DATAMANAGER_INVALID_CLICK_ID],
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        click_id_kind: kind,
+        // Az értéket NEM logoljuk (klikk-azonosító), csak a hosszát — annyi
+        // elég a diagnózishoz („üres" vs „csonka" vs „egy egész URL").
+        click_id_length: raw.length
+      });
+      continue;
+    }
+    event.adIdentifiers = { [kind]: raw };
+    break;
+  }
 
   // CLAUDE.md Rule 3: never send value:0 — omit the field entirely.
   if (typeof payload.value === 'number' && payload.value > 0) {
@@ -219,13 +304,61 @@ export async function sendToDataManager(
     });
     clearTimeout(timeoutId);
 
-    const responseBody = (await response.json().catch(() => ({}))) as {
+    // ŐRZÖTT parse, DE a kudarcot MEGJEGYEZZÜK.
+    //
+    // A korábbi `.catch(() => ({}))` egy értelmezhetetlen 2xx-választ üres
+    // objektummá tett, ami végigcsúszott a siker-ágra: `accepted`,
+    // `conversions_processed: 1`, http_status 200 — miközben FOGALMUNK SINCS,
+    // rögzített-e a Google bármit. Ez a §17 „néma siker" tilalmának pontos
+    // megsértése volt, ráadásul a money-path közepén.
+    let parsedBody: unknown;
+    let bodyParseFailed = false;
+    try {
+      parsedBody = await response.json();
+    } catch {
+      bodyParseFailed = true;
+      parsedBody = {};
+    }
+    const responseBody = (
+      parsedBody !== null && typeof parsedBody === 'object' ? parsedBody : {}
+    ) as {
       requestId?: string;
       error?: { code?: number; message?: string; status?: string; details?: unknown[] };
     };
+    // Egy 2xx, aminek a törzse nem objektum (pl. `"OK"` vagy `null`), ugyanolyan
+    // ismeretlen állapot, mint a parse-hiba.
+    if (!bodyParseFailed && response.ok && (parsedBody === null || typeof parsedBody !== 'object')) {
+      bodyParseFailed = true;
+    }
+
+    if (response.ok && bodyParseFailed) {
+      const code = TrackingErrorCode.DATAMANAGER_MALFORMED_RESPONSE;
+      logStructured({
+        level: 'error',
+        error_code: code,
+        message: ERROR_DESCRIPTIONS[code],
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        status: response.status,
+        validate_only: validateOnly,
+        duration_ms: Date.now() - startedAt
+      });
+      // FAIL-LOUD, nem fail-silent-success. A státuszt átadjuk, hogy a ledger
+      // lássa: a vendor válaszolt — csak épp értelmezhetetlenül.
+      return {
+        success: false,
+        error_code: code,
+        error: 'unparseable Data Manager response body',
+        status: response.status
+      };
+    }
 
     if (!response.ok || responseBody.error) {
-      const errorCode = classifyError(response.status, responseBody.error?.message);
+      const errorCode = classifyError(
+        response.status,
+        responseBody.error?.message,
+        responseBody.error?.details
+      );
       const sanitizedError = sanitizeErrorMessage(responseBody.error?.message);
       // The top-level message is generic ("There was a problem with the request.").
       // The actionable per-field validation errors live in error.details[] — log a
@@ -241,6 +374,7 @@ export async function sendToDataManager(
       logStructured({
         level:
           errorCode === TrackingErrorCode.DATAMANAGER_AUTH_REJECTED ||
+          errorCode === TrackingErrorCode.DATAMANAGER_PERMISSION_DENIED ||
           errorCode === TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED
             ? 'error'
             : 'warn',
@@ -288,6 +422,20 @@ export async function sendToDataManager(
         error_code: TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY,
         status: response.status
       };
+    }
+    // A sikeres Data Manager válasz `requestId`-t hordoz — ez a vendor-oldali
+    // nyom, amivel egy vitatott upload utólag visszakereshető. A hiánya NEM
+    // fokozza le a kézbesítést (a 2xx a vendor igazolása), de nem is nyeljük le.
+    if (!responseBody.requestId) {
+      const code = TrackingErrorCode.DATAMANAGER_RESPONSE_NO_REQUEST_ID;
+      logStructured({
+        level: 'warn',
+        error_code: code,
+        message: ERROR_DESCRIPTIONS[code],
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name,
+        status: response.status
+      });
     }
     return {
       success: true,

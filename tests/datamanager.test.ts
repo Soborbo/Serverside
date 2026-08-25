@@ -243,6 +243,14 @@ describe('sendToDataManager — request shape', () => {
 // uploadClickConversions transport törlődött: a click-ID prioritás üzleti szabálya
 // (pontosan EGY azonosító megy fel, gclid > gbraid > wbraid) a Data Manager úton
 // változatlanul érvényes, tehát a fedezetének is ide kellett követnie.
+// A klikk-ID fixtúrák VALÓSÁGHŰ hosszúak. A korábbi 4-6 karakteres értékek
+// ('G-abc', 'WB-1') semmilyen valódi Google-azonosítóra nem hasonlítottak, és
+// átcsúsztak volna az alaki ellenőrzésen, ami a szemetet ('undefined', 'null',
+// csonka érték) hivatott kizárni — a fixtúra maga tette volna vakká a tesztet.
+const GCLID = 'CjwKCAjw_5jVBRB0EiwAXWmVIkQ2mZ4pYQ8fN3xTvB1a';
+const GBRAID = 'BwEIABAAGgJqcw0Sq3NfR8mTvY2xUa1bQ';
+const WBRAID = 'CjkKCQjwtsDBRCS3xUa1bQmTvY2';
+
 describe('sendToDataManager — click ID priority', () => {
   it('gclid nyer a gbraid/wbraid felett', async () => {
     let captured: any = null;
@@ -253,11 +261,11 @@ describe('sendToDataManager — click ID priority', () => {
     const result = await sendToDataManager(
       baseSiteConfig,
       envWithCachedToken(),
-      { ...basePayload, gclid: 'G-abc', gbraid: 'GB-xyz', wbraid: 'WB-1' },
+      { ...basePayload, gclid: GCLID, gbraid: GBRAID, wbraid: WBRAID },
       { em: 'EMHASH' }
     );
     expect(result.success).toBe(true);
-    expect(captured.events[0].adIdentifiers).toEqual({ gclid: 'G-abc' });
+    expect(captured.events[0].adIdentifiers).toEqual({ gclid: GCLID });
   });
 
   it('gclid nélkül a gbraid nyer a wbraid felett', async () => {
@@ -269,10 +277,10 @@ describe('sendToDataManager — click ID priority', () => {
     await sendToDataManager(
       baseSiteConfig,
       envWithCachedToken(),
-      { ...basePayload, gbraid: 'GB-xyz', wbraid: 'WB-1' },
+      { ...basePayload, gbraid: GBRAID, wbraid: WBRAID },
       { em: 'EMHASH' }
     );
-    expect(captured.events[0].adIdentifiers).toEqual({ gbraid: 'GB-xyz' });
+    expect(captured.events[0].adIdentifiers).toEqual({ gbraid: GBRAID });
   });
 
   it('csak wbraid → wbraid megy fel, a hash-elt PII-match MELLETTE megmarad', async () => {
@@ -284,10 +292,10 @@ describe('sendToDataManager — click ID priority', () => {
     await sendToDataManager(
       baseSiteConfig,
       envWithCachedToken(),
-      { ...basePayload, wbraid: 'WB-1' },
+      { ...basePayload, wbraid: WBRAID },
       { em: 'EMHASH' }
     );
-    expect(captured.events[0].adIdentifiers).toEqual({ wbraid: 'WB-1' });
+    expect(captured.events[0].adIdentifiers).toEqual({ wbraid: WBRAID });
     // A legacy uploadClickConversions VALUE_MUST_BE_UNSET korlátja (braid mellett
     // TILOS userIdentifiers) a Data Managerre NEM vonatkozik — a PII-match marad.
     expect(captured.events[0].userData.userIdentifiers).toContainEqual({
