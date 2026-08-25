@@ -601,7 +601,8 @@ export async function handleDailyDigest(env: Env): Promise<void> {
   if (smokeAlarm) {
     logStructured({
       level: 'error',
-      message: 'Daily digest: synthetic smoke-lead check FAILED',
+      error_code: TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED],
       missing: smoke.missing.join(','),
       failures: smoke.failures.map((f) => `${f.site}/${f.platform}:${f.reason}`).join(',')
     });

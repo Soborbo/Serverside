@@ -288,6 +288,16 @@ export enum TrackingErrorCode {
    * meresbol. A riport degraded: bovebb es kevesbe pontos, NEM szukebb.
    */
   RECON_CONFIG_ENUMERATION_INCOMPLETE = 'TRK-950-018',
+  // 019-020 — MAGA A RIASZTÁSI CSATORNA bukott el. Ez a §17 legélesebb esete:
+  // ha az e-mail/SMS nem megy ki, a rendszer minden más baja NÉMA lesz, mert a
+  // hír nem jut el emberhez. Eddig kód nélküli `level:'error'` sor volt, amire
+  // nem lehetett riasztást kötni — vagyis a riasztás kiesése volt a legkevésbé
+  // riasztható esemény.
+  ALERT_EMAIL_FAILED = 'TRK-950-019',
+  ALERT_SMS_FAILED = 'TRK-950-020',
+  // 021 — a szintetikus smoke-lead lánc bukott. Ez a napi „él-e a pénz-út"
+  // próba; kód nélkül a napi digest szövegében tűnt el.
+  SMOKE_LEAD_CHECK_FAILED = 'TRK-950-021',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -474,6 +484,12 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'A site that used to report daily business counts has gone silent: the CRM cron itself may be down',
   [TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE]:
     'SITE_CONFIG enumeration was incomplete: reconciliation ran unfiltered (degraded, not narrower)',
+  [TrackingErrorCode.ALERT_EMAIL_FAILED]:
+    'The alert email could not be sent — every other failure in the system just went silent, because the news reaches no human',
+  [TrackingErrorCode.ALERT_SMS_FAILED]:
+    'The critical SMS alert could not be sent — the last-resort escalation channel is down',
+  [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]:
+    'The synthetic smoke-lead chain failed: the daily proof that the money path is alive did not pass',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]:
     'Cross-platform reconciliation is not running (no recon config, or every leg skipped) — the Model 2 browser/GTM blind spot is unmonitored',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
@@ -606,6 +622,11 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.RECON_OFFLINE_BLOCKED]: 'warning',
   [TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING]: 'warning',
   [TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE]: 'warning',
+  // A riasztási csatorna kiesése definíció szerint critical: enélkül minden
+  // más baj néma marad.
+  [TrackingErrorCode.ALERT_EMAIL_FAILED]: 'critical',
+  [TrackingErrorCode.ALERT_SMS_FAILED]: 'critical',
+  [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]: 'critical',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'warning',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
   // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)
@@ -666,3 +687,293 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.UNKNOWN_EVENT_NAME]: 'info',
   [TrackingErrorCode.INVALID_LEAD_PROVENANCE]: 'info'
 };
+
+// ─────────────────────────────────────────────────────────────────────
+// §15 — RETRYABILITY. A „mit tegyünk vele" osztályozás.
+//
+// A `severity` azt mondja meg, MENNYIRE fáj; a retryability azt, MI A TEENDŐ.
+// A kettő független: egy `warning` súlyú 5xx magától elmúlik, egy ugyanolyan
+// súlyú validációs hiba soha. E mező nélkül a retry-logika és a riasztás
+// ugyanazt a döntést hozza mindkettőre — pontosan ez volt a Data Manager
+// gyűjtőkód baja (TRK-840-003).
+//
+// A `Record<TrackingErrorCode, …>` SZÁNDÉKOSAN kimerítő: egy új kód addig nem
+// fordul le, amíg valaki el nem dönti, hogy retryolható-e.
+// ─────────────────────────────────────────────────────────────────────
+
+export type Retryability =
+  /** Átmeneti; egy későbbi próbálkozás sikerülhet (timeout, 5xx, rate limit). */
+  | 'RETRYABLE'
+  /** Végleges; ugyanez a payload sosem fog átmenni (validáció, rossz alak). */
+  | 'TERMINAL'
+  /** Szándékos kihagyás vagy tisztán informatív jel — nincs mit újrapróbálni. */
+  | 'POLICY_SKIP'
+  /** A mi konfigurációnk hiányzik/hibás (secret, KV-config, azonosító). */
+  | 'CONFIG_BLOCKED'
+  /** Emberi beavatkozás kell (újra-engedélyezés, allowlist, vizsgálat). */
+  | 'OPERATOR_ACTION'
+  /** Az eredmény ISMERETLEN. Nem „valószínűleg jó" — külön osztály. */
+  | 'UNKNOWN';
+
+export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
+  // 000 — infrastruktúra. A Cloudflare-primitívek hibái átmenetiek.
+  [TrackingErrorCode.UNHANDLED_EXCEPTION]: 'UNKNOWN',
+  [TrackingErrorCode.KV_READ_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.KV_WRITE_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.R2_READ_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.R2_WRITE_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.DURABLE_OBJECT_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.LEDGER_WRITE_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.FANOUT_SETUP_FAILED]: 'TERMINAL',
+
+  // 400 — a hívó hibája. Ugyanaz a payload újraküldve ugyanígy bukna.
+  [TrackingErrorCode.INVALID_JSON]: 'TERMINAL',
+  [TrackingErrorCode.INVALID_PAYLOAD_STRUCTURE]: 'TERMINAL',
+  // A Turnstile-sáv NYUGDÍJAZOTT (a gateway nem validál Turnstile-t). A kódok
+  // megmaradnak, hogy a régi logok értelmezhetők legyenek — újat nem emittálunk.
+  [TrackingErrorCode.MISSING_TURNSTILE_TOKEN]: 'TERMINAL',
+  [TrackingErrorCode.INVALID_TURNSTILE_TOKEN]: 'TERMINAL',
+  [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'RETRYABLE',
+  [TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED]: 'POLICY_SKIP',
+  [TrackingErrorCode.DEGRADED_RATE_LIMITED]: 'RETRYABLE',
+  [TrackingErrorCode.TURNSTILE_SECRET_INVALID]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'TERMINAL',
+  [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.SERVER_INGRESS_UNAUTHORIZED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.SERVER_INGRESS_ACCEPTED]: 'POLICY_SKIP',
+  [TrackingErrorCode.ORIGIN_MISSING]: 'TERMINAL',
+  [TrackingErrorCode.ORIGIN_NOT_ALLOWED]: 'TERMINAL',
+  [TrackingErrorCode.BODY_TOO_LARGE]: 'TERMINAL',
+  [TrackingErrorCode.CONVERSION_SPIKE]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]: 'TERMINAL',
+  [TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA]: 'TERMINAL',
+  [TrackingErrorCode.INVALID_PREHASHED_USER_DATA]: 'TERMINAL',
+  [TrackingErrorCode.ADMIN_UNAUTHORIZED]: 'OPERATOR_ACTION',
+  // A megszakadt kérés-stream ≠ túl nagy body: a kliens újraküldheti.
+  [TrackingErrorCode.REQUEST_BODY_READ_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING]: 'OPERATOR_ACTION',
+
+  // 500 — a MI konfigurációnk. Retry sosem segít, deploy/KV-írás igen.
+  [TrackingErrorCode.NO_SITE_CONFIG]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.MISSING_PIXEL_ID]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.MISSING_META_TOKEN]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.MISSING_GA4_CONFIG]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.MISSING_GADS_CONFIG]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.MISSING_CONVERSION_ACTION]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.INVALID_SITE_CONFIG_JSON]: 'CONFIG_BLOCKED',
+
+  // 600 — Meta CAPI.
+  [TrackingErrorCode.META_API_REJECTED]: 'TERMINAL',
+  [TrackingErrorCode.META_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.META_API_NETWORK_ERROR]: 'RETRYABLE',
+  [TrackingErrorCode.META_INVALID_ACCESS_TOKEN]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.META_PIXEL_NOT_FOUND]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.META_RATE_LIMITED]: 'RETRYABLE',
+  [TrackingErrorCode.META_INVALID_USER_DATA]: 'TERMINAL',
+  // 200 OK, de events_received: 0 — a Meta elnyelte. Újraküldve ugyanez lenne.
+  [TrackingErrorCode.META_EVENTS_RECEIVED_ZERO]: 'TERMINAL',
+  [TrackingErrorCode.META_KV_TEST_EVENT_CODE]: 'CONFIG_BLOCKED',
+
+  // 700 — GA4 MP (legacy/diagnosztika; a szerver nem küld on-site GA4-et).
+  [TrackingErrorCode.GA4_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.GA4_API_NETWORK_ERROR]: 'RETRYABLE',
+  [TrackingErrorCode.GA4_VALIDATION_FAILURE]: 'TERMINAL',
+  [TrackingErrorCode.GA4_INVALID_MEASUREMENT_ID]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.GA4_INVALID_API_SECRET]: 'CONFIG_BLOCKED',
+
+  // 800 — Google Ads / OAuth.
+  // A 001 és a 006 MARADÉK-gyűjtő: a konkrét okokat a 011-016 vitte el, tehát
+  // ami még ide esik, az definíció szerint ismeretlen.
+  [TrackingErrorCode.GADS_NO_ACCESS_TOKEN]: 'UNKNOWN',
+  [TrackingErrorCode.GADS_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.GADS_API_NETWORK_ERROR]: 'RETRYABLE',
+  [TrackingErrorCode.GADS_PARTIAL_FAILURE]: 'TERMINAL',
+  [TrackingErrorCode.GADS_AUTH_REJECTED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GADS_OAUTH_REFRESH_FAILED]: 'UNKNOWN',
+  [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.GADS_INVALID_CONVERSION_ACTION]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GADS_RATE_LIMITED]: 'RETRYABLE',
+  [TrackingErrorCode.GADS_OAUTH_CLIENT_ID_MISSING]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.GADS_OAUTH_CLIENT_SECRET_MISSING]: 'CONFIG_BLOCKED',
+  // Visszavont hozzájárulás: SEM a várakozás, SEM a retry nem oldja meg.
+  [TrackingErrorCode.GADS_REFRESH_TOKEN_REVOKED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GADS_OAUTH_HTTP_ERROR]: 'RETRYABLE',
+  [TrackingErrorCode.GADS_OAUTH_MALFORMED_RESPONSE]: 'RETRYABLE',
+  [TrackingErrorCode.GADS_OAUTH_TIMEOUT]: 'RETRYABLE',
+
+  // 810/820/830 — klikk-ID forwarderek.
+  [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.MSADS_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.TIKTOK_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.LINKEDIN_DISPATCH_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.LINKEDIN_API_TIMEOUT]: 'RETRYABLE',
+
+  // 840 — Google Data Manager (a jelenlegi Google money-path).
+  [TrackingErrorCode.DATAMANAGER_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.DATAMANAGER_API_NETWORK_ERROR]: 'RETRYABLE',
+  // Maradék-gyűjtő a 009-014 bevezetése után.
+  [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'UNKNOWN',
+  // 401: a token lejárt — a következő refresh megoldja.
+  [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'RETRYABLE',
+  [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'RETRYABLE',
+  [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]: 'POLICY_SKIP',
+  [TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY]: 'POLICY_SKIP',
+  [TrackingErrorCode.DATAMANAGER_PERMISSION_DENIED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.DATAMANAGER_VALIDATION_FAILED]: 'TERMINAL',
+  [TrackingErrorCode.DATAMANAGER_SERVER_ERROR]: 'RETRYABLE',
+  // Az ÁLLAPOT ismeretlen, a TEENDŐ viszont egyértelmű: próbáljuk újra —
+  // ismeretlen állapotból nem könyvelünk konverziót.
+  [TrackingErrorCode.DATAMANAGER_MALFORMED_RESPONSE]: 'RETRYABLE',
+  [TrackingErrorCode.DATAMANAGER_INVALID_CLICK_ID]: 'POLICY_SKIP',
+  [TrackingErrorCode.DATAMANAGER_RESPONSE_NO_REQUEST_ID]: 'POLICY_SKIP',
+
+  // 900 — DLQ / retry / platform-blokkok.
+  [TrackingErrorCode.DLQ_WRITE_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.DLQ_LIST_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.DLQ_DELETE_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.CRON_RETRY_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.MAX_RETRIES_EXCEEDED]: 'TERMINAL',
+  [TrackingErrorCode.DLQ_CORRUPT_RECORD]: 'TERMINAL',
+  // A vendor bukott ÉS a retry-rekordot sehova nem sikerült letenni — az event
+  // elveszhet. Ez nem „majd újra": embernek kell ránéznie.
+  [TrackingErrorCode.RETRY_PERSIST_FAILED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.PLATFORM_NOT_CONFIGURED]: 'POLICY_SKIP',
+  [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]: 'CONFIG_BLOCKED',
+
+  // 910 — consent-diagnosztika.
+  [TrackingErrorCode.CONSENT_MISSING]: 'POLICY_SKIP',
+  [TrackingErrorCode.CONSENT_UNPARSEABLE]: 'TERMINAL',
+  [TrackingErrorCode.CONSENT_SOURCE_MISMATCH]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.CONSENT_EXPIRED]: 'POLICY_SKIP',
+  [TrackingErrorCode.CONSENT_SIGNALS_INCONSISTENT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.CONSENT_CLIENT_LIB_OUTDATED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.CONSENT_CROSS_CHECK_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'OPERATOR_ACTION',
+
+  // 950 — reconciliation. A findingek definíció szerint emberi döntést kérnek;
+  // a „query failed" ágak viszont átmenetiek.
+  [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_COVERAGE_DRIFT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_QUERY_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.ACCEPTED_WITHOUT_VENDOR_STATUS]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_CROSS_PLATFORM_DRIFT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_CROSS_QUERY_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.EMQ_QUERY_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.EMQ_COVERAGE_DROP]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.SITE_CONFIG_DRIFT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.RECON_OFFLINE_ZERO_DELIVERY]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_OFFLINE_COVERAGE_DRIFT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_OFFLINE_VENDOR_FAILURE]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_OFFLINE_BLOCKED]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.RECON_BUSINESS_SOURCE_DRIFT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE]: 'RETRYABLE',
+  [TrackingErrorCode.ALERT_EMAIL_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.ALERT_SMS_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]: 'OPERATOR_ACTION',
+
+  // 960 — retention.
+  [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'RETRYABLE',
+  [TrackingErrorCode.RETENTION_R2_FAILED]: 'RETRYABLE',
+
+  // Build-time / kontraktus-őrök. Ezek NEM futásidejű kézbesítési hibák: a CI
+  // bukik el tőlük, tehát a „teendő" mindig emberi.
+  [TrackingErrorCode.UNKNOWN_EVENT_NAME]: 'TERMINAL',
+  [TrackingErrorCode.RESERVED_EVENT_NAME]: 'TERMINAL',
+  [TrackingErrorCode.GA4_ONSITE_FANOUT]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.BROWSER_SERVER_META_MISMATCH]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.INVALID_LEAD_PROVENANCE]: 'TERMINAL',
+  [TrackingErrorCode.INVALID_SITE_CONFIG_SCHEMA]: 'CONFIG_BLOCKED',
+  [TrackingErrorCode.MISSING_CONVERSION_ACTIONS_CONFIG]: 'CONFIG_BLOCKED'
+};
+
+/**
+ * Névtér → komponens. A kód ELEJE mondja meg, melyik rétegben keletkezett;
+ * ezt a fleet-nézet és a riasztás-útválasztás használja.
+ */
+export const ERROR_COMPONENTS: Record<string, string> = {
+  'TRK-000': 'worker-infra',
+  'TRK-400': 'ingress',
+  'TRK-500': 'site-config',
+  'TRK-600': 'meta-capi',
+  'TRK-700': 'ga4-mp-legacy',
+  'TRK-800': 'google-ads-oauth',
+  'TRK-810': 'microsoft-ads',
+  'TRK-820': 'tiktok',
+  'TRK-830': 'linkedin',
+  'TRK-840': 'google-data-manager',
+  'TRK-900': 'dlq-retry',
+  'TRK-910': 'consent',
+  'TRK-950': 'reconciliation',
+  'TRK-960': 'retention',
+  'TRK-EVT': 'event-contract',
+  'TRK-GA4': 'event-contract',
+  'TRK-META': 'event-contract',
+  'TRK-PROV': 'lead-provenance',
+  'TRK-CFG': 'site-config'
+};
+
+export function componentForCode(code: string): string {
+  const prefix = code.split('-').slice(0, 2).join('-');
+  return ERROR_COMPONENTS[prefix] ?? 'unknown';
+}
+
+/**
+ * Riasztási politika a súlyból. Egyetlen helyen, hogy a napi digest, az SMS-
+ * kapu és a fleet-nézet ne fejthesse meg külön-külön.
+ */
+export function alertPolicyForCode(code: TrackingErrorCode): string {
+  switch (ERROR_SEVERITY[code]) {
+    case 'critical':
+      return 'immediate: critical alert + daily digest';
+    case 'warning':
+      return 'daily digest';
+    default:
+      return 'log only';
+  }
+}
+
+/**
+ * Egy kód TELJES rekordja (§15). A generált katalógus és a fleet-nézet ebből
+ * dolgozik — nincs második, kézzel karbantartott igazságforrás.
+ */
+export interface ErrorCodeRecord {
+  code: TrackingErrorCode;
+  symbolic_name: string;
+  severity: ErrorSeverity;
+  component: string;
+  retryability: Retryability;
+  /** A végfelhasználónak SOHA nem mutatunk belső kódot vagy vendor-üzenetet. */
+  user_safe_message: string;
+  operator_message: string;
+  alert_policy: string;
+}
+
+const SYMBOL_BY_CODE: Record<string, string> = Object.fromEntries(
+  Object.entries(TrackingErrorCode).map(([symbol, code]) => [code as string, symbol])
+);
+
+/** Minden kód, a deklarálás sorrendjében. */
+export function allErrorCodes(): TrackingErrorCode[] {
+  return Object.values(TrackingErrorCode) as TrackingErrorCode[];
+}
+
+export function errorCodeRecord(code: TrackingErrorCode): ErrorCodeRecord {
+  return {
+    code,
+    symbolic_name: SYMBOL_BY_CODE[code] ?? 'UNKNOWN_SYMBOL',
+    severity: ERROR_SEVERITY[code],
+    component: componentForCode(code),
+    retryability: ERROR_RETRYABILITY[code],
+    // Egyetlen, szándékosan tartalmatlan felhasználói üzenet: a tracking-hiba
+    // nem a látogató ügye, és a belső kód kiszivárogtatása információt adna.
+    user_safe_message: 'Something went wrong on our side. Your request was not affected.',
+    operator_message: ERROR_DESCRIPTIONS[code],
+    alert_policy: alertPolicyForCode(code)
+  };
+}

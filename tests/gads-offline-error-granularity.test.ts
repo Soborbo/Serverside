@@ -184,14 +184,52 @@ describe('classifyError — retryability szerint elkülönítve', () => {
     expect(classifyError(409, 'Conflict')).toBe(TrackingErrorCode.DATAMANAGER_API_REJECTED);
   });
 
-  it('a szétválasztott kódok végig érnek a transportig (nem csak a classifier tudja)', async () => {
+  /**
+   * A classifier ISMERI a szétválasztást — de az operátor a LEDGERT nézi.
+   * Ezek a tesztek a teljes transporton hajtják át az ágakat, tehát a kód
+   * ténylegesen emittálódik is (a §15 futásidejű lefedettség-mérés ezt látja).
+   */
+  const transportCases: Array<[string, number, unknown, TrackingErrorCode]> = [
+    ['503 vendor-kiesés', 503, { error: { code: 503, message: 'backend unavailable' } }, TrackingErrorCode.DATAMANAGER_SERVER_ERROR],
+    ['403 jogosultság', 403, { error: { code: 403, message: 'permission denied' } }, TrackingErrorCode.DATAMANAGER_PERMISSION_DENIED],
+    ['401 lejárt token', 401, { error: { code: 401, message: 'unauthenticated' } }, TrackingErrorCode.DATAMANAGER_AUTH_REJECTED],
+    ['429 rate limit', 429, { error: { code: 429, message: 'quota exceeded' } }, TrackingErrorCode.DATAMANAGER_RATE_LIMITED],
+    [
+      '400 validációs hiba',
+      400,
+      { error: { code: 400, message: 'There was a problem with the request.', details: [{ reason: 'INVALID_ARGUMENT' }] } },
+      TrackingErrorCode.DATAMANAGER_VALIDATION_FAILED
+    ],
+    ['404 maradék-gyűjtő', 404, { error: { code: 404, message: 'not found' } }, TrackingErrorCode.DATAMANAGER_API_REJECTED],
+  ];
+
+  for (const [label, status, body, expected] of transportCases) {
+    it(`${label} → ${expected} a transporton át is`, async () => {
+      vi.stubGlobal('fetch', async () => ({ ok: false, status, json: async () => body } as unknown as Response));
+      const r = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, { em: 'EMHASH' });
+      expect(r.error_code).toBe(expected);
+      expect(r.status).toBe(status);
+      expect(r.success).toBe(false);
+    });
+  }
+
+  it('időtúllépés → TRK-840-001, hálózati hiba → TRK-840-002', async () => {
+    vi.stubGlobal('fetch', async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; });
+    expect((await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, { em: 'E' })).error_code)
+      .toBe(TrackingErrorCode.DATAMANAGER_API_TIMEOUT);
+
+    vi.stubGlobal('fetch', async () => { throw new TypeError('fetch failed'); });
+    expect((await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, { em: 'E' })).error_code)
+      .toBe(TrackingErrorCode.DATAMANAGER_API_NETWORK_ERROR);
+  });
+
+  it('allowlist-hiba a details-ből → TRK-840-006 a transporton át', async () => {
     vi.stubGlobal('fetch', async () => ({
-      ok: false, status: 503,
-      json: async () => ({ error: { code: 503, message: 'backend unavailable' } })
+      ok: false, status: 400,
+      json: async () => ({ error: { code: 400, message: 'There was a problem with the request.', details: [{ reason: 'NOT_ALLOWLISTED' }] } })
     } as unknown as Response));
     const r = await sendToDataManager(baseSiteConfig, envWithCachedToken(), basePayload, { em: 'EMHASH' });
-    expect(r.error_code).toBe(TrackingErrorCode.DATAMANAGER_SERVER_ERROR);
-    expect(r.status).toBe(503);
+    expect(r.error_code).toBe(TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED);
   });
 });
 

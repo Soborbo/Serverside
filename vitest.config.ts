@@ -10,6 +10,10 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['tests/**/*.test.ts']
+    include: ['tests/**/*.test.ts'],
+    // §15 — futásidejű error-code lefedettség-mérés. Passzív megfigyelő: a
+    // `logStructured` burkolásával gyűjti, mely kódok EMITTÁLÓDNAK ténylegesen
+    // a suite alatt. A `scripts/check-error-code-emission.mjs` olvassa össze.
+    setupFiles: ['tests/setup/record-error-codes.ts']
   }
 });
