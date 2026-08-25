@@ -10,6 +10,40 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.5.0 (2026-08-25)
+
+### Hozzáadva — a Google klikk-ID szabálya és a háromállapotú marketing-consent PRIMITÍVKÉNT
+
+Új modul: `lib/google-click-id.ts` — pure, DOM nélkül. Ez a szabály EGYETLEN
+authorityje: kölcsönös kizárás (`gclid` > `gbraid` > `wbraid`) + forrás-sorrend
+(URL > `_gcl_aw` süti > tároló). Exportok: `resolveGoogleClickId`,
+`pickGoogleClickId`, `parseGclAwCookie`, `applyGoogleClickId`,
+`GOOGLE_CLICK_KEYS`.
+
+Miért pure: a szabály eddig HÁROM helyen élt (kanonikus `gateway.ts`, painless
+`utm-capture.ts`, és implicit feltevésként a painless `calculator-store.ts`
+kommentjében), és bizonyítottan szétsodródott — a 6.4.1 pontosan ennek az ára
+volt. A site-adapterek tároló-modellje viszont JOGGAL más (a gateway last-touch
+`localStorage`-ot használ, a painless first-touch `sessionStorage`-t), ezért a
+primitív nem ír és nem olvas — csak DÖNT.
+
+Új export a `gateway.ts`-ből: `getMarketingConsentState()` →
+`GRANTED` / `DENIED` / `UNKNOWN`. A kétállapotú (`boolean`) olvasat az F9
+visszatérő hibaforrása: az UNKNOWN-t tagadásnak véve törlünk egy korábbi grant
+alatt tárolt klikk-ID-t (a CMP boot-versenye minden korai oldalbetöltésen
+fennáll), tagadásnak NEM véve pedig consent nélkül írunk hirdetési azonosítót az
+eszközre. A harmadik állapot mostantól nevesített, és a site-adapterek ugyanezt
+az osztályozást használják.
+
+### Változatlan viselkedés
+
+A `collectAttribution` mostantól ezekre a primitívekre delegál. Ez REFAKTOR: a
+383 meglévő teszt változtatás nélkül zöld maradt, és a lokális
+`keepSingleGoogleClickId` / `dropStaleGoogleClickIds` / `gclidFromCookie`
+másolatok eltűntek.
+
+---
+
 ## 6.4.1 (2026-08-25)
 
 ### Javítva — az elavult `_gcl_aw` cookie legyőzte a friss URL-klikk-ID-t

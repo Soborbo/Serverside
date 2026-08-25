@@ -54,7 +54,27 @@ export {
   type ConversionData,
 } from './events';
 // Browser-path gateway dispatch — also available for direct use (guarded).
-export { sendToWorker, collectAttribution, type ConversionPayload, type UserData } from './gateway';
+export {
+  sendToWorker,
+  collectAttribution,
+  getMarketingConsentState,
+  type ConversionPayload,
+  type UserData,
+  type MarketingConsentState
+} from './gateway';
+// A Google klikk-ID szabálya EGY authority — a site-adapterek (pl. a painless
+// `pr_tracking` session-store-ja) ezt használják a saját másolatuk helyett.
+export {
+  GOOGLE_CLICK_KEYS,
+  resolveGoogleClickId,
+  pickGoogleClickId,
+  parseGclAwCookie,
+  applyGoogleClickId,
+  type GoogleClickKey,
+  type GoogleClickSource,
+  type ResolvedGoogleClickId,
+  type ClickIdSource
+} from './google-click-id';
 // P5 — commit-after-business-success. A siker-oldal ezzel tüzeli el a submitkor
 // LETETT (de el nem sütött) konverziót, a szerver által visszaadott event_id-vel.
 import { stagePendingConversion, discardPendingConversions } from './conversion-commit';

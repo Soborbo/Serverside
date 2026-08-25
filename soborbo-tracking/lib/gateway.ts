@@ -29,6 +29,11 @@ import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './conf
 import { generateUUID } from './uuid';
 import { report } from './observability';
 import { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS } from './event-contract';
+import {
+  applyGoogleClickId,
+  resolveGoogleClickId,
+  type ResolvedGoogleClickId
+} from './google-click-id';
 
 declare global {
   interface Window {
@@ -150,6 +155,35 @@ function getConsentState(): ConsentState | undefined {
     ad_storage: sig(adGranted),
     analytics_storage: sig(map.analytics === 'yes')
   };
+}
+
+/**
+ * A MARKETING-CONSENT HÁROMÁLLAPOTÚ — és ez az egyetlen hely, ahol eldől.
+ *
+ * `GRANTED` / `DENIED` / `UNKNOWN`. A kétállapotú (`boolean`) olvasat az F9
+ * egyik visszatérő hibaforrása: az UNKNOWN-t tagadásnak véve TÖRÖLTÜNK egy
+ * korábbi grant alatt tárolt gclid-et (a CMP boot-versenye MINDEN korai
+ * oldalbetöltésen fennáll), tagadásnak NEM véve pedig consent nélkül írtunk
+ * hirdetési azonosítót az eszközre. Egyik sem elfogadható, ezért a harmadik
+ * állapot NEVESÍTVE van.
+ *
+ * A helyes kezelés állapotonként:
+ *   GRANTED → gyűjthet, tárolhat, küldhet
+ *   DENIED  → a visszavonás NYUGALMI ÁLLAPOTBAN is érvényes: purge
+ *   UNKNOWN → NEM ír eszközre és NEM küld drótra, de NEM IS töröl
+ *
+ * Forrás-sorrend: `getConsentState()` (override → saját süti → CookieYes-süti),
+ * és ha az nem tud dönteni, a CookieYes JS API (`hasMarketingConsent`). A JS
+ * API csak GRANTED-et tud állítani; a hiánya UNKNOWN, nem DENIED.
+ */
+export type MarketingConsentState = 'GRANTED' | 'DENIED' | 'UNKNOWN';
+
+export function getMarketingConsentState(): MarketingConsentState {
+  const consent = getConsentState();
+  if (!consent) return hasMarketingConsent() ? 'GRANTED' : 'UNKNOWN';
+  if (consent.ad_user_data === 'GRANTED' || consent.ad_storage === 'GRANTED') return 'GRANTED';
+  if (consent.ad_user_data === 'DENIED' && consent.ad_storage === 'DENIED') return 'DENIED';
+  return 'UNKNOWN';
 }
 
 // ── Fázis D · consent-forrás telemetria (2026-08) ───────────────────────────
@@ -340,62 +374,19 @@ function writeStoredAttribution(a: AttributionParams): void {
   }
 }
 
-// gclid from the `_gcl_aw` cookie (format: GCL.<ts>.<gclid>) — fallback when the
-// URL no longer has a gclid (e.g. the user converts on an internal page).
-function gclidFromCookie(): string | undefined {
-  const c = getCookie('_gcl_aw');
-  if (!c) return undefined;
-  const parts = c.split('.');
-  return parts.length >= 3 ? parts.slice(2).join('.') : undefined;
-}
-
 /**
- * A Google klikk-ID-k KÖLCSÖNÖSEN KIZÁRÓAK: egy kattintás `gclid`-et VAGY
- * `gbraid`-et VAGY `wbraid`-et ad, sosem többet. A tároló viszont kulcsonként
- * merge-öl, ezért egy VISSZATÉRŐ fizetett látogatónál a RÉGI `gclid` ott
- * maradt az ÚJ `gbraid` mellett — és a payload két, egymásnak ellentmondó
- * klikk-azonosítót vitt.
+ * A TÁROLT klikk-ID-k tisztítása, ha a megoldott ID nem a tárolóból jött.
  *
- * Miért számít: az offline/Enhanced Conversions feltöltés ezekből köti a
- * konverziót a kattintáshoz. Két ID mellett vagy rossz kattintáshoz köti, vagy
- * a vendor dönt helyettünk — mindkettő néma attribúció-hiba, ami a
- * riportokban egészségesnek látszik.
+ * A `resolveGoogleClickId` megmondja, MELYIK az egy érvényes Google klikk-ID; ez
+ * a függvény gondoskodik róla, hogy a rekordban ne maradjon mellette testvér.
+ * A nem-Google mezők (utm, fbclid, landing) érintetlenek — ez nem általános
+ * takarítás.
  */
-const GOOGLE_CLICK_KEYS = ['gclid', 'gbraid', 'wbraid'] as const;
-
-/**
- * A TÁROLT klikk-ID-k tisztítása a friss URL-jelek fényében.
- *
- * Friss Google-ID érkezett → a tárolt testvérek elavultak, mennek.
- * Nincs friss → a legacy tároló még tarthat többet a hibás korszakból: a
- * `gclid`-et tartjuk meg (a domináns, nem-iOS alak), a többit eldobjuk.
- */
-function dropStaleGoogleClickIds(
-  stored: AttributionParams,
-  fresh: AttributionParams
-): AttributionParams {
-  if (!GOOGLE_CLICK_KEYS.some((k) => fresh[k])) {
-    const present = GOOGLE_CLICK_KEYS.filter((k) => stored[k]);
-    if (present.length < 2) return stored;
-    const keep = present.includes('gclid') ? 'gclid' : present[0]!;
-    const healed = { ...stored };
-    for (const k of GOOGLE_CLICK_KEYS) if (k !== keep) delete healed[k];
-    return healed;
-  }
-  const cleaned = { ...stored };
-  for (const k of GOOGLE_CLICK_KEYS) if (!fresh[k]) delete cleaned[k];
-  return cleaned;
-}
-
-/**
- * A FRISS jelekből determinisztikusan EGY Google klikk-ID marad
- * (gclid > gbraid > wbraid). HELYBEN módosít.
- */
-function keepSingleGoogleClickId(fresh: AttributionParams): void {
-  const present = GOOGLE_CLICK_KEYS.filter((k) => fresh[k]);
-  if (present.length < 2) return;
-  const keep = present.includes('gclid') ? 'gclid' : present[0]!;
-  for (const k of GOOGLE_CLICK_KEYS) if (k !== keep) delete fresh[k];
+function healGoogleClickIds(
+  merged: AttributionParams,
+  resolved: ResolvedGoogleClickId | undefined
+): void {
+  applyGoogleClickId(merged as Record<string, unknown>, resolved);
 }
 
 export function collectAttribution(): AttributionParams {
@@ -412,48 +403,43 @@ export function collectAttribution(): AttributionParams {
   // user consented. Fall back to the JS API when the cookie/override is absent so
   // the two channels agree. (When the cookie IS present we respect its signals,
   // including an explicit DENIED.) Fail-closed when neither source grants.
-  const consent = getConsentState();
-  const adGranted = consent
-    ? consent.ad_user_data === 'GRANTED' || consent.ad_storage === 'GRANTED'
-    : hasMarketingConsent();
+  const consentState = getMarketingConsentState();
+  const adGranted = consentState === 'GRANTED';
 
+  let urlParams: URLSearchParams | undefined;
   try {
-    const params = new URLSearchParams(window.location.search);
+    urlParams = new URLSearchParams(window.location.search);
     if (adGranted) {
       for (const k of ATTR_CLICK_PARAMS) {
-        const v = params.get(k);
+        const v = urlParams.get(k);
         if (v) fresh[k] = v;
       }
     }
     for (const k of ATTR_UTM_PARAMS) {
-      const v = params.get(k);
+      const v = urlParams.get(k);
       if (v) fresh[k] = v;
     }
   } catch {
     // no-op
   }
 
-  // A SORREND KÖTÖTT — két őr, ebben a sorrendben:
-  //  1. Az URL is hozhat több Google-ID-t (redirect / tag-manager artefakt):
-  //     egyre szűkítjük.
-  //  2. A `_gcl_aw` cookie-fallback CSAK akkor futhat, ha az URL EGYIK Google
-  //     klikk-ID-t sem hozta. A cookie a KORÁBBI kattintásé; ha most `gbraid`
-  //     érkezett, a `keepSingleGoogleClickId` prioritása (gclid > gbraid) pont
-  //     az ELAVULT cookie-gclid-et választaná a friss gbraid helyett — egy
-  //     visszatérő fizetett látogatónál néma, rossz-kattintás attribúció.
-  keepSingleGoogleClickId(fresh);
-
-  if (adGranted && !GOOGLE_CLICK_KEYS.some((k) => fresh[k])) {
-    const g = gclidFromCookie();
-    if (g) fresh.gclid = g;
-  }
-
-  // A tárolt testvérek is takarítódnak — enélkül a merge két, egymásnak
-  // ellentmondó klikk-ID-t vinne.
-  const cleanedStore = dropStaleGoogleClickIds(stored, fresh);
+  // A Google klikk-ID döntése NEM ITT lakik: a szabály (kölcsönös kizárás +
+  // URL > `_gcl_aw` cookie > tároló) a `lib/google-click-id.ts` egyetlen
+  // authorityjében van, hogy a site-adapterek ugyanazt használhassák.
+  //
+  // Consent nélkül az URL-t és a sütit KI IS ZÁRJUK a jelöltek közül (nem adjuk
+  // át) — így a tárolt érték marad az egyetlen jelölt. Ez szándékos: az
+  // UNKNOWN-állapot nem törölhet egy korábbi grant alatt eltárolt ID-t, csak a
+  // drótra nem engedi (lentebb).
+  const resolved = resolveGoogleClickId({
+    url: adGranted ? urlParams : undefined,
+    gclAw: adGranted ? getCookie('_gcl_aw') : undefined,
+    stored
+  });
 
   // Last-touch: the fresh URL signals override the stored ones.
-  const merged: AttributionParams = { ...cleanedStore, ...fresh };
+  const merged: AttributionParams = { ...stored, ...fresh };
+  healGoogleClickIds(merged, resolved);
 
   // First-touch landing context (don't overwrite if already present).
   if (!merged.landing_page) merged.landing_page = window.location.href;
@@ -473,11 +459,7 @@ export function collectAttribution(): AttributionParams {
   //    grant. Treating "unknown" as a denial deleted a consented user's
   //    gclid before the CMP initialised, orphaning the conversion from
   //    its ad click.
-  const adDenied = consent
-    ? consent.ad_user_data === 'DENIED' && consent.ad_storage === 'DENIED'
-    : false;
-
-  if (adDenied) {
+  if (consentState === 'DENIED') {
     for (const k of ATTR_CLICK_PARAMS) delete merged[k];
     writeStoredAttribution(merged);
     return merged;
