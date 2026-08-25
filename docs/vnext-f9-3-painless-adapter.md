@@ -186,10 +186,16 @@ szerver:   +447123456789       ← ez ment a CAPI-nak
 ```
 
 Két oka volt: a takarítás nem vitte el a **pontot**, és a `+`-szal kezdődő szám
-**korai return**-nel kilépett, bent hagyva a `(0)` trunk-nulláját. A Pixel és a
-CAPI két külön embert látott ugyanabban a látogatóban — a dedup elromlott, a
-match-minőség némán esett. A hívási pontok mind a `normalizeUserData`-n mennek
-át, tehát ez valódi felhasználói bemeneten futott.
+**korai return**-nel kilépett, bent hagyva a `(0)` trunk-nulláját.
+
+**Mi romlott el pontosan:** a Pixel és a CAPI ugyanarról a látogatóról KÉT KÜLÖN
+hash-elt identitást adott a Metának. A hatás tehát **identity parity / user
+matching / EMQ / Enhanced Conversions match-rate** — nem a deduplikáció. A dedup
+az `(event_name, event_id)` páron áll, azt külön az **INV-C** védi, és az ép
+volt. (Egy korábbi megfogalmazásom „a dedup elromlott"-at írt; ez pontatlan.)
+
+A hívási pontok mind a `normalizeUserData`-n mennek át, tehát ez valódi
+felhasználói bemeneten futott.
 
 Miért nem derült ki: a meglévő `normalize.test.ts` **csak tiszta alakokat**
 fedett (`+447700900123`, `+44 7700 900123`) — `(0)`-t és pontot egyet sem.
