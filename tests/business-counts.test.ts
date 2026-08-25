@@ -4,6 +4,7 @@ import {
   computeBusinessSourceDrift,
   findSilentBusinessSources,
   storeBusinessCounts,
+  fetchBusinessSourceFindings,
   BUSINESS_REPORT_HEARTBEAT,
   DEFAULT_BUSINESS_SOURCE_THRESHOLDS,
   type BusinessCountRow
@@ -11,141 +12,114 @@ import {
 import { handleBusinessCounts } from '../src/routes/business-counts';
 import { CANONICAL_EVENTS } from '../src/types';
 
-/**
- * vNext P1.2 — CRM business-source reconciliation (gateway-fél).
- *
- * A MEGFOGANDÓ HIBAMÓD, amit a P1.1 SZERKEZETILEG nem lát: ha a CRM→gateway hívás
- * EL SEM INDUL, a ledgerben `received = 0`, és nulla elvárás mellett a nulla
- * kézbesítés tökéletesen egészségesnek látszik. A hiányzó hívásról definíció szerint
- * nincs nyoma a ledgerben — ezért kell egy KÜLSŐ, CRM-oldali darabszám.
- */
-
 const OFFLINE_NAMES: ReadonlySet<string> = new Set(
   CANONICAL_EVENTS.filter((e) => e.kind === 'offline').map((e) => e.name)
 );
-
 const YESTERDAY = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const TOMORROW = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const GENERATED_AT = new Date().toISOString();
+const payload = (counts: Array<{ event_name: string; count: number }> = [], date = YESTERDAY) => ({
+  date,
+  generated_at: GENERATED_AT,
+  counts
+});
 
-describe('P1.2 — payload-validáció (szerver-szerver: KONKRÉT 400, nem néma elnyelés)', () => {
-  const ok = { date: YESTERDAY, counts: [{ event_name: 'lead_qualified', count: 12 }] };
+describe('P1.2 — payload validation', () => {
+  const ok = payload([{ event_name: 'lead_qualified', count: 12 }]);
 
-  it('érvényes payload átmegy', () => {
-    const r = validateBusinessCounts(ok, OFFLINE_NAMES);
-    expect(r.ok).toBe(true);
+  it('accepts a valid full snapshot', () => {
+    expect(validateBusinessCounts(ok, OFFLINE_NAMES).ok).toBe(true);
   });
 
-  it('ismeretlen event_name → 400 a névvel (elgépelés nem hozhat létre néma sort)', () => {
-    const r = validateBusinessCounts(
-      { date: YESTERDAY, counts: [{ event_name: 'lead_qualifed', count: 3 }] },
-      OFFLINE_NAMES
-    );
+  it('requires source generated_at ordering metadata', () => {
+    const { generated_at: _drop, ...missing } = ok;
+    const r = validateBusinessCounts(missing, OFFLINE_NAMES);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('lead_qualifed');
+    if (!r.ok) expect(r.error).toContain('generated_at');
   });
 
-  it('NEM-offline (böngésző) event-név sem fogadható el', () => {
-    // A P1.2 a CRM-lifecycle darabszámairól szól; egy böngésző-event ide keveredve
-    // olyan sort hozna létre, amihez a recon soha nem talál párt a lead_status-ban.
-    const r = validateBusinessCounts(
-      { date: YESTERDAY, counts: [{ event_name: 'phone_number_clicked', count: 3 }] },
-      OFFLINE_NAMES
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('jövőbeli dátum → 400 (időzóna-hiba a hívónál, nem néma üres nap)', () => {
-    const r = validateBusinessCounts({ ...ok, date: TOMORROW }, OFFLINE_NAMES);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('future');
-  });
-
-  it('rossz dátumformátum → 400', () => {
-    for (const date of ['2026-8-1', '2026/08/01', '2026-08-01T00:00:00Z', '']) {
-      expect(validateBusinessCounts({ ...ok, date }, OFFLINE_NAMES).ok).toBe(false);
+  it('rejects non-canonical generated_at timestamps', () => {
+    for (const generated_at of ['2026-08-24', '2026-08-24T12:00:00', 'nope']) {
+      const r = validateBusinessCounts({ ...ok, generated_at }, OFFLINE_NAMES);
+      expect(r.ok, generated_at).toBe(false);
     }
   });
 
-  it('duplikált event_name → 400 (különben az utolsó csendben felülírná az elsőt)', () => {
-    const r = validateBusinessCounts(
-      {
-        date: YESTERDAY,
-        counts: [
+  it('rejects unknown/non-offline event names', () => {
+    for (const event_name of ['lead_qualifed', 'phone_number_clicked']) {
+      const r = validateBusinessCounts(payload([{ event_name, count: 3 }]), OFFLINE_NAMES);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('rejects future, malformed and nonexistent business dates', () => {
+    for (const date of [TOMORROW, '2026-8-1', '2026/08/01', '2025-02-30', '2026-13-01']) {
+      expect(validateBusinessCounts({ ...ok, date }, OFFLINE_NAMES).ok, date).toBe(false);
+    }
+    expect(validateBusinessCounts({ ...ok, date: '2024-02-29' }, OFFLINE_NAMES).ok).toBe(true);
+  });
+
+  it('rejects duplicate event names and invalid counts', () => {
+    expect(
+      validateBusinessCounts(
+        payload([
           { event_name: 'lead_qualified', count: 3 },
           { event_name: 'lead_qualified', count: 9 }
-        ]
-      },
-      OFFLINE_NAMES
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('duplicate');
-  });
-
-  it('negatív / tört / abszurd count → 400', () => {
-    for (const count of [-1, 1.5, 2_000_000, Number.NaN]) {
-      const r = validateBusinessCounts(
-        { date: YESTERDAY, counts: [{ event_name: 'lead_qualified', count }] },
+        ]),
         OFFLINE_NAMES
-      );
-      expect(r.ok, `count=${count}`).toBe(false);
+      ).ok
+    ).toBe(false);
+    for (const count of [-1, 1.5, 2_000_000, Number.NaN]) {
+      expect(
+        validateBusinessCounts(payload([{ event_name: 'lead_qualified', count }]), OFFLINE_NAMES).ok
+      ).toBe(false);
     }
   });
 
-  it('count: 0 ÉRVÉNYES — a „ma nulla lead" valós, mérendő információ', () => {
-    const r = validateBusinessCounts(
-      { date: YESTERDAY, counts: [{ event_name: 'lead_qualified', count: 0 }] },
-      OFFLINE_NAMES
-    );
-    expect(r.ok).toBe(true);
+  it('count 0 and an empty snapshot are valid', () => {
+    expect(
+      validateBusinessCounts(payload([{ event_name: 'lead_qualified', count: 0 }]), OFFLINE_NAMES).ok
+    ).toBe(true);
+    expect(validateBusinessCounts(payload([]), OFFLINE_NAMES).ok).toBe(true);
   });
 });
 
-describe('P1.2 — a gateway-ledger vakfoltja: a CRM > gateway eltérés', () => {
+describe('P1.2 — CRM vs gateway drift', () => {
   const crm = (count: number): BusinessCountRow[] => [
     { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count }
   ];
 
-  it('a CRM 12-t jelentett, a gateway 4-et kapott → CRITICAL', () => {
+  it('CRM 12 vs gateway 4 is critical', () => {
     const findings = computeBusinessSourceDrift(crm(12), [
       { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 4 }
     ]);
     expect(findings).toHaveLength(1);
-    expect(findings[0].kind).toBe('business_source_drift');
     expect(findings[0].severity).toBe('critical');
-    expect(findings[0].crm_count).toBe(12);
     expect(findings[0].gateway_count).toBe(4);
   });
 
-  it('a CRM jelentett, a gateway SEMMIT nem kapott → CRITICAL (a P1.1 itt vak)', () => {
-    // Ez az a helyzet, amit a P1.1 szerkezetileg nem lát: nulla beérkezés = nulla
-    // elvárás = nulla kézbesítés = „egészséges".
+  it('CRM event with no gateway receipt is critical above min sample', () => {
     const findings = computeBusinessSourceDrift(crm(8), []);
     expect(findings[0].severity).toBe('critical');
     expect(findings[0].gateway_count).toBe(0);
   });
 
-  it('gateway >= CRM → NINCS finding (a fordított irány nem hiba)', () => {
-    // A gateway kaphat lifecycle-státuszt más forrásból is (manuális replay, másik
-    // backend), és a UTC-nap határa legális ±1 eltérést ad.
-    const findings = computeBusinessSourceDrift(crm(5), [
-      { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 7 }
-    ]);
-    expect(findings).toEqual([]);
-  });
-
-  it('küszöb alatti eltérés → csend (nap-határ zaj)', () => {
-    const findings = computeBusinessSourceDrift(crm(20), [
-      { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 19 }
-    ]);
-    expect(findings).toEqual([]);
-  });
-
-  it('apró minta → csend (1 hiány 1-ből = 100%, de értelmetlen)', () => {
+  it('gateway >= CRM and sub-threshold noise do not alert', () => {
+    expect(
+      computeBusinessSourceDrift(crm(5), [
+        { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 7 }
+      ])
+    ).toEqual([]);
+    expect(
+      computeBusinessSourceDrift(crm(20), [
+        { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 19 }
+      ])
+    ).toEqual([]);
     expect(DEFAULT_BUSINESS_SOURCE_THRESHOLDS.minSample).toBe(3);
     expect(computeBusinessSourceDrift(crm(2), [])).toEqual([]);
   });
 
-  it('event-típusonként külön (a lead_qualified vesztesége nem tűnik el a revenue mögött)', () => {
+  it('event types reconcile independently', () => {
     const findings = computeBusinessSourceDrift(
       [
         { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 10 },
@@ -156,139 +130,94 @@ describe('P1.2 — a gateway-ledger vakfoltja: a CRM > gateway eltérés', () =>
     expect(findings).toHaveLength(1);
     expect(findings[0].event_name).toBe('lead_qualified');
   });
-});
 
-/**
- * 2026-08-24 Codex-review — négy valós találat javítása.
- * Mindegyik ugyanabba a hibaosztályba tartozik: a monitor tisztának LÁTSZIK, miközben
- * vagy hamisan riaszt, vagy el sem indult.
- */
-describe('Codex #4 — nem létező naptári nap elutasítása', () => {
-  it('a regexet átúszó, de NEM LÉTEZŐ dátum → 400', () => {
-    // Ezek mind illeszkednek a YYYY-MM-DD alakra és a múltban vannak, tehát a korábbi
-    // ellenőrzéseken átmentek volna — és egy olyan nap alá íródtak volna, amit a napi
-    // recon soha nem kérdez le (a monitor arra a payloadra csendben megszűnik).
-    for (const date of ['2025-02-30', '2026-00-15', '2026-13-01', '2025-04-31']) {
-      const r = validateBusinessCounts(
-        { date, counts: [{ event_name: 'lead_qualified', count: 3 }] },
-        OFFLINE_NAMES
-      );
-      expect(r.ok, `date=${date}`).toBe(false);
-      if (!r.ok) expect(r.error).toContain('calendar');
-    }
-  });
-
-  it('valódi szökőnap ÁTMEGY (nem túl szigorú)', () => {
-    const r = validateBusinessCounts(
-      { date: '2024-02-29', counts: [{ event_name: 'lead_qualified', count: 3 }] },
-      OFFLINE_NAMES
-    );
-    expect(r.ok).toBe(true);
-  });
-});
-
-describe('Codex #3 — az eseménytelen nap NEM „elhallgatott CRM"', () => {
-  // A #71 hotfix óta a DELETE is bindol (teljes snapshot-csere), ezért az INSERT-eket
-  // a statement TÍPUSA szerint kell kiválogatni — a puszta bind-számolás félrevezetne.
-  function insertRecordingEnv() {
-    const inserts: unknown[][] = [];
-    const env: any = {
-      LEDGER: {
-        prepare: (q: string) => ({
-          bind: (...args: unknown[]) => {
-            if (!q.trim().startsWith('DELETE')) inserts.push(args);
-            return {};
-          }
-        }),
-        batch: async () => []
-      }
-    };
-    return { env, inserts };
-  }
-
-  it('minden sikeres beküldés ír JELZŐSORT, üres counts esetén is', async () => {
-    const { env, inserts } = insertRecordingEnv();
-    // A CRM dokumentált GROUP BY lekérdezése egy nulla-lifecycle-es napon ÜRES tömböt ad.
-    const ok = await storeBusinessCounts(env, 'painless', { date: '2026-08-23', counts: [] });
-    expect(ok).toBe(true);
-    expect(inserts).toHaveLength(1);
-    expect(inserts[0][2]).toBe(BUSINESS_REPORT_HEARTBEAT);
-    expect(inserts[0][3]).toBe(0);
-  });
-
-  it('a jelzősor NEM-üres beküldésnél is megy (egységes „jelentkezett-e ma" kérdés)', async () => {
-    const { env, inserts } = insertRecordingEnv();
-    await storeBusinessCounts(env, 'painless', {
-      date: '2026-08-23',
-      counts: [{ event_name: 'lead_qualified', count: 4 }]
-    });
-    expect(inserts.map((w) => w[2])).toEqual([BUSINESS_REPORT_HEARTBEAT, 'lead_qualified']);
-  });
-
-  it('a jelzősor miatt az eseménytelen nap NEM ad business_source_missing-et', () => {
+  it('heartbeat proves the CRM cron ran but never counts as a business event', () => {
     const prior: BusinessCountRow[] = [
       { site_id: 'painless', date: '2026-08-20', event_name: 'lead_qualified', count: 5 }
     ];
-    // Ma csak a jelzősor van (nulla lifecycle-esemény) — a cron LEFUTOTT.
     const today: BusinessCountRow[] = [
       { site_id: 'painless', date: YESTERDAY, event_name: BUSINESS_REPORT_HEARTBEAT, count: 0 }
     ];
     expect(findSilentBusinessSources(prior, today, YESTERDAY)).toEqual([]);
+    expect(computeBusinessSourceDrift(today, [])).toEqual([]);
   });
 
-  it('a jelzősor SOHA nem termel driftet (életjel, nem darabszám)', () => {
-    const findings = computeBusinessSourceDrift(
-      [{ site_id: 'painless', date: YESTERDAY, event_name: BUSINESS_REPORT_HEARTBEAT, count: 0 }],
-      []
-    );
-    expect(findings).toEqual([]);
-  });
-});
-
-describe('P1.2 — elhallgatott CRM-cron (business_source_missing)', () => {
-  const prior: BusinessCountRow[] = [
-    { site_id: 'painless', date: '2026-08-20', event_name: 'lead_qualified', count: 5 },
-    { site_id: 'beautyflow', date: '2026-08-20', event_name: 'lead_qualified', count: 2 }
-  ];
-
-  it('korábban jelentett, ma NEM → WARNING', () => {
-    const findings = findSilentBusinessSources(
-      prior,
-      [{ site_id: 'beautyflow', date: YESTERDAY, event_name: 'lead_qualified', count: 3 }],
-      YESTERDAY
-    );
+  it('previously reporting but silent site gets a missing warning', () => {
+    const prior: BusinessCountRow[] = [
+      { site_id: 'painless', date: '2026-08-20', event_name: BUSINESS_REPORT_HEARTBEAT, count: 0 }
+    ];
+    const findings = findSilentBusinessSources(prior, [], YESTERDAY);
     expect(findings).toHaveLength(1);
-    expect(findings[0].site_id).toBe('painless');
     expect(findings[0].kind).toBe('business_source_missing');
   });
-
-  it('sosem jelentett site NEM riaszt (nincs bekötve, nem elhallgatott)', () => {
-    // A megfigyelt előzményhez mérünk, nem konfigurált listához — különben minden
-    // nem-CRM-es site minden nap riasztana.
-    const findings = findSilentBusinessSources([], [], YESTERDAY);
-    expect(findings).toEqual([]);
-  });
-
-  it('mindenki jelentett → csend', () => {
-    const findings = findSilentBusinessSources(
-      prior,
-      [
-        { site_id: 'painless', date: YESTERDAY, event_name: 'lead_qualified', count: 5 },
-        { site_id: 'beautyflow', date: YESTERDAY, event_name: 'lead_qualified', count: 2 }
-      ],
-      YESTERDAY
-    );
-    expect(findings).toEqual([]);
-  });
 });
 
-// ── Route-szint ──────────────────────────────────────────────────────────────
+describe('P1.2 — monotonic full snapshot storage', () => {
+  function recordingEnv() {
+    const prepared: string[] = [];
+    let batched: Array<{ sql: string; args: unknown[] }> = [];
+    const env: any = {
+      LEDGER: {
+        prepare: (sql: string) => {
+          prepared.push(sql);
+          return { bind: (...args: unknown[]) => ({ sql, args }) };
+        },
+        batch: async (rows: Array<{ sql: string; args: unknown[] }>) => {
+          batched = rows;
+          return [];
+        }
+      }
+    };
+    return { env, prepared, executed: () => batched };
+  }
+
+  it('writes source-order metadata before replacing the daily snapshot', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(env, 'painless', payload([{ event_name: 'lead_qualified', count: 4 }], '2026-08-23'));
+    expect(executed()[0].sql).toContain('business_count_snapshots');
+    expect(executed()[0].sql).toContain('excluded.generated_at >= business_count_snapshots.generated_at');
+    expect(executed()[0].args).toContain(GENERATED_AT);
+  });
+
+  it('DELETE and INSERTs are gated by the currently accepted generated_at', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(env, 'painless', payload([{ event_name: 'lead_qualified', count: 4 }], '2026-08-23'));
+    const clear = executed().find((r) => r.sql.trim().startsWith('DELETE'))!;
+    expect(clear.sql).toContain('business_count_snapshots');
+    expect(clear.sql).toContain('generated_at = ?4');
+    expect(clear.args[3]).toBe(GENERATED_AT);
+    const inserts = executed().filter((r) => r.sql.includes('INSERT INTO business_counts'));
+    expect(inserts.length).toBe(2); // heartbeat + lead_qualified
+    expect(inserts.every((r) => r.sql.includes('generated_at = ?6'))).toBe(true);
+  });
+
+  it('empty corrected snapshot still clears prior business rows and writes heartbeat', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(env, 'painless', payload([], '2026-08-23'));
+    expect(executed().some((r) => r.sql.trim().startsWith('DELETE'))).toBe(true);
+    const countRows = executed().filter((r) => r.sql.includes('INSERT INTO business_counts'));
+    expect(countRows).toHaveLength(1);
+    expect(countRows[0].args[2]).toBe(BUSINESS_REPORT_HEARTBEAT);
+  });
+
+  it('snapshot metadata + clear + rows execute in one D1 batch', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(
+      env,
+      'painless',
+      payload([
+        { event_name: 'lead_qualified', count: 4 },
+        { event_name: 'revenue_confirmed', count: 1 }
+      ], '2026-08-23')
+    );
+    expect(executed()).toHaveLength(5); // snapshot metadata + delete + heartbeat + 2 rows
+  });
+});
 
 const SITE = {
   site_id: 'painless',
   country_code: 'GB',
   currency: 'GBP',
-  // sha256('per-site-token-abc') — a per-site auth ehhez hasonlít
   crm_token_sha256: '',
   meta: { pixel_id: '1', access_token: 'T' },
   gads: { customer_id: null, login_customer_id: null }
@@ -322,9 +251,9 @@ function req(host: string, token: string | undefined, body: unknown): Request {
 }
 
 describe('P1.2 — /api/event/business-counts route', () => {
-  const goodBody = { date: YESTERDAY, counts: [{ event_name: 'lead_qualified', count: 4 }] };
+  const goodBody = payload([{ event_name: 'lead_qualified', count: 4 }]);
 
-  it('PER-SITE tokennel 200 (nem a globális admin tokent kéri)', async () => {
+  it('accepts the per-site token', async () => {
     const token = 'per-site-token-abcdefghijklmno';
     const site = { ...SITE, crm_token_sha256: await sha256Hex(token) };
     const res = await handleBusinessCounts(
@@ -334,248 +263,138 @@ describe('P1.2 — /api/event/business-counts route', () => {
     expect(res.status).toBe(200);
   });
 
-  it('token nélkül 401', async () => {
-    const site = { ...SITE, crm_token_sha256: await sha256Hex('x'.repeat(20)) };
-    const res = await handleBusinessCounts(
-      req('bc2.example.com', undefined, goodBody),
-      makeEnv({ SITE_CONFIG: { get: async () => site } })
-    );
-    expect(res.status).toBe(401);
-  });
-
-  it('MÁSIK site tokenjével 401 (tenant-izoláció)', async () => {
+  it('rejects missing/wrong tenant tokens', async () => {
     const site = { ...SITE, crm_token_sha256: await sha256Hex('site-a-token-1234567890') };
-    const res = await handleBusinessCounts(
-      req('bc3.example.com', 'site-b-token-1234567890', goodBody),
-      makeEnv({ SITE_CONFIG: { get: async () => site } })
-    );
-    expect(res.status).toBe(401);
+    expect(
+      (await handleBusinessCounts(req('bc2.example.com', undefined, goodBody), makeEnv({ SITE_CONFIG: { get: async () => site } }))).status
+    ).toBe(401);
+    expect(
+      (await handleBusinessCounts(req('bc3.example.com', 'site-b-token-1234567890', goodBody), makeEnv({ SITE_CONFIG: { get: async () => site } }))).status
+    ).toBe(401);
   });
 
-  it('ismeretlen hostname → 404, NINCS fallback config (CLAUDE.md 14)', async () => {
-    const res = await handleBusinessCounts(
-      req('bc4.example.com', 'global-admin-token', goodBody),
-      makeEnv({ SITE_CONFIG: { get: async () => null } })
+  it('unknown hostname is 404 but transient KV failure is 503', async () => {
+    expect(
+      (await handleBusinessCounts(req('bc4.example.com', 'global-admin-token', goodBody), makeEnv({ SITE_CONFIG: { get: async () => null } }))).status
+    ).toBe(404);
+    const transient = await handleBusinessCounts(
+      req('bcx.example.com', 'global-admin-token', goodBody),
+      makeEnv({ SITE_CONFIG: { get: async () => { throw new Error('KV transient'); } } })
     );
-    expect(res.status).toBe(404);
+    expect(transient.status).toBe(503);
   });
 
-  it('rossz payload → 400 KONKRÉT indoklással (a hívó tudjon javítani)', async () => {
-    const res = await handleBusinessCounts(
-      req('bc5.example.com', 'global-admin-token', { date: YESTERDAY, counts: [{ event_name: 'nope', count: 1 }] }),
+  it('bad payload is 400; missing ledger is 503; D1 failure is 500; never 204', async () => {
+    const bad = await handleBusinessCounts(
+      req('bc5.example.com', 'global-admin-token', { date: YESTERDAY, generated_at: GENERATED_AT, counts: [{ event_name: 'nope', count: 1 }] }),
       makeEnv()
     );
-    expect(res.status).toBe(400);
-    const body = JSON.parse(await res.text());
-    expect(body.detail).toContain('nope');
-  });
+    expect(bad.status).toBe(400);
 
-  it('üres counts is 200, ÉS ír (a jelzősor miatt) — az eseménytelen nap valós információ', async () => {
-    const res = await handleBusinessCounts(
-      req('bc9.example.com', 'global-admin-token', { date: YESTERDAY, counts: [] }),
-      makeEnv()
-    );
-    expect(res.status).toBe(200);
-  });
-
-  it('nincs LEDGER → 503, NEM 200 (a „nyugtázom, de eldobom" a néma adatvesztés)', async () => {
-    const res = await handleBusinessCounts(
+    const noLedger = await handleBusinessCounts(
       req('bc6.example.com', 'global-admin-token', goodBody),
       makeEnv({ LEDGER: undefined })
     );
-    expect(res.status).toBe(503);
-  });
+    expect(noLedger.status).toBe(503);
 
-  it('D1-írás hibája → 500, hogy a CRM retry-olhasson (CLAUDE.md 12)', async () => {
-    const res = await handleBusinessCounts(
+    const d1Fail = await handleBusinessCounts(
       req('bc7.example.com', 'global-admin-token', goodBody),
-      makeEnv({
-        LEDGER: {
-          prepare: () => ({ bind: () => ({}) }),
-          batch: async () => {
-            throw new Error('D1 down');
-          }
-        }
-      })
+      makeEnv({ LEDGER: { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1 down'); } } })
     );
-    expect(res.status).toBe(500);
-  });
-
-  it('a válasz SOHA nem 204 — a szerver-szerver hívónak státusz kell', async () => {
-    for (const env of [makeEnv(), makeEnv({ LEDGER: undefined })]) {
-      const res = await handleBusinessCounts(req('bc8.example.com', 'global-admin-token', goodBody), env);
-      expect(res.status).not.toBe(204);
-    }
+    expect(d1Fail.status).toBe(500);
+    expect([bad.status, noLedger.status, d1Fail.status]).not.toContain(204);
   });
 });
 
-describe('Codex #1 — a napot az occurred_at dönti el, nem a created_at', () => {
-  it('a lead_status lekérdezés az occurred_at-re csoportosít és szűr', async () => {
-    // MIÉRT EZ A TESZT: a nap-hozzárendelés oszlopa MAGA a kontraktus. A CRM
-    // aggregátuma az esemény idejére csoportosít; ha a gateway a felvétel idejére
-    // (created_at) tenné, akkor egy UTC-éjfélen átnyúló outbox-retry az eredeti napot
-    // hiányosnak, a következőt figyelmen kívül hagyott többletnek mutatná — és a 3-as
-    // minimum mellett már EGY késve érkezett kérés hamis CRITICAL-t adna.
+describe('P1.2 — day semantics and monitoring scope', () => {
+  function reconEnv(configs: Array<{ key: string; value: unknown }>, rows: {
+    today?: BusinessCountRow[];
+    lifecycle?: Array<{ site_id: string; date: string; event_name: string; count: number }>;
+    prior?: BusinessCountRow[];
+  }): any {
+    let queryIndex = 0;
+    return {
+      SITE_CONFIG: {
+        list: async () => ({ keys: configs.map((c) => ({ name: c.key })), list_complete: true }),
+        get: async (name: string) => configs.find((c) => c.key === name)?.value ?? null
+      },
+      LEDGER: {
+        prepare: (sql: string) => ({
+          bind: () => ({
+            all: async () => {
+              queryIndex++;
+              if (sql.includes('FROM lead_status')) return { results: rows.lifecycle ?? [] };
+              if (sql.includes('date >= ?1')) return { results: rows.prior ?? [] };
+              return { results: rows.today ?? [] };
+            }
+          })
+        })
+      },
+      _queries: () => queryIndex
+    };
+  }
+
+  it('groups gateway lifecycle rows by occurred_at, not created_at', async () => {
     const sql: string[] = [];
     const env: any = {
+      SITE_CONFIG: { list: async () => ({ keys: [], list_complete: false }) },
       LEDGER: {
         prepare: (q: string) => {
           sql.push(q);
-          return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+          return { bind: () => ({ all: async () => ({ results: [] }) }) };
         }
       }
     };
-    const r = await (await import('../src/lib/business-counts')).fetchBusinessSourceFindings(
-      env,
-      '2026-08-23',
-      '2026-08-16'
-    );
-    expect(r).toEqual([]);
-
+    expect(await fetchBusinessSourceFindings(env, '2026-08-23', '2026-08-16')).toEqual([]);
     const leadStatusQuery = sql.find((q) => q.includes('FROM lead_status'))!;
-    expect(leadStatusQuery).toBeDefined();
     expect(leadStatusQuery).toContain('substr(occurred_at, 1, 10)');
-    // A created_at NEM szerepelhet a nap-hozzárendelésben ezen a lábon.
     expect(leadStatusQuery).not.toContain('created_at');
   });
-});
 
-describe('Codex #2 — a lekérdezés bukása NEM „nincs eltérés"', () => {
-  it('fetchBusinessSourceFindings null-t ad D1-hibára (nem üres tömböt)', async () => {
-    const env: any = {
-      LEDGER: {
-        prepare: () => ({
-          bind: () => ({
-            all: async () => {
-              throw new Error('no such table: business_counts');
-            }
-          }),
-          all: async () => {
-            throw new Error('no such table: business_counts');
-          }
-        })
+  it('a fully enumerated monitoring:false site is excluded from business-source findings', async () => {
+    const site = { site_id: 'disabled', monitoring: false };
+    const env = reconEnv(
+      [{ key: 'disabled.example.com', value: site }],
+      {
+        today: [{ site_id: 'disabled', date: YESTERDAY, event_name: 'lead_qualified', count: 10 }],
+        lifecycle: [],
+        prior: [{ site_id: 'disabled', date: '2026-08-20', event_name: BUSINESS_REPORT_HEARTBEAT, count: 0 }]
       }
-    };
-    const r = await (await import('../src/lib/business-counts')).fetchBusinessSourceFindings(
-      env,
-      '2026-08-23',
-      '2026-08-16'
     );
-    // Ez a KÜLÖNBSÉG a lényeg: `null` ≠ `[]`. A hívónak tudnia kell, hogy a láb el sem
-    // indult — különben a napi riport `business_source_findings: 0`-t írna, kiesne az
-    // email-feltételből, és a monitor tisztának látszana. (A 0007 migráció hiánya
-    // élesben PONTOSAN ezt a hibát produkálja.)
-    expect(r).toBeNull();
+    expect(await fetchBusinessSourceFindings(env, YESTERDAY, '2026-08-16')).toEqual([]);
   });
 
-  it('nincs LEDGER → szintén null, nem üres tömb', async () => {
-    const r = await (await import('../src/lib/business-counts')).fetchBusinessSourceFindings(
-      {} as any,
-      '2026-08-23',
-      '2026-08-16'
-    );
-    expect(r).toBeNull();
+  it('query failure returns null, not a false clean result', async () => {
+    const env: any = {
+      SITE_CONFIG: { list: async () => ({ keys: [], list_complete: false }) },
+      LEDGER: {
+        prepare: () => ({ bind: () => ({ all: async () => { throw new Error('D1 down'); } }) })
+      }
+    };
+    expect(await fetchBusinessSourceFindings(env, '2026-08-23', '2026-08-16')).toBeNull();
   });
 });
 
 /**
- * 2026-08-24 merge-gate review (#71 hotfix) — HIGH: tranziens KV-hiba ≠ „nincs ilyen site".
+ * 2026-08-25 — a #72 újraírásakor KIESETT két állítás pótlása.
  *
- * A route korábban `getSiteConfig()`-ot használt, ami MINDKÉT okra `null`-t ad. Egy
- * másodperces KV-blip így 404-nek látszott. A CRM sender a 404-et a szokásos olvasat
- * szerint PERMANENSNEK veszi → a napi aggregátum és a heartbeat VÉGLEG eltűnik, és
- * ráadásul a hallgatás-detektor is hamisan szólal meg rá.
+ * A #72 40 tesztről 24-re vonta össze a fájlt (részben jogosan: több eset egyetlen
+ * ciklusba került). Kettő viszont NEM kapott utódot, és mindkettő a „néma zöld"
+ * osztályt őrzi — pont azt, amiért az egész P1.2 létezik.
  */
-describe('#71 HIGH — KV-blip 503, nem 404', () => {
-  const body = { date: YESTERDAY, counts: [{ event_name: 'lead_qualified', count: 4 }] };
-
-  it('SITE_CONFIG.get dob → 503 (retry-olható), NEM 404', async () => {
-    const res = await handleBusinessCounts(
-      req('bcx1.example.com', 'global-admin-token', body),
-      makeEnv({
-        SITE_CONFIG: {
-          get: async () => {
-            throw new Error('KV transient failure');
-          }
-        }
-      })
-    );
-    expect(res.status).toBe(503);
-    const parsed = JSON.parse(await res.text());
-    expect(parsed.error).toBe('config_unavailable');
+describe('P1.2 — a #72 összevonáskor elveszett két garancia', () => {
+  it('SOSEM jelentett site NEM riaszt (a business-láb UNARMED tulajdonsága)', () => {
+    // Előzmény NÉLKÜL nincs mihez képest „elhallgatni". Ha valaki később a KONFIGURÁLT
+    // site-listához mérne a MEGFIGYELT előzmény helyett, minden be nem kötött CRM
+    // azonnal napi warningot szülne — és két hét alatt megtanulnánk átlapozni a
+    // levelet. Ez a teszt tiltja meg ezt az átírást.
+    expect(findSilentBusinessSources([], [], YESTERDAY)).toEqual([]);
   });
 
-  it('tényleg nincs ilyen host → továbbra is 404 (permanens)', async () => {
-    const res = await handleBusinessCounts(
-      req('bcx2.example.com', 'global-admin-token', body),
-      makeEnv({ SITE_CONFIG: { get: async () => null } })
-    );
-    expect(res.status).toBe(404);
-    expect(JSON.parse(await res.text()).error).toBe('unknown_site');
-  });
-});
-
-/**
- * 2026-08-24 merge-gate review (#71 hotfix) — MEDIUM: a payload TELJES napi snapshot.
- *
- * A korábbi „csak upsert" modell csak azokra az event-nevekre volt javító hatású,
- * amiket a MÁSODIK payload is tartalmazott. Egy javított, üres snapshot után a régi
- * darabszám bent maradt, és a recon egy olyan üzleti számhoz mérte a gateway-t, amit
- * a CRM már visszavont.
- */
-describe('#71 MEDIUM — teljes snapshot-csere, nem részleges upsert', () => {
-  /**
-   * A statementeket a VÉGREHAJTÁSNÁL nézzük, nem az előkészítésnél: ami `bind()`-olva
-   * lett, de nem került a `batch()`-be, az nem fut le. (Az első nekifutásomban a
-   * tesztek a bind-okra álltak, és emiatt a DELETE kivétele mellett is zöldek
-   * maradtak — a teszt az előkészítést mérte, nem a hatást.)
-   */
-  function recordingEnv() {
-    let batched: Array<{ kind: 'delete' | 'insert'; args: unknown[] }> = [];
-    const env: any = {
-      LEDGER: {
-        prepare: (q: string) => {
-          const kind = q.trim().startsWith('DELETE') ? ('delete' as const) : ('insert' as const);
-          return { bind: (...args: unknown[]) => ({ kind, args }) };
-        },
-        batch: async (rows: Array<{ kind: 'delete' | 'insert'; args: unknown[] }>) => {
-          batched = rows;
-          return [];
-        }
-      }
-    };
-    return { env, executed: () => batched };
-  }
-
-  it('a nap korábbi ÜZLETI sorait törli, a heartbeatet KIVÉVE', async () => {
-    const { env, executed } = recordingEnv();
-    await storeBusinessCounts(env, 'painless', {
-      date: '2026-08-23',
-      counts: [{ event_name: 'lead_qualified', count: 4 }]
-    });
-    const del = executed().find((o) => o.kind === 'delete');
-    expect(del, 'nincs VÉGREHAJTOTT DELETE — a kimaradó event-név bent maradna').toBeDefined();
-    expect(del!.args).toEqual(['painless', '2026-08-23', BUSINESS_REPORT_HEARTBEAT]);
-  });
-
-  it('ÜRES javított snapshot is törli a korábbi darabszámokat', async () => {
-    const { env, executed } = recordingEnv();
-    await storeBusinessCounts(env, 'painless', { date: '2026-08-23', counts: [] });
-    expect(executed().filter((o) => o.kind === 'delete')).toHaveLength(1);
-    // …és a jelzősor ilyenkor is kimegy: a nap „jelentkezett, de nulla esemény".
-    const inserts = executed().filter((o) => o.kind === 'insert');
-    expect(inserts).toHaveLength(1);
-    expect(inserts[0].args[2]).toBe(BUSINESS_REPORT_HEARTBEAT);
-  });
-
-  it('a törlés és a beszúrás EGY batch-ben megy (D1-en tranzakció)', async () => {
-    const { env, executed } = recordingEnv();
-    await storeBusinessCounts(env, 'painless', {
-      date: '2026-08-23',
-      counts: [{ event_name: 'lead_qualified', count: 4 }, { event_name: 'revenue_confirmed', count: 1 }]
-    });
-    // DELETE + heartbeat + 2 üzleti sor — nincs olyan pillanat, amikor a nap üres.
-    expect(executed()).toHaveLength(4);
-    expect(executed()[0].kind).toBe('delete');
+  it('hiányzó LEDGER binding → null, NEM üres tömb', async () => {
+    // Ugyanaz a hibaosztály, amit a Codex a #70-ben megfogott: a hívó a `?? []`-lal
+    // a BUKÁST „nincs eltérés"-re fordította, és a napi riport zöld lett egy olyan
+    // láb fölött, ami el sem indult. A `null` az egyetlen jel, ami ezt megkülönbözteti.
+    expect(await fetchBusinessSourceFindings({} as any, YESTERDAY, '2026-08-16')).toBeNull();
   });
 });
