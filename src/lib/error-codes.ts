@@ -73,6 +73,11 @@ export enum TrackingErrorCode {
   // a kliens túl nagy payloadot küldött, holott a kapcsolat szakadt meg. Külön kód,
   // hogy egy hálózati romlás ne „nagy body" hullámnak látszódjon a riportban.
   REQUEST_BODY_READ_FAILED = 'TRK-400-021',
+  // A lead-status hívó olyan státuszt küldött, amihez NINCS kanonikus
+  // event-leképezés. Eddig ez volt az EGYETLEN elutasítási ág az offline úton
+  // kód, strukturált log és ledger-nyom nélkül: a CRM 400-at kapott, a
+  // gateway-oldalon pedig semmi nyoma nem maradt, hogy egy konverzió elveszett.
+  UNSUPPORTED_LEAD_STATUS_MAPPING = 'TRK-400-022',
 
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
@@ -111,6 +116,16 @@ export enum TrackingErrorCode {
   GADS_INVALID_CONVERSION_ACTION = 'TRK-800-008',
   GADS_NO_REFRESH_TOKEN = 'TRK-800-009',
   GADS_RATE_LIMITED = 'TRK-800-010',
+  // 011-016 — az OAuth-bukás OKAI. Korábban mind a hat a GADS_NO_ACCESS_TOKEN
+  // (TRK-800-001) gyűjtőbe esett, ami az operátornak annyit mondott: „nincs
+  // token". A hat ok viszont HAT KÜLÖNBÖZŐ teendő: secretet beírni, újra
+  // engedélyezni, várni, vagy Google-státuszt nézni.
+  GADS_OAUTH_CLIENT_ID_MISSING = 'TRK-800-011',
+  GADS_OAUTH_CLIENT_SECRET_MISSING = 'TRK-800-012',
+  GADS_REFRESH_TOKEN_REVOKED = 'TRK-800-013',
+  GADS_OAUTH_HTTP_ERROR = 'TRK-800-014',
+  GADS_OAUTH_MALFORMED_RESPONSE = 'TRK-800-015',
+  GADS_OAUTH_TIMEOUT = 'TRK-800-016',
 
   DATAMANAGER_API_TIMEOUT = 'TRK-840-001',
   DATAMANAGER_API_NETWORK_ERROR = 'TRK-840-002',
@@ -125,6 +140,20 @@ export enum TrackingErrorCode {
   // uploadtól (ledger 'accepted', uploaded_to_gads:true), és a rendszer csendben
   // zöldet mutatna nulla rögzített konverzió fölött.
   DATAMANAGER_VALIDATE_ONLY = 'TRK-840-008',
+  // 009-014 — a TRK-840-003 (DATAMANAGER_API_REJECTED) gyűjtő felbontása.
+  // Addig egyetlen `warning` súlyú kód nyelte el a validációs hibát, a
+  // vendor-kiesést és a jogosultsági problémát: a ledgerben egy Google-outage
+  // megkülönböztethetetlen volt egy véglegesen rossz payloadtól, holott az
+  // egyik RETRYABLE, a másik TERMINAL.
+  DATAMANAGER_PERMISSION_DENIED = 'TRK-840-009',
+  DATAMANAGER_VALIDATION_FAILED = 'TRK-840-010',
+  DATAMANAGER_SERVER_ERROR = 'TRK-840-011',
+  // 2xx, de a törzs nem értelmezhető JSON. KRITIKUS: eddig `{}`-ra esett vissza,
+  // és a hívás `accepted`-ként, `conversions_processed:1`-gyel könyvelődött —
+  // néma siker ismeretlen vendor-állapot fölött (§17).
+  DATAMANAGER_MALFORMED_RESPONSE = 'TRK-840-012',
+  DATAMANAGER_INVALID_CLICK_ID = 'TRK-840-013',
+  DATAMANAGER_RESPONSE_NO_REQUEST_ID = 'TRK-840-014',
 
   MSADS_DISPATCH_FAILED = 'TRK-810-001',
   MSADS_API_TIMEOUT = 'TRK-810-002',
@@ -291,6 +320,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.INVALID_TURNSTILE_TOKEN]: 'Turnstile validation API rejected token',
   [TrackingErrorCode.TURNSTILE_API_UNAVAILABLE]: 'Turnstile validation API returned non-2xx',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'Lead-status payload missing or invalid fields',
+  [TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING]:
+    'Lead status has no canonical event mapping — the caller sent a status this build does not know',
   [TrackingErrorCode.LEAD_STATUS_UNAUTHORIZED]: 'Lead-status request failed admin authentication',
   [TrackingErrorCode.ADMIN_UNAUTHORIZED]: 'Admin API request failed authentication or was rate-limited',
   [TrackingErrorCode.DEGRADED_TOKENLESS_ACCEPTED]:
@@ -351,10 +382,34 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.GADS_INVALID_CONVERSION_ACTION]: 'Conversion action ID does not exist',
   [TrackingErrorCode.GADS_NO_REFRESH_TOKEN]: 'No refresh token in KV for customer (run OAuth flow)',
   [TrackingErrorCode.GADS_RATE_LIMITED]: 'Google Ads API rate limit exceeded',
+  [TrackingErrorCode.GADS_OAUTH_CLIENT_ID_MISSING]:
+    'GADS_OAUTH_CLIENT_ID secret is missing — set it on the Worker, the token request cannot succeed without it',
+  [TrackingErrorCode.GADS_OAUTH_CLIENT_SECRET_MISSING]:
+    'GADS_OAUTH_CLIENT_SECRET secret is missing — set it on the Worker',
+  [TrackingErrorCode.GADS_REFRESH_TOKEN_REVOKED]:
+    'Refresh token expired or revoked (invalid_grant) — the OAuth consent flow must be re-run',
+  [TrackingErrorCode.GADS_OAUTH_HTTP_ERROR]:
+    'Google OAuth token endpoint returned a non-2xx status (not invalid_grant)',
+  [TrackingErrorCode.GADS_OAUTH_MALFORMED_RESPONSE]:
+    'Google OAuth token endpoint response was not valid JSON or carried no access_token',
+  [TrackingErrorCode.GADS_OAUTH_TIMEOUT]: 'Google OAuth token request exceeded the 5s timeout',
   [TrackingErrorCode.DATAMANAGER_API_TIMEOUT]: 'Data Manager API call exceeded 5s timeout',
   [TrackingErrorCode.DATAMANAGER_API_NETWORK_ERROR]: 'Network error reaching Data Manager API',
-  [TrackingErrorCode.DATAMANAGER_API_REJECTED]: 'Data Manager API returned non-2xx with error response',
+  [TrackingErrorCode.DATAMANAGER_API_REJECTED]:
+    'Data Manager API returned a non-2xx error that matches no more specific class (residual bucket)',
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'Data Manager API rejected authentication (401)',
+  [TrackingErrorCode.DATAMANAGER_PERMISSION_DENIED]:
+    'Data Manager API denied permission (403) — the OAuth scope or the account access is wrong, NOT an expired token',
+  [TrackingErrorCode.DATAMANAGER_VALIDATION_FAILED]:
+    'Data Manager rejected the payload as invalid (INVALID_ARGUMENT / fieldViolations) — permanent, retry cannot fix it',
+  [TrackingErrorCode.DATAMANAGER_SERVER_ERROR]:
+    'Data Manager API returned 5xx — vendor-side outage, RETRYABLE (distinct from a permanently bad payload)',
+  [TrackingErrorCode.DATAMANAGER_MALFORMED_RESPONSE]:
+    'Data Manager returned 2xx with an unparseable body — the delivery state is UNKNOWN, so it is NOT booked as accepted',
+  [TrackingErrorCode.DATAMANAGER_INVALID_CLICK_ID]:
+    'Click identifier (gclid/gbraid/wbraid) is malformed — dropped before the send so it cannot cause a blanket 400',
+  [TrackingErrorCode.DATAMANAGER_RESPONSE_NO_REQUEST_ID]:
+    'Data Manager 2xx carried no requestId — accepted on the HTTP status, but the vendor trace is missing',
   [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'Data Manager API rate limit exceeded',
   [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]:
     'Data Manager event skipped: no user identifiers and no click ID (would be a permanent 400)',
@@ -467,6 +522,13 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_DEVELOPER_TOKEN_INVALID]: 'critical',
   [TrackingErrorCode.DATAMANAGER_AUTH_REJECTED]: 'critical',
   [TrackingErrorCode.DATAMANAGER_NOT_ALLOWLISTED]: 'critical',
+  [TrackingErrorCode.DATAMANAGER_PERMISSION_DENIED]: 'critical',
+  // Egy értelmezhetetlen vendor-válasz azt jelenti, hogy NEM TUDJUK, mi történt
+  // a konverzióval. Az ismeretlen állapot nem „warning", mert némán zöldülhetne.
+  [TrackingErrorCode.DATAMANAGER_MALFORMED_RESPONSE]: 'critical',
+  [TrackingErrorCode.GADS_OAUTH_CLIENT_ID_MISSING]: 'critical',
+  [TrackingErrorCode.GADS_OAUTH_CLIENT_SECRET_MISSING]: 'critical',
+  [TrackingErrorCode.GADS_REFRESH_TOKEN_REVOKED]: 'critical',
   [TrackingErrorCode.FANOUT_SETUP_FAILED]: 'critical',
   // A halott offline business-lab ugyanaz a karkep, mint a hianyzo config-blokk:
   // a penz nem er celba, es magatol soha nem javul meg.
@@ -489,6 +551,14 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'warning',
   [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]: 'warning',
   [TrackingErrorCode.DATAMANAGER_VALIDATE_ONLY]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_VALIDATION_FAILED]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_SERVER_ERROR]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_INVALID_CLICK_ID]: 'warning',
+  [TrackingErrorCode.DATAMANAGER_RESPONSE_NO_REQUEST_ID]: 'warning',
+  [TrackingErrorCode.GADS_OAUTH_HTTP_ERROR]: 'warning',
+  [TrackingErrorCode.GADS_OAUTH_MALFORMED_RESPONSE]: 'warning',
+  [TrackingErrorCode.GADS_OAUTH_TIMEOUT]: 'warning',
+  [TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING]: 'warning',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'warning',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'warning',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'warning',

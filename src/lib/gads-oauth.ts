@@ -87,10 +87,40 @@ export async function exchangeCodeForTokens(
   }
 }
 
+/**
+ * Az OAuth-bukás OKA, nem csak a ténye.
+ *
+ * Korábban minden ág — hiányzó secret, visszavont hozzájárulás, Google-outage,
+ * időtúllépés, értelmezhetetlen válasz — ugyanabba a `GADS_NO_ACCESS_TOKEN`
+ * gyűjtőbe esett. Az operátornak ez annyit mondott: „nincs token". A hat ok
+ * viszont hat különböző teendő, és három közülük csak emberi beavatkozással
+ * oldható meg (secret beírása, újra-engedélyezés) — pont ezért nem szabad
+ * összemosni a magától elmúló hálózati hibával.
+ */
+export type OAuthFailure = { error_code: TrackingErrorCode; error: string };
+
+function isOAuthFailure(v: unknown): v is OAuthFailure {
+  return typeof v === 'object' && v !== null && 'error_code' in v;
+}
+
 async function refreshAccessToken(
   refreshToken: string,
   env: Env
-): Promise<{ accessToken: string; expiresIn: number } | { error: string }> {
+): Promise<{ accessToken: string; expiresIn: number } | OAuthFailure> {
+  // A secretek hiányát ELŐBB fogjuk meg, mint hogy üres mezőkkel elküldenénk a
+  // kérést: a Google `invalid_client`-et adna, ami megkülönböztethetetlen egy
+  // valóban rossz kulcstól, holott itt egyszerűen nincs beírva a secret.
+  if (!env.GADS_OAUTH_CLIENT_ID) {
+    const code = TrackingErrorCode.GADS_OAUTH_CLIENT_ID_MISSING;
+    logStructured({ level: 'error', error_code: code, message: ERROR_DESCRIPTIONS[code] });
+    return { error_code: code, error: 'GADS_OAUTH_CLIENT_ID not set' };
+  }
+  if (!env.GADS_OAUTH_CLIENT_SECRET) {
+    const code = TrackingErrorCode.GADS_OAUTH_CLIENT_SECRET_MISSING;
+    logStructured({ level: 'error', error_code: code, message: ERROR_DESCRIPTIONS[code] });
+    return { error_code: code, error: 'GADS_OAUTH_CLIENT_SECRET not set' };
+  }
+
   const formData = new URLSearchParams();
   formData.set('refresh_token', refreshToken);
   formData.set('client_id', env.GADS_OAUTH_CLIENT_ID);
@@ -109,53 +139,97 @@ async function refreshAccessToken(
     });
     clearTimeout(timeoutId);
 
-    const data = (await response.json()) as RefreshTokenResponse;
+    // ŐRZÖTT parse. Egy nem-JSON válasz (proxy-hibaoldal, csonka törzs) eddig
+    // ide dobott, és a külső catch egy jellegtelen szöveges hibaként adta
+    // tovább — így egy Google-oldali sérülés hálózati hibának látszott.
+    let data: RefreshTokenResponse | null = null;
+    try {
+      data = (await response.json()) as RefreshTokenResponse;
+    } catch {
+      data = null;
+    }
+
+    if (!data || typeof data !== 'object') {
+      const code = TrackingErrorCode.GADS_OAUTH_MALFORMED_RESPONSE;
+      logStructured({
+        level: 'error', error_code: code, message: ERROR_DESCRIPTIONS[code], status: response.status
+      });
+      return { error_code: code, error: 'unparseable OAuth response' };
+    }
+
     if (!response.ok || data.error || !data.access_token) {
+      // `invalid_grant` = a refresh token lejárt vagy VISSZAVONTÁK. Ez az
+      // egyetlen ág, ami emberi újra-engedélyezést kíván; a többi vagy magától
+      // elmúlik, vagy Google-oldali. Ezért kap saját, critical kódot.
+      const revoked = data.error === 'invalid_grant';
+      const code = revoked
+        ? TrackingErrorCode.GADS_REFRESH_TOKEN_REVOKED
+        : !response.ok
+          ? TrackingErrorCode.GADS_OAUTH_HTTP_ERROR
+          : TrackingErrorCode.GADS_OAUTH_MALFORMED_RESPONSE;
       logStructured({
         level: 'error',
-        error_code: TrackingErrorCode.GADS_OAUTH_REFRESH_FAILED,
-        message: ERROR_DESCRIPTIONS[TrackingErrorCode.GADS_OAUTH_REFRESH_FAILED],
+        error_code: code,
+        message: ERROR_DESCRIPTIONS[code],
         error: data.error || 'unknown',
         error_description: data.error_description,
         status: response.status
       });
-      return { error: data.error_description || data.error || 'unknown' };
+      return { error_code: code, error: data.error_description || data.error || 'unknown' };
     }
     return { accessToken: data.access_token, expiresIn: data.expires_in };
   } catch (err) {
     clearTimeout(timeoutId);
-    return { error: err instanceof Error ? err.message : String(err) };
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const code = isTimeout
+      ? TrackingErrorCode.GADS_OAUTH_TIMEOUT
+      : TrackingErrorCode.GADS_API_NETWORK_ERROR;
+    const msg = err instanceof Error ? err.message : String(err);
+    logStructured({ level: 'error', error_code: code, message: ERROR_DESCRIPTIONS[code], error: msg });
+    return { error_code: code, error: isTimeout ? 'timeout' : msg };
   }
 }
 
-export async function getAccessToken(customerId: string, env: Env): Promise<string | null> {
+/**
+ * Access token BESZERZÉSE az OK megtartásával. A hívó (Data Manager) ezt az
+ * `error_code`-ot írja a ledgerbe, tehát utólag látszik, MIÉRT nem ment fel a
+ * konverzió — nem csak az, hogy nem ment.
+ */
+export async function getAccessTokenDetailed(
+  customerId: string,
+  env: Env
+): Promise<{ accessToken: string } | OAuthFailure> {
   const accessKey = `gads:${customerId}:access_token`;
   const refreshKey = `gads:${customerId}:refresh_token`;
 
   const cached = await env.OAUTH_TOKENS.get(accessKey);
-  if (cached) return cached;
+  if (cached) return { accessToken: cached };
 
   const refreshToken = await env.OAUTH_TOKENS.get(refreshKey);
   if (!refreshToken) {
+    const code = TrackingErrorCode.GADS_NO_REFRESH_TOKEN;
     logStructured({
       level: 'error',
-      error_code: TrackingErrorCode.GADS_NO_REFRESH_TOKEN,
-      message: ERROR_DESCRIPTIONS[TrackingErrorCode.GADS_NO_REFRESH_TOKEN],
+      error_code: code,
+      message: ERROR_DESCRIPTIONS[code],
       customer_id: customerId
     });
-    return null;
+    return { error_code: code, error: 'no refresh token in KV' };
   }
 
   const result = await refreshAccessToken(refreshToken, env);
-  if ('error' in result) {
+  if (isOAuthFailure(result)) {
+    // A konkrét okot a refreshAccessToken MÁR logolta a saját kódjával; itt
+    // csak a customer-kontextust tesszük mellé. A régi, mindent elnyelő
+    // GADS_NO_ACCESS_TOKEN log helyett az OK utazik tovább.
     logStructured({
       level: 'error',
-      error_code: TrackingErrorCode.GADS_NO_ACCESS_TOKEN,
-      message: ERROR_DESCRIPTIONS[TrackingErrorCode.GADS_NO_ACCESS_TOKEN],
+      error_code: result.error_code,
+      message: ERROR_DESCRIPTIONS[result.error_code],
       customer_id: customerId,
       error: result.error
     });
-    return null;
+    return result;
   }
 
   const ttl = Math.max(60, Math.min(result.expiresIn - 300, ACCESS_TOKEN_TTL_SECONDS));
@@ -168,7 +242,17 @@ export async function getAccessToken(customerId: string, env: Env): Promise<stri
     ttl_seconds: ttl
   });
 
-  return result.accessToken;
+  return { accessToken: result.accessToken };
+}
+
+/**
+ * Kompatibilitási burkoló azoknak a hívóknak (admin health-check, oauth-debug,
+ * cross-check), akiknek elég a „van token / nincs token" bit. Új money-path
+ * kódban a `getAccessTokenDetailed` a helyes belépő.
+ */
+export async function getAccessToken(customerId: string, env: Env): Promise<string | null> {
+  const r = await getAccessTokenDetailed(customerId, env);
+  return isOAuthFailure(r) ? null : r.accessToken;
 }
 
 /**

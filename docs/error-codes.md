@@ -447,3 +447,122 @@ a rejtély, amiért a Fázis D létezik (30 nap alatt 9 darab). Ilyen sornak nem
 a payload consentje nem GRANTED volt, miközben a receipt igen (verseny vagy két forrás);
 `not_configured` → config-vesztés (lomtalan-osztály), nem consent-ügy; `(unnamed)` → a
 0004 migráció ELŐTTI sor, ott csak az időbélyeg segít.
+
+---
+
+# Google offline láb — hibakód-granularitás (F2)
+
+> **Miért lett több kód.** A `TRK-800-001` és a `TRK-840-003` gyűjtőkódok voltak: az
+> előbbibe minden OAuth-bukás, az utóbbiba minden Data Manager 4xx **és** 5xx esett.
+> A ledgerben így egy Google-oldali kiesés megkülönböztethetetlen volt egy véglegesen
+> rossz payloadtól (az egyik RETRYABLE, a másik TERMINAL), és egy beírandó secret egy
+> visszavont hozzájárulástól (az egyik 2 perc, a másik OAuth-újrafuttatás).
+> **A régi kódok jelentése NEM változott** — csak a gyűjtő szűkült a maradékra.
+
+## TRK-800-011 — GADS_OAUTH_CLIENT_ID missing
+
+**Severity**: Critical · **Retryability**: CONFIG_BLOCKED
+**Description**: A `GADS_OAUTH_CLIENT_ID` secret nincs beállítva a Workeren. A token-kérés
+el sem indul (korábban üres mezővel elment volna, és a Google `invalid_client`-je
+megkülönböztethetetlen lett volna egy valóban rossz kulcstól).
+**Action**: `wrangler secret put GADS_OAUTH_CLIENT_ID`. Utána `GET /api/event/admin/health-check`.
+
+## TRK-800-012 — GADS_OAUTH_CLIENT_SECRET missing
+
+**Severity**: Critical · **Retryability**: CONFIG_BLOCKED
+**Description**: Mint a 011, a client secretre.
+**Action**: `wrangler secret put GADS_OAUTH_CLIENT_SECRET`.
+
+## TRK-800-013 — Refresh token expired or revoked
+
+**Severity**: Critical · **Retryability**: OPERATOR_ACTION
+**Description**: A Google `invalid_grant`-et adott: a refresh token lejárt vagy VISSZAVONTÁK
+(jelszóváltás, hozzáférés visszavonása, 6 hónap tétlenség testing-módú OAuth-kliensen).
+Ez az EGYETLEN OAuth-ág, amit nem old meg se a várakozás, se egy retry.
+**Action**: az OAuth consent-folyamat újrafuttatása (`docs/gads-oauth-repair-runbook.md`).
+Amíg nincs meg, az adott customer offline lába halott — a P1 recon `BLOCKED_DEPENDENCY`-t jelent rá.
+
+## TRK-800-014 — Google OAuth HTTP error
+
+**Severity**: Warning · **Retryability**: RETRYABLE
+**Description**: A token-endpoint nem-2xx-et adott, de NEM `invalid_grant`. Jellemzően
+Google-oldali átmeneti hiba.
+**Action**: a következő cron-retry rendezi. Ha 24 óránál tovább áll, Google Cloud status.
+
+## TRK-800-015 — Google OAuth malformed response
+
+**Severity**: Warning · **Retryability**: RETRYABLE
+**Description**: A token-endpoint válasza nem értelmezhető JSON, vagy 2xx volt `access_token`
+nélkül. Korábban az **őrizetlen** `.json()` ide dobott, és a külső catch jellegtelen szöveges
+hibaként adta tovább — így egy Google-oldali sérülés hálózati hibának látszott.
+**Action**: ha ismétlődik, proxy/hálózati közbeavatkozás gyanús.
+
+## TRK-800-016 — Google OAuth timeout
+
+**Severity**: Warning · **Retryability**: RETRYABLE
+**Description**: A token-kérés túllépte az 5 másodperces határt.
+**Action**: nincs teendő egyszeri esetnél; halmozódás esetén Google-státusz.
+
+## TRK-840-009 — Data Manager permission denied (403)
+
+**Severity**: Critical · **Retryability**: OPERATOR_ACTION
+**Description**: 403 — hiányzó OAuth-scope vagy fiók-hozzáférés. Korábban a 401-gyel egy
+kódba esett, holott a 401 lejárt tokent jelent (a refresh magától megoldja), a 403 pedig
+emberi beavatkozást kíván.
+**Action**: ellenőrizd, hogy a refresh token a `datamanager` scope-pal készült-e, és hogy a
+`customer_id` / `login_customer_id` az adott Google-fiókhoz tartozik-e.
+
+## TRK-840-010 — Data Manager validation failed
+
+**Severity**: Warning · **Retryability**: TERMINAL
+**Description**: A Google `INVALID_ARGUMENT` / `fieldViolations` választ adott: a payload
+véglegesen rossz. Retry NEM segít — a DLQ-ban csak zajt termelne.
+**Action**: a `dm_error_details` mező mondja meg a mezőt. Tipikus okok: rosszul normalizált
+hash (Meta-szabály a Google lábon), hiányzó `conversionValue` melletti `currency`, hibás
+`conversion_action` azonosító.
+
+## TRK-840-011 — Data Manager server error (5xx)
+
+**Severity**: Warning · **Retryability**: RETRYABLE
+**Description**: Google-oldali kiesés. Korábban ugyanabba a kódba esett, mint egy véglegesen
+rossz payload — a retry-logika és a riasztás is rossz döntést hozott rá.
+**Action**: a cron-retry rendezi. Tömeges 5xx → Google Ads API status oldal.
+
+## TRK-840-012 — Data Manager malformed response (2xx, unparseable body)
+
+**Severity**: **Critical** · **Retryability**: RETRYABLE
+**Description**: A Google 2xx-et adott, de a törzs nem értelmezhető. **Ez korábban NÉMA
+SIKER volt**: a `.catch(() => ({}))` üres objektummá tette a választ, ami végigcsúszott a
+siker-ágon (`accepted`, `conversions_processed: 1`) — miközben fogalmunk sem volt, rögzített-e
+a Google bármit. A money-path közepén.
+**Action**: az ismeretlen állapot nem „warning". Nézd meg, van-e proxy/WAF a kimenő úton.
+A delivery `rejected`-ként íródik, tehát a retry újrapróbálja — ez a helyes irány, mert
+ismeretlen állapotból nem könyvelünk konverziót.
+
+## TRK-840-013 — Invalid click identifier
+
+**Severity**: Warning · **Retryability**: POLICY_SKIP
+**Description**: A `gclid`/`gbraid`/`wbraid` alakilag hibás (`undefined`, `null`, csonka
+URL-részlet, idézőjelek, szóköz, 512 karakternél hosszabb). **Eldobjuk, és az event a hashelt
+identityvel FELMEGY** — egy szemét klikk-ID különben az EGÉSZ eventet 400-ba vinné, és vele
+veszne a PII-match is.
+**Action**: a CRM `lead_attribution` mentését nézd meg. A log a hosszat közli, az ÉRTÉKET nem.
+
+## TRK-840-014 — Data Manager 2xx without requestId
+
+**Severity**: Warning · **Retryability**: —
+**Description**: A siker-válaszban nem volt `requestId`, tehát nincs vendor-oldali nyom egy
+későbbi vitához. A kézbesítést **nem** fokozza le (a 2xx a vendor igazolása), de nem is
+nyeljük le.
+**Action**: egyszeri esetnél nincs. Halmozódás esetén Data Manager API-változás gyanús.
+
+## TRK-400-022 — Unsupported lead-status mapping
+
+**Severity**: Warning · **Retryability**: OPERATOR_ACTION
+**Description**: A hívó olyan lead-státuszt küldött, amihez nincs kanonikus event-leképezés.
+**Ez volt az offline út egyetlen elutasítási ága kód, log és ledger-nyom nélkül**: a CRM 400-at
+kapott, a gateway-oldalon semmi nem jelezte, hogy egy konverzió elveszett — egy CRM-oldali
+státusz-átnevezés némán, hetekig üríthette volna az offline lábat.
+**Action**: a válasz `valid_statuses` mezője sorolja a támogatottakat. Ma az ág elérhetetlen
+(a `VALID_LEAD_STATUSES` a leképezésből származik), és egy kontraktus-teszt őrzi, hogy az is
+maradjon.

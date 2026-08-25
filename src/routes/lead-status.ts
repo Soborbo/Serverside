@@ -212,7 +212,23 @@ export async function handleLeadStatus(
 
   const eventName = mapLeadStatusToEventName(body.status);
   if (!eventName) {
-    return json({ error: 'unknown_status' }, 400);
+    // Ez volt az offline út EGYETLEN elutasítási ága kód, strukturált log és
+    // bármilyen nyom nélkül: a CRM 400-at kapott, a gateway-oldalon viszont
+    // semmi nem jelezte, hogy egy konverzió elveszett. Egy CRM-oldali
+    // státusz-átnevezés így némán, hetekig üríthette volna az offline lábat —
+    // pont az a hibaosztály, amit a P1 recon utólag mér, de itt előbb látszik.
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING],
+      hostname,
+      lead_status: body.status,
+      duration_ms: Date.now() - startedAt
+    });
+    return json(
+      { error: 'unknown_status', error_code: TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING, valid_statuses: VALID_LEAD_STATUSES },
+      400
+    );
   }
 
   // ── F3-D · Prehashed PII contract ────────────────────────────────────────
