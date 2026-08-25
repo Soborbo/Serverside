@@ -57,6 +57,18 @@ export interface GatewayEnv {
   /** e.g. https://example.com — the site's own hostname; the gateway resolves the
    * tenant from it (multi-tenant routing). */
   SITE_URL?: string;
+  /**
+   * A site AKTUÁLIS consent-policy verziója (a böngésző-oldali
+   * `PUBLIC_TRACKING_POLICY_VERSION` párja, pl. `2026-08-a`). CSAK a saját CMP-t
+   * futtató (`provider: sbo`) site-okon van szerepe.
+   *
+   * MIÉRT KELL BEÁLLÍTANI: enélkül a szerver-láb elfogadna egy olyan „igen"-t,
+   * amit egy KORÁBBI tájékoztató-szövegre adtak, miközben a böngésző-láb
+   * ugyanattól a sütitől újrakérdez — a két láb ugyanarról a látogatóról mást
+   * gondolna. Hiánya nem hiba (CookieYes-site-okon nincs is értelme), de sbo
+   * site-on nyitva hagy egy csendes eltérést.
+   */
+  TRACKING_POLICY_VERSION?: string;
   /** Synthetic-lead smoke test — see `resolveTestEventCode` + smoke.ts. */
   TRACKING_TEST_LEAD_EMAIL?: string;
   TRACKING_TEST_EVENT_CODE?: string;
@@ -181,14 +193,17 @@ export function isGatewayConfigured(env: GatewayEnv): boolean {
  * NOT guess. The gateway then applies `require_consent` and fails closed, which is
  * the correct GDPR posture.
  */
-export function readConsentFromCookie(cookieHeader: string | null): ConsentState | undefined {
+export function readConsentFromCookie(
+  cookieHeader: string | null,
+  opts: SboCookieReadOptions = {}
+): ConsentState | undefined {
   if (!cookieHeader) return undefined;
 
   // CMP Fázis 2: ha a kérésen ott a SAJÁT `sbo_consent` süti (provider='sbo'
   // site), az a döntés forrása — a párhuzamos mérési ablakban a CookieYes sütije
   // is jelen lehet, de a site-ot már a saját CMP hajtja. CookieYes-site-okon a
   // süti nem létezik → az ág bitre a mai.
-  const sbo = readSboConsentCookieHeader(cookieHeader);
+  const sbo = readSboConsentCookieHeader(cookieHeader, opts);
   if (sbo) {
     const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
     return {
@@ -240,10 +255,57 @@ export interface SboCookieConsent {
   marketing: boolean;
   revision: number;
   decidedAtSec: number;
+  /** MELYIK tájékoztató-szöveghez adta a hozzájárulást (v2 mező). */
+  policyVersion: string;
 }
 
+/**
+ * A süti maximális kora másodpercben — a böngésző-lib `SBO_CONSENT_MAX_AGE_S`
+ * tükörértéke (180 nap, ICO-ajánlás). A max-age a böngészőben él; egy kézzel
+ * visszaírt vagy átvitt süti attól még „frissnek" látszana a szerveren.
+ */
+export const SBO_CONSENT_MAX_AGE_S = 180 * 24 * 60 * 60;
+
+export interface SboCookieReadOptions {
+  /**
+   * Ha megadod, a süti policy-verziójának EGYEZNIE kell vele — különben `null`
+   * (nincs döntés). A site a saját `PUBLIC_TRACKING_POLICY_VERSION`-jét adja át.
+   *
+   * MIÉRT KELL ÁTADNI: nélküle a szerver-láb elfogadna egy olyan „igen"-t, amit
+   * egy KORÁBBI tájékoztató-szövegre adtak — miközben a böngésző-láb ugyanattól
+   * a sütitől újrakérdez. A két láb ugyanarról a látogatóról mást gondolna.
+   */
+  expectedPolicyVersion?: string;
+  /** Tesztelhetőség; alapból a jelen. */
+  nowSec?: number;
+}
+
+/**
+ * A saját `sbo_consent` süti szerveroldali olvasata a form-POST Cookie
+ * headeréből.
+ *
+ * ── MIÉRT KÉZZEL DUPLIKÁLT, ÉS MIÉRT VESZÉLYES ───────────────────────────────
+ * Ez a modul ÖNÁLLÓAN másolódik a site-okra, tehát nem importálhatja a
+ * böngésző-lib `consent-sbo-state.ts`-ét. A parser így KÉZZEL DUPLIKÁLT párja
+ * annak — és pontosan ez a duplikáció csúszott szét: a böngésző-lib áttért a
+ * `v2` formátumra (policy-verzióval), ez a parser viszont `v1`-et követelt.
+ * Következmény egy `provider: sbo` site-on: MINDEN valódi süti `null`-ra
+ * parse-olódott volna, a szerver-láb „nincs döntés"-t látott volna, és
+ * `require_consent: true` mellett fail-closed módon KIHAGYTA volna a hirdetési
+ * platformokat — némán, minden form-POST konverzión.
+ *
+ * Négy szabályban kellett utolérnie a böngésző-libet: (1) v2 formátum,
+ * (2) policy-verzió egyezés, (3) LEJÁRAT, (4) decision↔kategória konzisztencia.
+ * A `consent-backend-parity.test.ts` mostantól UGYANAZON a fixture-táblán
+ * futtatja a két parsert, tehát a szétcsúszás nem ismételhető meg némán.
+ *
+ * A `v1`-es sütit SZÁNDÉKOSAN elutasítjuk — pont úgy, ahogy a böngésző-lib. Egy
+ * szerveroldali „még elfogadom a régit" új divergencia lenne, csak a másik
+ * irányba.
+ */
 export function readSboConsentCookieHeader(
-  cookieHeader: string | null | undefined
+  cookieHeader: string | null | undefined,
+  opts: SboCookieReadOptions = {}
 ): SboCookieConsent | null {
   if (!cookieHeader) return null;
   let raw: string | undefined;
@@ -257,20 +319,44 @@ export function readSboConsentCookieHeader(
   }
   if (!raw) return null;
   const p = raw.split('.');
-  if (p.length !== 7 || p[0] !== 'v1') return null;
+  if (p.length !== 8 || p[0] !== 'v2') return null;
   if ((p[1] !== '0' && p[1] !== '1') || (p[2] !== '0' && p[2] !== '1')) return null;
   const revision = parseInt(p[3], 10);
-  if (!Number.isInteger(revision) || revision < 1) return null;
+  if (!Number.isInteger(revision) || revision < 1 || revision > 10_000 || String(revision) !== p[3]) {
+    return null;
+  }
   if (!['accept_all', 'reject_all', 'custom', 'withdrawn'].includes(p[4])) return null;
   if (!/^[A-Za-z0-9_:-]{8,64}$/.test(p[5])) return null;
   const decidedAtSec = parseInt(p[6], 10);
-  if (!Number.isInteger(decidedAtSec) || decidedAtSec <= 0) return null;
+  if (!Number.isInteger(decidedAtSec) || decidedAtSec <= 0 || String(decidedAtSec) !== p[6]) {
+    return null;
+  }
+  if (!/^[A-Za-z0-9_:-]{1,64}$/.test(p[7])) return null;
+  const policyVersion = p[7];
+  // A policy-verzió eltérése NEM „régi, de jó" döntés: más szöveghez adták.
+  if (opts.expectedPolicyVersion !== undefined && policyVersion !== opts.expectedPolicyVersion) {
+    return null;
+  }
+  const now = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  if (now - decidedAtSec > SBO_CONSENT_MAX_AGE_S) return null;
+  const analytics = p[1] === '1';
+  const marketing = p[2] === '1';
+  // A decision és a kategóriák egymásból következnek — az ellentmondó sütit
+  // eldobjuk, ugyanazzal az elvvel, ahogy a gateway 400-at ad rá.
+  const matches =
+    p[4] === 'accept_all'
+      ? analytics && marketing
+      : p[4] === 'custom'
+        ? analytics !== marketing
+        : !analytics && !marketing;
+  if (!matches) return null;
   return {
     consentId: p[5],
-    analytics: p[1] === '1',
-    marketing: p[2] === '1',
+    analytics,
+    marketing,
     revision,
     decidedAtSec,
+    policyVersion,
   };
 }
 
@@ -317,12 +403,15 @@ export interface ConsentSourcesPayload {
  * pattern is the evidence (a request with no CookieYes cookie at all is the
  * signature of a decision that had not been made or stored yet).
  */
-export function buildConsentSources(cookieHeader: string | null | undefined): ConsentSourcesPayload {
+export function buildConsentSources(
+  cookieHeader: string | null | undefined,
+  opts: SboCookieReadOptions = {}
+): ConsentSourcesPayload {
   const unavailable: ConsentSourceSnapshot = { analytics: null, marketing: null };
   // CMP Fázis 2: `sbo_consent` alatt a döntést a saját süti hajtja (source_used
   // + consent_age_s), de a CookieYes-snapshot VÁLTOZATLANUL kitöltődik, ha a
   // sütije jelen van — a párhuzamos mérési ablak (2.4) receipt-oldali evidenciája.
-  const sbo = readSboConsentCookieHeader(cookieHeader);
+  const sbo = readSboConsentCookieHeader(cookieHeader, opts);
   const sboAge = sbo
     ? Math.max(0, Math.floor(Date.now() / 1000) - sbo.decidedAtSec)
     : undefined;

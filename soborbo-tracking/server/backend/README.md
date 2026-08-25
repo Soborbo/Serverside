@@ -77,13 +77,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
       utm_medium: String(form.get('utm_medium') || '') || undefined,
       utm_campaign: String(form.get('utm_campaign') || '') || undefined,
     },
-    // Same CookieYes cookie the browser reads → the two legs cannot disagree.
-    consent: readConsentFromCookie(request.headers.get('cookie')),
+    // Ugyanazt a sütit olvassuk, amit a böngésző → a két láb nem mondhat mást.
+    // A `TRACKING_POLICY_VERSION` átadása a SAJÁT CMP-t futó (provider: sbo)
+    // site-okon KÖTELEZŐ: enélkül a szerver-láb elfogadna egy olyan „igen"-t,
+    // amit egy korábbi tájékoztató-szövegre adtak, miközben a böngésző-láb
+    // ugyanattól a sütitől újrakérdez. CookieYes-site-on nincs szerepe.
+    consent: readConsentFromCookie(request.headers.get('cookie'), {
+      expectedPolicyVersion: env.TRACKING_POLICY_VERSION,
+    }),
     // Phase D consent diagnostics: reports WHAT this backend saw, and does not
     // change what is sent. Without it the gateway records NULL sources for every
     // server-ingress event — and every high-value conversion travels this path,
     // so the measurement would be blind exactly where it matters.
-    consentSources: buildConsentSources(request.headers.get('cookie')),
+    consentSources: buildConsentSources(request.headers.get('cookie'), {
+      expectedPolicyVersion: env.TRACKING_POLICY_VERSION,
+    }),
     eventSourceUrl: request.headers.get('referer') || undefined,
     // The REAL visitor's IP/UA — not the Worker's egress.
     clientIpAddress: request.headers.get('cf-connecting-ip') || undefined,
