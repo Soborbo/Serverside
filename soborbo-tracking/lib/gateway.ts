@@ -349,6 +349,55 @@ function gclidFromCookie(): string | undefined {
   return parts.length >= 3 ? parts.slice(2).join('.') : undefined;
 }
 
+/**
+ * A Google klikk-ID-k KÖLCSÖNÖSEN KIZÁRÓAK: egy kattintás `gclid`-et VAGY
+ * `gbraid`-et VAGY `wbraid`-et ad, sosem többet. A tároló viszont kulcsonként
+ * merge-öl, ezért egy VISSZATÉRŐ fizetett látogatónál a RÉGI `gclid` ott
+ * maradt az ÚJ `gbraid` mellett — és a payload két, egymásnak ellentmondó
+ * klikk-azonosítót vitt.
+ *
+ * Miért számít: az offline/Enhanced Conversions feltöltés ezekből köti a
+ * konverziót a kattintáshoz. Két ID mellett vagy rossz kattintáshoz köti, vagy
+ * a vendor dönt helyettünk — mindkettő néma attribúció-hiba, ami a
+ * riportokban egészségesnek látszik.
+ */
+const GOOGLE_CLICK_KEYS = ['gclid', 'gbraid', 'wbraid'] as const;
+
+/**
+ * A TÁROLT klikk-ID-k tisztítása a friss URL-jelek fényében.
+ *
+ * Friss Google-ID érkezett → a tárolt testvérek elavultak, mennek.
+ * Nincs friss → a legacy tároló még tarthat többet a hibás korszakból: a
+ * `gclid`-et tartjuk meg (a domináns, nem-iOS alak), a többit eldobjuk.
+ */
+function dropStaleGoogleClickIds(
+  stored: AttributionParams,
+  fresh: AttributionParams
+): AttributionParams {
+  if (!GOOGLE_CLICK_KEYS.some((k) => fresh[k])) {
+    const present = GOOGLE_CLICK_KEYS.filter((k) => stored[k]);
+    if (present.length < 2) return stored;
+    const keep = present.includes('gclid') ? 'gclid' : present[0]!;
+    const healed = { ...stored };
+    for (const k of GOOGLE_CLICK_KEYS) if (k !== keep) delete healed[k];
+    return healed;
+  }
+  const cleaned = { ...stored };
+  for (const k of GOOGLE_CLICK_KEYS) if (!fresh[k]) delete cleaned[k];
+  return cleaned;
+}
+
+/**
+ * A FRISS jelekből determinisztikusan EGY Google klikk-ID marad
+ * (gclid > gbraid > wbraid). HELYBEN módosít.
+ */
+function keepSingleGoogleClickId(fresh: AttributionParams): void {
+  const present = GOOGLE_CLICK_KEYS.filter((k) => fresh[k]);
+  if (present.length < 2) return;
+  const keep = present.includes('gclid') ? 'gclid' : present[0]!;
+  for (const k of GOOGLE_CLICK_KEYS) if (k !== keep) delete fresh[k];
+}
+
 export function collectAttribution(): AttributionParams {
   const stored = readStoredAttribution();
   const fresh: AttributionParams = {};
@@ -389,8 +438,13 @@ export function collectAttribution(): AttributionParams {
     if (g) fresh.gclid = g;
   }
 
+  // A friss jelekből EGY Google klikk-ID marad, és a tárolt testvérek is
+  // takarítódnak — enélkül a merge két, egymásnak ellentmondó klikk-ID-t vinne.
+  keepSingleGoogleClickId(fresh);
+  const cleanedStore = dropStaleGoogleClickIds(stored, fresh);
+
   // Last-touch: the fresh URL signals override the stored ones.
-  const merged: AttributionParams = { ...stored, ...fresh };
+  const merged: AttributionParams = { ...cleanedStore, ...fresh };
 
   // First-touch landing context (don't overwrite if already present).
   if (!merged.landing_page) merged.landing_page = window.location.href;
