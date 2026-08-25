@@ -57,12 +57,13 @@ export {
 export { sendToWorker, collectAttribution, type ConversionPayload, type UserData } from './gateway';
 // P5 — commit-after-business-success. A siker-oldal ezzel tüzeli el a submitkor
 // LETETT (de el nem sütött) konverziót, a szerver által visszaadott event_id-vel.
-import { stagePendingConversion } from './conversion-commit';
+import { stagePendingConversion, discardPendingConversions } from './conversion-commit';
 
 export {
   stagePendingConversion,
   commitPendingConversion,
   peekPendingConversions,
+  discardPendingConversions,
   PENDING_TTL_MS,
   type ConversionKind,
   type PendingConversion,
@@ -117,7 +118,12 @@ export function initTracking(): void {
     // analytics stays on must not destroy the session.
     onConsentChange((c) => {
       if (c.advertisement) persistTrackingParams();
-      else purgeMarketingStorage();
+      else {
+        purgeMarketingStorage();
+        // A submitkor LETETT, még el nem sütött konverzió is a marketing-jogalapon
+        // áll: visszavonáskor azonnal megy, nem várja meg a commitot vagy a TTL-t.
+        discardPendingConversions();
+      }
       if (!c.analytics) purgeAnalyticsStorage();
     });
   }
