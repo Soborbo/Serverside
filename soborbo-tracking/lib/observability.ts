@@ -33,6 +33,10 @@ export const TRACKING_CODES = {
   CONSENT_STORED:          { code: 'TRK-4000', severity: 'info',  message: 'Consent decision stored by the gateway (204)' },
   CONSENT_POST_RETRYABLE:  { code: 'TRK-4001', severity: 'warn',  message: 'Consent POST not stored (429/5xx/network) — decision kept pending, resent later with the SAME consent_event_id' },
   CONSENT_POST_REJECTED:   { code: 'TRK-4002', severity: 'error', message: 'Consent POST rejected (4xx) — dropped from the pending queue; the cookie state still applies locally' },
+  // 5xxx — P5 `commit-after-business-success`. A böngésző-konverzió a backend
+  // SIKERE után ég el; ezek a kódok mondják meg, mi lett a letett konverzióval.
+  CONVERSION_COMMITTED:    { code: 'TRK-5000', severity: 'info',  message: 'Staged browser conversion committed after backend success' },
+  CONVERSION_COMMIT_CONSENT_REVOKED: { code: 'TRK-5001', severity: 'warn', message: 'Staged conversion dropped: marketing consent was withdrawn between submit and success page' },
 } as const satisfies Record<string, CodeDef>;
 
 export type TrackingCodeKey = keyof typeof TRACKING_CODES;
