@@ -135,6 +135,12 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
    `node server/check-event-contract.mjs` pass; with `?debugTracking=1` confirm the
    dataLayer pushes, and that form submits do NOT POST `/api/event/conversion`
    (only low-risk clicks do).
+8. **Record the provenance (F9)** — a másolás után a gyökérből:
+   `npm run check:vendored -- <site>/src/lib/tracking`. Frissen telepített
+   példányon **CLEAN**-t kell adnia. Ez az egyetlen gépi bizonyíték arról, hogy
+   a site melyik kiadást futtatja: az élő ledgerben ma 1392 consent-receiptből
+   1391 NULL `client_lib_version`-nel megy, tehát a flotta verzió-állapotáról
+   e nélkül semmit nem tudunk (`docs/vnext-f9-package-versioning.md`).
 
 ---
 
