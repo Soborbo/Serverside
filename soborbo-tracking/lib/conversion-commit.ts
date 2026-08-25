@@ -83,10 +83,33 @@ function writeJson(key: string, value: unknown[]): void {
   }
 }
 
+/**
+ * A pending lista olvasása TTL-szűréssel. Ha valami lejárt (vagy hibás alakú),
+ * a megritkított listát VISSZA IS ÍRJUK: a lejárt rekord nem csak logikailag,
+ * hanem fizikailag is tűnjön el a sessionStorage-ból — a payload identity-mezőket
+ * hordoz, azok ne heverjenek ott a session végéig.
+ */
 function readPending(now: number): PendingConversion[] {
-  return readJson<PendingConversion[]>(PENDING_KEY, []).filter(
+  const raw = readJson<PendingConversion[]>(PENDING_KEY, []);
+  const kept = raw.filter(
     (p) => p && typeof p.eventId === 'string' && now - p.stagedAt < PENDING_TTL_MS
   );
+  if (kept.length !== raw.length) writeJson(PENDING_KEY, kept);
+  return kept;
+}
+
+/**
+ * Marketing-consent visszavonásakor a letett (még el nem sütött) konverziók
+ * ELDOBÁSA. A commit-ág önmagában csak akkor takarít, ha a siker-oldal be is
+ * töltődik; ez a függvény a visszavonás pillanatában üríti a tárat, hogy a
+ * rekord ne várakozzon a TTL lejártáig hozzájárulás nélkül.
+ */
+export function discardPendingConversions(): void {
+  try {
+    sessionStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* private mode / nincs sessionStorage — nincs mit törölni */
+  }
 }
 
 /**

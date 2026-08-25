@@ -77,8 +77,12 @@ const eventId = Astro.url.searchParams.get('e') ?? '';
   (`already_committed`).
 - **Consent-újraellenőrzés:** ha a látogató a két oldalletöltés között visszavonta a
   marketing-hozzájárulást, a commit nem tüzel, és a letett rekordot is eldobja
-  (`consent_revoked`, TRK-5001).
-- **TTL 30 perc, max 5 letett rekord.** A lejárt rekord nem commitolható.
+  (`consent_revoked`, TRK-5001). A visszavonás pillanatában (`initTracking`
+  consent-change kezelője) a letett rekordok azonnal törlődnek is a
+  `sessionStorage`-ból (`discardPendingConversions`), így egy későbbi
+  újra-engedélyezés után sem éled fel a régi konverzió.
+- **TTL 30 perc, max 5 letett rekord.** A lejárt rekord nem commitolható, és az
+  első olvasáskor (peek/commit) fizikailag is törlődik a tárból.
 - **Nincs néma no-op:** a `commitPendingConversion` megnevezett kimenetet ad
   (`committed` / `no_pending` / `already_committed` / `consent_revoked` /
   `invalid_event_id`).
