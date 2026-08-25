@@ -3,6 +3,13 @@
 # Ha nem (unknown / dirty / nem-mergelt commit), a production olyan kódot futtat,
 # ami nincs rendesen a fő ágon — a Fázis-0 „forrás nincs gitben" hibaosztály.
 # Nincs Cloudflare API token: a commit a bélyegben utazik, egy publikus GET olvassa.
+#
+# A bázis-URL SZÁNDÉKOSAN a tracking.soborbo.co.uk custom domain, NEM a
+# *.workers.dev: azt a subdomaint a Cloudflare nem irányítja erre a Workerre,
+# tehát ott a kérés edge-404-et kap (a válaszból hiányoznak a Worker saját
+# header-ei), és az őr NEM driftet jelentett, hanem minden nap hálózati hibával
+# bukott — vagyis a drift-figyelés maga volt néma. Tenant-semleges domain kell:
+# a per-ügyfél hosztok (painlessremovals.com stb.) egy site elvesztésével esnének ki.
 name: version-drift
 
 on:
@@ -14,7 +21,7 @@ on:
       worker_url:
         description: 'A deployolt Worker bázis-URL-je'
         required: false
-        default: 'https://event-gateway.golaxo.workers.dev'
+        default: 'https://tracking.soborbo.co.uk'
 
 permissions:
   contents: read
@@ -35,5 +42,5 @@ jobs:
           node-version: 20
       - name: Check deployed-version drift
         env:
-          WORKER_URL: ${{ github.event.inputs.worker_url || 'https://event-gateway.golaxo.workers.dev' }}
+          WORKER_URL: ${{ github.event.inputs.worker_url || 'https://tracking.soborbo.co.uk' }}
         run: node scripts/check-version-drift.mjs "$WORKER_URL"

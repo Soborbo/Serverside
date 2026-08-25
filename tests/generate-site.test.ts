@@ -267,16 +267,27 @@ describe('generate-site.mjs — test_event_code bypass nem termel production-kim
     expect(existsSync(join(r.out, 'kv-put.TEST-EVENT-CODE.sh'))).toBe(true);
   });
 
-  it('a teszt-script FUTTATVA megáll (exit != 0), és nem hív wranglert', () => {
-    const r = runGen(withTestCode(), ['--allow-test-event-code']);
-    const script = join(r.out, 'kv-put.TEST-EVENT-CODE.sh');
-    // A guard a fájl legelején van: a `wrangler kv key put` sorok mögötte állnak,
-    // tehát a script nem futtathat KV-írást a kapu kinyitása nélkül.
-    const run = spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin' } });
-    expect(run.status).not.toBe(0);
-    expect(run.stderr).toContain('REFUSING');
-    expect(run.stdout ?? '').not.toContain('wrangler kv key put');
-  });
+  // Windowson KIHAGYVA, nem "javítva". A szanitált `PATH` nem kényelmi beállítás,
+  // hanem a teszt biztonsági eleme: ha a kapu regresszálna, a script akkor se
+  // találjon wranglert — egy éles KV-írás sokkal drágább, mint egy kihagyott eset.
+  // Windowson a POSIX PATH nem feloldható (a spawn ENOENT-tel elhasal, a `stderr`
+  // undefined lesz), a PATH "feloldása" pedig pont a védelmet venné el. Így a
+  // fejlesztői gépen a suite ŐSZINTÉN zöld, a Linux-CI pedig ténylegesen futtatja.
+  it.skipIf(process.platform === 'win32')(
+    'a teszt-script FUTTATVA megáll (exit != 0), és nem hív wranglert',
+    () => {
+      const r = runGen(withTestCode(), ['--allow-test-event-code']);
+      const script = join(r.out, 'kv-put.TEST-EVENT-CODE.sh');
+      // A guard a fájl legelején van: a `wrangler kv key put` sorok mögötte állnak,
+      // tehát a script nem futtathat KV-írást a kapu kinyitása nélkül.
+      const run = spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin' } });
+      // Spawn-hiba != a kapu működik: enélkül egy ENOENT is "átmenne" a status-ellenőrzésen.
+      expect(run.error, `bash spawn: ${run.error?.message ?? ''}`).toBeUndefined();
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain('REFUSING');
+      expect(run.stdout ?? '').not.toContain('wrangler kv key put');
+    }
+  );
 
   it('a kapu CSAK explicit env-változóval nyílik (eldobható teszt-namespace-hez)', () => {
     const r = runGen(withTestCode(), ['--allow-test-event-code']);
