@@ -7,7 +7,7 @@
  */
 
 import { hasAnalyticsConsent, hasMarketingConsent } from './consent';
-import { getSessionId, getDevice, getAttribution, getPageUrl, normalizeEmail, normalizePhone, sanitizeName } from './persistence';
+import { getSessionId, getDevice, getAttribution, getPageUrl, normalizeEmail, normalizePhone, sanitizeName, registerMarketingPurgeHook } from './persistence';
 import { report, redactPii, enableDiagDebug } from './observability';
 
 declare global {
@@ -101,8 +101,37 @@ export const USER_DATA_ELEMENT_ID = '__sb_user_data__';
 
 declare global {
   interface Window {
+    /**
+     * @deprecated A meglévő GTM-konténerek Custom JS változója ezt olvassa,
+     * ezért egyelőre MARAD — de új konténer a `window.sbTracking
+     * .getUserDataForEC()` getterrel dolgozzon. A nyers globális bárki számára
+     * enumerálható; a getter mögött a tár modul-privát, és a visszavonás
+     * determinisztikusan üríti (nem csak egy 5 mp-es időzítő).
+     */
     __sbUserData?: Record<string, string>;
+    /** Package-owned EC-felület (P6.2). Lásd `getUserDataForEC`. */
+    sbTracking?: { getUserDataForEC: () => Record<string, string> | null };
   }
+}
+
+/**
+ * MODUL-PRIVÁT EC-tár. A getter ebből olvas; a `window.__sbUserData` csak a
+ * régi konténerek miatt íródik mellé, és a takarítás MINDKETTŐT elviszi.
+ */
+let ecUserData: Record<string, string> | null = null;
+
+/**
+ * A GTM „User-Provided Data" változójának KANONIKUS forrása.
+ *
+ * Miért getter és nem globális objektum: a globálist bármelyik third-party
+ * szkript megtalálja egy `Object.keys(window)` sepréssel, és a tartalma
+ * `JSON.stringify`-jal kimenthető. A függvény mögött a tár nem enumerálható,
+ * és — ami fontosabb — EGY helyen van, ahonnan a consent-visszavonás
+ * determinisztikusan ki tudja ütni.
+ */
+export function getUserDataForEC(): Record<string, string> | null {
+  // Másolatot adunk: a hívó (GTM Custom JS) ne tudja a belső állapotot mutálni.
+  return ecUserData ? { ...ecUserData } : null;
 }
 
 /** How long the EC PII stays readable before the auto-clear sweeps it (ms).
@@ -111,16 +140,25 @@ declare global {
 const EC_CLEAR_DELAY_MS = 5_000;
 let ecClearTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Wipe the Enhanced-Conversions side-channel (window object + hidden element). */
+/** Wipe the Enhanced-Conversions side-channel (module store + window + hidden element). */
 export function clearUserDataForEC(): void {
+  ecUserData = null;
   if (typeof window === 'undefined') return;
   try { delete window.__sbUserData; } catch { /* */ }
   try { document.getElementById(USER_DATA_ELEMENT_ID)?.remove(); } catch { /* */ }
 }
 
+// A visszavonás a TÁROLT adaton túl az EPHEMERAL identityt is elviszi. Eddig
+// ezt csak az 5 mp-es időzítő tette, tehát a visszavonás pillanatában a nyers
+// e-mail/telefon ott maradt a lapon — a látogató épp azt kérte, hogy ne.
+registerMarketingPurgeHook(clearUserDataForEC);
+
 export function setUserDataForEC(ud: Record<string, string>): void {
   if (!hasMarketingConsent()) return;
+  ecUserData = { ...ud };
   if (typeof window === 'undefined') return;
+  // Package-owned felület — ezt olvassa az ÚJ GTM-változó.
+  window.sbTracking = { ...(window.sbTracking ?? {}), getUserDataForEC };
   window.__sbUserData = ud;
   try {
     let el = document.getElementById(USER_DATA_ELEMENT_ID);

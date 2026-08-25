@@ -39,7 +39,7 @@ export {
   persistTrackingParams, captureUrlParams, getGclid, getFbclid, getFbp, getFbc,
   getAllTrackingData, getStoredData, getAttribution, getSourceType,
   getSessionId, getDevice, getPageUrl, clearTrackingData,
-  purgeMarketingStorage, purgeAnalyticsStorage,
+  purgeMarketingStorage, purgeAnalyticsStorage, registerMarketingPurgeHook,
   getStorageReadBlocked, resetStorageReadBlocked, readMarketingLocalStorage,
   ATTR_STORAGE_KEY,
   normalizeEmail, normalizePhone, sanitizeName,
@@ -48,7 +48,7 @@ export {
 export {
   trackCalculatorStart, trackCalculatorStep, trackCalculatorOption,
   trackCalculatorComplete, trackPhoneClick, trackCallbackClick,
-  trackEmailClick, trackWhatsappClick, setUserDataForEC, clearUserDataForEC,
+  trackEmailClick, trackWhatsappClick, setUserDataForEC, clearUserDataForEC, getUserDataForEC,
   initScrollTracking, initFormAbandonTracking, enableDebug,
   generateEventId, pushLeadConversion, pushContactConversion,
   type ConversionData,

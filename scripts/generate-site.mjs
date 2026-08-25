@@ -223,8 +223,36 @@ function validate(cfg, opts = {}) {
           err(`gads.conversion_actions["${ev}"] numerikus conversionAction ID kell, kapott: ${id}`);
       }
     }
-    if (cid && !cfg.gads.conversion_actions)
-      warn('gads.customer_id meg van adva, de nincs conversion_actions — a Google Ads konverziók kimaradnak.');
+    // ── P6.4 — Enhanced Conversions NEM opcionális ────────────────────
+    //
+    // INV-009: „Google Ads-enabled site Enhanced Conversions-compatible legyen
+    // AUTOMATIKUSAN". A `conversion_actions` hiánya eddig sima warning volt, és
+    // pontosan úgy viselkedett, ahogy a néma hibák szoktak: a site „be van
+    // kötve", a ledger tele van eventtel, a Google felé viszont EGYETLEN
+    // konverzió sem megy fel — mert nincs mire leképezni. A monitorozás is
+    // zöld marad, hiszen a skip szándékosnak látszik (PLATFORM_NOT_CONFIGURED).
+    //
+    // Új site-nál ezért HARD ERROR (TRK-CFG-002). Meglévő config
+    // regenerálásakor hangos warning — ugyanaz a szabály, mint a
+    // consent-kapunál: a regenerálást nem blokkolhatjuk, különben a P0.2
+    // round-trip lehetetlen lenne, és pont a hibás legacy configokat nem
+    // lehetne javítani.
+    const ecCount = cfg.gads.conversion_actions
+      ? Object.keys(cfg.gads.conversion_actions).length
+      : 0;
+    if (cid && ecCount === 0) {
+      const msg =
+        'TRK-CFG-002  gads.customer_id meg van adva, de nincs (nem üres) conversion_actions. ' +
+        'A Google Ads offline láb így NÉMÁN nulla konverziót szállít: az eventek beérkeznek, ' +
+        'a leképezés hiányzik, a skip pedig szándékosnak látszik a monitorozásban.';
+      if (opts.newSite)
+        err(
+          msg +
+            ' Enhanced Conversions kötelező minden Google Ads-es site-on (INV-009) — ' +
+            'add meg legalább egy lifecycle-eventhez a conversionAction ID-t.'
+        );
+      else warn(msg + ' Meglévő site: pótold a conversion_actions blokkot.');
+    }
   }
 
   // Per-site CRM token (opcionális input). Ha megadod, determinisztikusan

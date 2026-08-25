@@ -109,7 +109,17 @@ const V_UPD = (() => {
       'function(){\n' +
       '  // PII is written by setUserDataForEC() to a hidden side-channel,\n' +
       '  // NOT the dataLayer (GDPR). Keys: email, phone_number, first_name, last_name.\n' +
-      '  try { return window.__sbUserData || {}; } catch (e) { return {}; }\n' +
+      '  //\n' +
+      '  // PREFERRED: the package-owned getter. The raw window global is a\n' +
+      '  // fallback for containers published before the getter existed — it is\n' +
+      '  // enumerable by any third-party script, which is exactly why the getter\n' +
+      '  // is now canonical. Drop the fallback once every container is republished.\n' +
+      '  try {\n' +
+      '    if (window.sbTracking && typeof window.sbTracking.getUserDataForEC === "function") {\n' +
+      '      return window.sbTracking.getUserDataForEC() || {};\n' +
+      '    }\n' +
+      '    return window.__sbUserData || {};\n' +
+      '  } catch (e) { return {}; }\n' +
       '}')],
     fingerprint: '0',
   });
