@@ -51,6 +51,16 @@ jobs:
       - name: Contract sync-guard
         run: npm run check:contract
 
+      # A KANONIKUS events.json belso alakja: kotelezo mezok, snake_case nevek,
+      # duplikatumok, es a GA4 REZERVALT-nev utkozes (TRK-EVT-002).
+      #
+      # Ez a lepes eddig HIANYZOTT. A script letezett, de `check:events` neven —
+      # ugyanazon a neven, mint a csomag GTM-kontraktus-ellenorzese —, es a
+      # CI-lepes a csomag working-directoryjaban futott, tehat MINDIG a masikat
+      # hivta. A GA4-rezervalt-nev or igy sosem futott le automatikusan.
+      - name: Canonical event schema (events.json)
+        run: npm run check:engine-events
+
       # P0.5 truth-freeze: a doksi a JELENLEGI modellt irja le, nem a celallapotot.
       # Kulon lepes, hogy a bukas oka (melyik cafolt utasitas / hianyzo horgony) lathato
       # legyen a CI-osszefoglaloban, ne egy vitest-stack alatt.
@@ -97,7 +107,7 @@ jobs:
         run: npm run typecheck
 
       - name: Browser event contract (dataLayer <-> docs <-> GTM <-> canonical events.json)
-        run: npm run check:events
+        run: npm run check:gtm-contract
 
       - name: Test (vitest + jsdom)
         run: npm test

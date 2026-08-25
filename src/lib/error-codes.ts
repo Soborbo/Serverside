@@ -155,6 +155,34 @@ export enum TrackingErrorCode {
   DATAMANAGER_INVALID_CLICK_ID = 'TRK-840-013',
   DATAMANAGER_RESPONSE_NO_REQUEST_ID = 'TRK-840-014',
 
+  // TRK-85x — ELO GTM conformance (P7).
+  // A committolt `gtm/container.json` eddig csak onmagaval volt osszevetve. Az
+  // ELO kontener viszont kezzel szerkesztheto, es pont ott keletkeznek a nema
+  // money-hibak: egy kikapcsolt konverzios tag, egy elirt label vagy egy
+  // ismeretlen, konverzio-kepes tag semmilyen ledger-jelet nem hagy — a
+  // gateway-oldalon minden zold marad, mikozben a bongeszo-lab halott.
+  GTM_TAG_MISSING = 'TRK-850-001',
+  GTM_TAG_PAUSED = 'TRK-850-002',
+  GTM_TRIGGER_MISSING = 'TRK-850-003',
+  GTM_EVENT_NAME_MISMATCH = 'TRK-850-004',
+  GTM_CONVERSION_ID_MISMATCH = 'TRK-850-005',
+  GTM_CONVERSION_LABEL_MISMATCH = 'TRK-850-006',
+  GTM_ENHANCED_CONVERSIONS_MISSING = 'TRK-850-007',
+  GTM_EC_USER_DATA_VARIABLE_MISSING = 'TRK-850-008',
+  GTM_CONSENT_SETTINGS_MISSING = 'TRK-850-009',
+  GTM_DUPLICATE_CONVERSION_TAG = 'TRK-850-010',
+  // ISMERETLEN, DE KONVERZIO-KEPES tag: valaki kezzel vett fel egy tagtipust,
+  // ami penzt tud konyvelni (awct / gaawe / Meta Custom HTML). Ez FAIL, nem
+  // figyelmeztetes — a duplikalt konverzio ugyanugy torzitja a biddinget, mint
+  // a hianyzo, csak felfele.
+  GTM_UNKNOWN_CONVERSION_TAG = 'TRK-850-011',
+  GTM_LEGACY_TRIGGER_ACTIVE = 'TRK-850-012',
+  GTM_UNSUPPORTED_CUSTOM_HTML = 'TRK-850-013',
+  GTM_CONTAINER_MISMATCH = 'TRK-850-014',
+  // A conformance-ellenorzes SAJAT dependenciaja halt meg (nincs export, nincs
+  // API-hozzaferes). §17: ez NEM "nulla finding".
+  GTM_CONFORMANCE_UNAVAILABLE = 'TRK-850-015',
+
   MSADS_DISPATCH_FAILED = 'TRK-810-001',
   MSADS_API_TIMEOUT = 'TRK-810-002',
   TIKTOK_DISPATCH_FAILED = 'TRK-820-001',
@@ -420,6 +448,36 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Click identifier (gclid/gbraid/wbraid) is malformed — dropped before the send so it cannot cause a blanket 400',
   [TrackingErrorCode.DATAMANAGER_RESPONSE_NO_REQUEST_ID]:
     'Data Manager 2xx carried no requestId — accepted on the HTTP status, but the vendor trace is missing',
+  [TrackingErrorCode.GTM_TAG_MISSING]:
+    'An expected GTM tag is absent from the live container — that browser leg does not fire at all',
+  [TrackingErrorCode.GTM_TAG_PAUSED]:
+    'An expected GTM tag exists but is PAUSED — it looks configured and fires nothing',
+  [TrackingErrorCode.GTM_TRIGGER_MISSING]:
+    'An expected custom-event trigger is absent — the tag can never fire for that event',
+  [TrackingErrorCode.GTM_EVENT_NAME_MISMATCH]:
+    'A live trigger listens on an event name the code never emits (or vice versa)',
+  [TrackingErrorCode.GTM_CONVERSION_ID_MISMATCH]:
+    'The live Google Ads conversion ID differs from the expected one — conversions land in the wrong account',
+  [TrackingErrorCode.GTM_CONVERSION_LABEL_MISMATCH]:
+    'The live Google Ads conversion label differs from the expected one — conversions land on the wrong action',
+  [TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING]:
+    'Enhanced Conversions is not enabled on a Google Ads conversion tag (INV-009)',
+  [TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING]:
+    'The Enhanced-Conversions user-data variable is missing or not wired to the conversion tag',
+  [TrackingErrorCode.GTM_CONSENT_SETTINGS_MISSING]:
+    'A consent-bound tag carries no consent settings — it may fire before or without consent',
+  [TrackingErrorCode.GTM_DUPLICATE_CONVERSION_TAG]:
+    'More than one tag books the same conversion — double counting inflates the bidding signal',
+  [TrackingErrorCode.GTM_UNKNOWN_CONVERSION_TAG]:
+    'An unknown but CONVERSION-CAPABLE tag exists in the live container — nobody owns it and it can book money',
+  [TrackingErrorCode.GTM_LEGACY_TRIGGER_ACTIVE]:
+    'A retired/legacy event trigger is still active in the live container',
+  [TrackingErrorCode.GTM_UNSUPPORTED_CUSTOM_HTML]:
+    'A Custom HTML tag on the money path (gtag/fbq/conversion call) — unreviewable and outside the contract',
+  [TrackingErrorCode.GTM_CONTAINER_MISMATCH]:
+    'The live container/version is not the one the site is expected to run',
+  [TrackingErrorCode.GTM_CONFORMANCE_UNAVAILABLE]:
+    'The GTM conformance check could not read the live container — this is DEGRADED, not zero findings',
   [TrackingErrorCode.DATAMANAGER_RATE_LIMITED]: 'Data Manager API rate limit exceeded',
   [TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS]:
     'Data Manager event skipped: no user identifiers and no click ID (would be a permanent 400)',
@@ -575,6 +633,11 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.GADS_OAUTH_MALFORMED_RESPONSE]: 'warning',
   [TrackingErrorCode.GADS_OAUTH_TIMEOUT]: 'warning',
   [TrackingErrorCode.UNSUPPORTED_LEAD_STATUS_MAPPING]: 'warning',
+  [TrackingErrorCode.GTM_EVENT_NAME_MISMATCH]: 'warning',
+  [TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING]: 'warning',
+  [TrackingErrorCode.GTM_LEGACY_TRIGGER_ACTIVE]: 'warning',
+  [TrackingErrorCode.GTM_UNSUPPORTED_CUSTOM_HTML]: 'warning',
+  [TrackingErrorCode.GTM_CONTAINER_MISMATCH]: 'warning',
   [TrackingErrorCode.MSADS_DISPATCH_FAILED]: 'warning',
   [TrackingErrorCode.MSADS_API_TIMEOUT]: 'warning',
   [TrackingErrorCode.TIKTOK_DISPATCH_FAILED]: 'warning',
@@ -627,6 +690,18 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.ALERT_EMAIL_FAILED]: 'critical',
   [TrackingErrorCode.ALERT_SMS_FAILED]: 'critical',
   [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]: 'critical',
+  // A penz-utat erinto GTM-elteresek kritikusak: a gateway-oldalon SEMMILYEN
+  // jelet nem hagynak, tehat csak itt derulhetnek ki.
+  [TrackingErrorCode.GTM_TAG_MISSING]: 'critical',
+  [TrackingErrorCode.GTM_TAG_PAUSED]: 'critical',
+  [TrackingErrorCode.GTM_TRIGGER_MISSING]: 'critical',
+  [TrackingErrorCode.GTM_CONVERSION_ID_MISMATCH]: 'critical',
+  [TrackingErrorCode.GTM_CONVERSION_LABEL_MISMATCH]: 'critical',
+  [TrackingErrorCode.GTM_DUPLICATE_CONVERSION_TAG]: 'critical',
+  [TrackingErrorCode.GTM_UNKNOWN_CONVERSION_TAG]: 'critical',
+  [TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING]: 'critical',
+  [TrackingErrorCode.GTM_CONSENT_SETTINGS_MISSING]: 'critical',
+  [TrackingErrorCode.GTM_CONFORMANCE_UNAVAILABLE]: 'critical',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'warning',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
   // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)
@@ -876,6 +951,23 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.ALERT_EMAIL_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.ALERT_SMS_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]: 'OPERATOR_ACTION',
+  // A GTM-elteresek MIND emberi beavatkozast kernek: a kontener kezzel
+  // szerkesztheto, retry nem javitja.
+  [TrackingErrorCode.GTM_TAG_MISSING]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_TAG_PAUSED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_TRIGGER_MISSING]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_EVENT_NAME_MISMATCH]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_CONVERSION_ID_MISMATCH]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_CONVERSION_LABEL_MISMATCH]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_CONSENT_SETTINGS_MISSING]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_DUPLICATE_CONVERSION_TAG]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_UNKNOWN_CONVERSION_TAG]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_LEGACY_TRIGGER_ACTIVE]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_UNSUPPORTED_CUSTOM_HTML]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_CONTAINER_MISMATCH]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.GTM_CONFORMANCE_UNAVAILABLE]: 'RETRYABLE',
 
   // 960 — retention.
   [TrackingErrorCode.RETENTION_QUERY_FAILED]: 'RETRYABLE',
@@ -909,6 +1001,7 @@ export const ERROR_COMPONENTS: Record<string, string> = {
   'TRK-840': 'google-data-manager',
   'TRK-900': 'dlq-retry',
   'TRK-910': 'consent',
+  'TRK-850': 'gtm-conformance',
   'TRK-950': 'reconciliation',
   'TRK-960': 'retention',
   'TRK-EVT': 'event-contract',
