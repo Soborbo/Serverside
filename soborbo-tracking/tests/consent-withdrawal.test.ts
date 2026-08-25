@@ -104,3 +104,67 @@ describe('initTracking — consent-change purge huzalozás', () => {
     expect(localStorage.getItem('sb_tracking')).toContain('G-GRANT');
   });
 });
+
+/**
+ * A visszavonásnak a HARMADIK FÉL sütijeit is el kell érnie (2026-08-25-i jogi
+ * átvilágítás). A Consent Mode denied jele a KÜLDÉST állítja meg — a már kiírt
+ * azonosítót nem: a `_ga` két évig, a `_gcl_au` 90 napig a böngészőben maradna
+ * azután is, hogy a látogató épp ennek a megszűnését kérte.
+ *
+ * A `_ga_<STREAM>` és a `_gcl_*` nevében per-property utótag van, ezért a purge
+ * a `document.cookie`-ból prefix szerint gyűjt — egy beégetett névlista némán
+ * kihagyná a valódi property sütijét.
+ */
+describe('visszavonás — a Google saját sütijei', () => {
+  function seedVendorCookies(): void {
+    setCookie('_ga', 'GA1.1.111.222');
+    setCookie('_ga_ABC123XYZ', 'GS1.1.1700000000.1.0.1700000000.0.0.0');
+    setCookie('_gcl_au', '1.1.987654321.1700000000');
+    setCookie('_gcl_aw', 'GCL.1700000000.CjwKCAjw');
+  }
+
+  it('az analytics visszavonása törli a GA4 sütiket (a stream-utótagosat is)', () => {
+    initTracking();
+    seedVendorCookies();
+    emitConsentUpdate({ analytics: false, marketing: true });
+
+    expect(document.cookie).not.toContain('_ga=');
+    expect(document.cookie).not.toContain('_ga_ABC123XYZ=');
+  });
+
+  it('az analytics visszavonása NEM viszi el a Google Ads sütiket (az marketing)', () => {
+    initTracking();
+    seedVendorCookies();
+    emitConsentUpdate({ analytics: false, marketing: true });
+
+    expect(document.cookie).toContain('_gcl_au=');
+  });
+
+  it('a marketing visszavonása törli a Google Ads linker sütiket', () => {
+    initTracking();
+    seedVendorCookies();
+    emitConsentUpdate({ analytics: true, marketing: false });
+
+    expect(document.cookie).not.toContain('_gcl_au=');
+    expect(document.cookie).not.toContain('_gcl_aw=');
+  });
+
+  it('a marketing visszavonása NEM viszi el a GA4 sütiket (az analytics)', () => {
+    initTracking();
+    seedVendorCookies();
+    emitConsentUpdate({ analytics: true, marketing: false });
+
+    expect(document.cookie).toContain('_ga=');
+  });
+
+  it('mindkettő visszavonása mindent elvisz, a Meta sütikkel együtt', () => {
+    initTracking();
+    seedVendorCookies();
+    setCookie('_fbp', 'fb.1.100.200');
+    emitConsentUpdate({ analytics: false, marketing: false });
+
+    for (const name of ['_ga=', '_ga_ABC123XYZ=', '_gcl_au=', '_gcl_aw=', '_fbp=']) {
+      expect(document.cookie, `${name} túlélte a visszavonást`).not.toContain(name);
+    }
+  });
+});
