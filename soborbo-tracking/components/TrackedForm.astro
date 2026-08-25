@@ -24,6 +24,17 @@
 
 interface Props {
   action?: string;
+  /**
+   * P5 — commit-after-business-success. `false` (alapértelmezés): a mai
+   * viselkedés, a böngésző-konverzió a submit pillanatában elég el. `true`: a
+   * konverziót csak LETESSZÜK, és a siker-oldal tüzeli el a szervertől kapott
+   * event_id-vel (`commitPendingConversion`). Enélkül egy bukó backend is
+   * Leadet számoltat a Metával, amihez sosem érkezik CAPI-pár.
+   *
+   * MIGRÁCIÓ: a bekapcsolás ÖNMAGÁBAN elveszi a böngésző-konverziót — a
+   * siker-oldalnak KELL commitolnia. Site-onként, ellenőrzéssel.
+   */
+  commitOnSuccess?: boolean;
   method?: 'POST' | 'GET';
   eventType?: 'lead' | 'contact';
   contentName?: string;
@@ -46,7 +57,7 @@ const {
   emailField = 'email', phoneField = 'phone',
   firstNameField = 'firstName', lastNameField = 'lastName',
   valueField = 'price', formId = `tracked-form-${++formIdCounter}`,
-  abandonTimeout = 60_000, class: className, ...rest
+  abandonTimeout = 60_000, commitOnSuccess = false, class: className, ...rest
 } = Astro.props;
 ---
 
@@ -58,6 +69,7 @@ const {
   data-currency={currency || ''}
   data-form-id={formId}
   data-abandon-timeout={abandonTimeout.toString()}
+  data-commit-on-success={commitOnSuccess ? '1' : null}
   data-f-email={emailField}
   data-f-phone={phoneField}
   data-f-fname={firstNameField}
@@ -81,6 +93,7 @@ const {
     trackLeadSubmit, trackContactSubmit,
     populateHiddenFields, waitForTracking,
     initFormAbandonTracking,
+    stageLeadSubmit, stageContactSubmit,
   } from '../lib';
 
   function setupTrackedForms() {
@@ -130,14 +143,21 @@ const {
 
         const fd = new FormData(form);
 
+        // P5: `commitOnSuccess` mellett a konverziót csak LETESSZÜK. A rejtett
+        // mezők (event_id!) ugyanúgy töltődnek, tehát a backend és a
+        // szerver-oldali gateway-láb egy bitet sem változik — csak a BÖNGÉSZŐ
+        // lába csúszik a siker-oldalra, ahol a szerver már igazolta a leadet.
+        const commitOnSuccess = form.dataset.commitOnSuccess === '1';
+
         let result;
         if (cfg.eventType === 'contact') {
-          result = trackContactSubmit({
+          const contact = {
             email: (fd.get(cfg.email) as string) || '',
             phone: (fd.get(cfg.phone) as string) || '',
-          });
+          };
+          result = commitOnSuccess ? stageContactSubmit(contact) : trackContactSubmit(contact);
         } else {
-          result = trackLeadSubmit({
+          const lead = {
             email: (fd.get(cfg.email) as string) || '',
             phone: (fd.get(cfg.phone) as string) || '',
             firstName: (fd.get(cfg.firstName) as string) || undefined,
@@ -145,7 +165,8 @@ const {
             value: parseFloat(fd.get(cfg.value) as string) || undefined,
             currency: cfg.currency,
             contentName: cfg.contentName,
-          });
+          };
+          result = commitOnSuccess ? stageLeadSubmit(lead) : trackLeadSubmit(lead);
         }
 
         populateHiddenFields(form, result);

@@ -55,6 +55,19 @@ export {
 } from './events';
 // Browser-path gateway dispatch — also available for direct use (guarded).
 export { sendToWorker, collectAttribution, type ConversionPayload, type UserData } from './gateway';
+// P5 — commit-after-business-success. A siker-oldal ezzel tüzeli el a submitkor
+// LETETT (de el nem sütött) konverziót, a szerver által visszaadott event_id-vel.
+import { stagePendingConversion } from './conversion-commit';
+
+export {
+  stagePendingConversion,
+  commitPendingConversion,
+  peekPendingConversions,
+  PENDING_TTL_MS,
+  type ConversionKind,
+  type PendingConversion,
+  type CommitOutcome
+} from './conversion-commit';
 // Ingress contract — which events may use the browser path at all.
 export { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS, OFFLINE_EVENTS } from './event-contract';
 // Observability — stable diagnostic codes (see docs/OBSERVABILITY-CODES.md).
@@ -180,6 +193,44 @@ export function trackLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
     gclid: gclid || undefined, eventId,
   });
 
+  return { success: true, consentBlocked: false, eventId, gclid, fbclid };
+}
+
+/**
+ * P5 — a `trackLeadSubmit` STAGING-párja: ugyanaz a szerződés, csak a dataLayer
+ * push MARAD EL. A konverziót letesszük, és a siker-oldal tüzeli el
+ * (`commitPendingConversion`) a szervertől visszakapott event_id-vel.
+ *
+ * A visszatérési érték szándékosan ugyanaz a `LeadSubmitResult`, hogy a hívó
+ * (TrackedForm) a rejtett mezőket VÁLTOZATLANUL töltse — a szerver lába, és vele
+ * a Pixel↔CAPI dedup kulcsa, egy bitet sem mozdul.
+ */
+export function stageLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
+  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+
+  stagePendingConversion({
+    kind: 'lead', eventId,
+    email: params.email, phone: params.phone,
+    firstName: params.firstName, lastName: params.lastName,
+    value: params.value, currency: params.currency || trackingConfig.currency,
+    gclid: gclid || undefined
+  });
+  return { success: true, consentBlocked: false, eventId, gclid, fbclid };
+}
+
+/** A `trackContactSubmit` staging-párja — lásd `stageLeadSubmit`. */
+export function stageContactSubmit(
+  params: Pick<LeadSubmitParams, 'email' | 'phone'>
+): LeadSubmitResult {
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
+  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+
+  stagePendingConversion({
+    kind: 'contact', eventId,
+    email: params.email, phone: params.phone,
+    gclid: gclid || undefined
+  });
   return { success: true, consentBlocked: false, eventId, gclid, fbclid };
 }
 
