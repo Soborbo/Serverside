@@ -713,13 +713,36 @@ export function appendOfflineOnlySites(
  * notify.ts `cloudflare:email` runtime-importját a függőségi láncon át.
  */
 /**
- * A szintetikus sorok kizárása NEM opcionális: a napi smoke (`smoke-<site>-<dátum>`)
- * és a Data Manager validate-only füst-teszt (`dm-validate*`) különben elfedné a
- * halott lábat — pontosan az a hibaosztály, ami miatt a lomtalan Meta-kiesése öt
- * napon át zölden ment át.
+ * A szintetikus sorok kizárása NEM opcionális: a napi smoke és a Data Manager
+ * validate-only füst-teszt különben elfedné a halott lábat — pontosan az a
+ * hibaosztály, ami miatt a lomtalan Meta-kiesése öt napon át zölden ment át.
+ *
+ * A MINTA SZÁNDÉKOSAN `%smoke%` ÉS NEM `smoke-%` (2026-08-25). Az eredeti prefix-
+ * illesztés lyukas volt: az ÉLES ledgerben a szintetikus lead_id-k `e2e-smoke-
+ * leadstatus-0004` és `ga4-smoke-test-001` alakúak, amik NEM `smoke-`-kal kezdődnek,
+ * tehát VALÓDINAK számítottak. Következmény: a `deriveOfflineState` ARMED horgonya
+ * füst-teszt adaton is átbillenthetett egy site-ot „bizonyítottan él"-be, és a
+ * coverage-számláló szintetikus kézbesítéseket írt jóvá. Ez ugyanaz a néma-zöld
+ * hibaosztály, ami ellen az egész lánc épült — csak a saját szűrőnkben.
+ *
+ * Fals kizárás kockázata elhanyagolható és a BIZTONSÁGOS irányba téved: egy valódi
+ * sor kihagyása legfeljebb UNARMED-ben tart (nem hazudik bizonyítékot), míg egy
+ * beszivárgó szintetikus sor hamis zöldet ad.
  */
-const NOT_SYNTHETIC = "lead_id NOT LIKE 'smoke-%' AND lead_id NOT LIKE 'dm-validate%'";
-const NOT_SYNTHETIC_DELIVERY = "event_id NOT LIKE 'smoke-%' AND event_id NOT LIKE 'dm-validate%'";
+export const SYNTHETIC_ID_PATTERNS = ['%smoke%', '%dm-validate%'] as const;
+
+/** Ugyanaz a szabály JS-ben — a teszt ezzel méri a tényleges éles azonosítókat. */
+export function isSyntheticId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  const v = id.toLowerCase();
+  return v.includes('smoke') || v.includes('dm-validate');
+}
+
+const notSyntheticSql = (column: string): string =>
+  SYNTHETIC_ID_PATTERNS.map((p) => `${column} NOT LIKE '${p}'`).join(' AND ');
+
+const NOT_SYNTHETIC = notSyntheticSql('lead_id');
+const NOT_SYNTHETIC_DELIVERY = notSyntheticSql('event_id');
 
 const OFFLINE_ABSOLUTE_WINDOW_DAYS = 7;
 

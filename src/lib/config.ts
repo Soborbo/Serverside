@@ -219,20 +219,62 @@ function negativeCachePut(hostname: string): void {
 }
 
 /**
+ * A SITE_CONFIG kulcsainak lapozott bejárása — ŐRZÖTT ciklussal.
+ *
+ * MIÉRT NEM `for(;;)` + `cursor = page.cursor` (2026-08-25): ha a KV
+ * `list_complete: false`-t ad vissza cursor NÉLKÜL, az a ciklus VÉGTELEN — ugyanazt a
+ * lapot kéri örökké. Workerben ez nem kivétel, amit a `catch` elkapna, hanem CPU-limit
+ * kill: a cron SOSEM fejezi be, riasztás nem megy ki, és kívülről ez pontosan úgy néz
+ * ki, mintha nem történt volna semmi. Ugyanaz a hibaosztály, ami ellen az egész
+ * riasztási lánc épült — csak most magában a felsorolóban.
+ *
+ * A visszatérési érték a TELJESSÉG: `false` = a felsorolás megszakadt (nincs cursor,
+ * vagy elértük a lap-plafont), tehát NEGATÍV következtetést (,,ez nincs a listán")
+ * tilos levonni belőle. A dobott kivételt szándékosan NEM nyeli el — a hívók
+ * `catch`-ei eltérően kezelik.
+ */
+export const KV_LIST_MAX_PAGES = 100;
+
+export async function paginateSiteConfigKeys(
+  env: Env,
+  onPage: (keys: Array<{ name: string }>) => Promise<void> | void
+): Promise<boolean> {
+  let cursor: string | undefined;
+  for (let page = 0; page < KV_LIST_MAX_PAGES; page++) {
+    const res = await env.SITE_CONFIG.list({ limit: 1000, cursor });
+    await onPage(res.keys);
+    if (res.list_complete) return true;
+    if (!res.cursor) {
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.KV_READ_FAILED,
+        message: 'SITE_CONFIG list: list_complete=false cursor nelkul — a felsorolas megszakadt',
+        pages_read: page + 1
+      });
+      return false;
+    }
+    cursor = res.cursor;
+  }
+  logStructured({
+    level: 'error',
+    error_code: TrackingErrorCode.KV_READ_FAILED,
+    message: 'SITE_CONFIG list: lap-plafon elerve, a felsorolas nem teljes',
+    pages_read: KV_LIST_MAX_PAGES
+  });
+  return false;
+}
+
+/**
  * A konfigurált site-ok (KV-kulcsok) számának teljes, lapozott megszámolása.
  * A sima `.list({ limit: 100 })` csendben csonkol 100 tenant fölött; ez cursor-loop
  * a `list_complete`-ig. Hibatűrő: hiba esetén az addig számolt értéket adja vissza.
  */
 export async function countSiteConfigs(env: Env): Promise<number> {
   let count = 0;
-  let cursor: string | undefined;
   try {
-    for (;;) {
-      const page = await env.SITE_CONFIG.list({ limit: 1000, cursor });
-      count += page.keys.length;
-      if (page.list_complete) break;
-      cursor = page.cursor;
-    }
+    await paginateSiteConfigKeys(env, (keys) => {
+      count += keys.length;
+    });
   } catch (err) {
     logStructured({
       level: 'error',
@@ -276,10 +318,8 @@ export async function listMonitoredSiteConfigsWithCompleteness(
   const bySiteId = new Map<string, SiteConfig>();
   let complete = true;
   try {
-    let cursor: string | undefined;
-    for (;;) {
-      const page = await env.SITE_CONFIG.list({ limit: 1000, cursor });
-      for (const k of page.keys) {
+    const enumerated = await paginateSiteConfigKeys(env, async (keys) => {
+      for (const k of keys) {
         const cfg = await env.SITE_CONFIG.get<SiteConfig>(k.name, { type: 'json' });
         // `monitoring: false` → kimarad a napi digest / zero-conversion riasztásból.
         // Ez NEM kozmetika: egy soha-nem-konvertáló config (placeholder pixel, deploy-
@@ -289,9 +329,10 @@ export async function listMonitoredSiteConfigsWithCompleteness(
         if (cfg?.monitoring === false) continue;
         if (cfg?.site_id && !bySiteId.has(cfg.site_id)) bySiteId.set(cfg.site_id, cfg);
       }
-      if (page.list_complete) break;
-      cursor = page.cursor;
-    }
+    });
+    // A megszakadt felsorolás UGYANAZ a kockázat, mint a dobott kivétel: a lista
+    // részleges, tehát kizárásra nem használható.
+    if (!enumerated) complete = false;
   } catch (err) {
     // A részlista NEM dobódik el (a digest-oldali pozitív használat továbbra is
     // értelmes rajta) — de a hiányosságot MEGJELÖLJÜK.

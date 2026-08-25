@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 import { sendAdminEmail } from '../lib/notify';
-import { countSiteConfigs, listConfiguredSiteIds, listMonitoredSiteConfigs } from '../lib/config';
+import { countSiteConfigs, listConfiguredSiteIds, listMonitoredSiteConfigs, paginateSiteConfigKeys } from '../lib/config';
 import {
   fetchDatasetEmq,
   collectKeyCoverage,
@@ -308,15 +308,21 @@ export async function collectManifestDrift(env: Env): Promise<DriftEntry[]> {
   if (!env.SITE_CONFIG) return [];
   try {
     const live = new Map<string, string>();
-    let cursor: string | undefined;
-    for (;;) {
-      const page = await env.SITE_CONFIG.list({ limit: 1000, cursor });
-      for (const k of page.keys) {
+    const enumerated = await paginateSiteConfigKeys(env, async (keys) => {
+      for (const k of keys) {
         const cfg = await env.SITE_CONFIG.get(k.name, { type: 'json' });
         if (cfg) live.set(k.name, await fingerprintConfig(cfg));
       }
-      if (page.list_complete) break;
-      cursor = page.cursor;
+    });
+    // RÉSZLEGES felsorolásból NEM szabad driftet számolni: a le nem kért kulcsok
+    // `missing`-ként jelennének meg, azaz KV-hiba látszana séma-driftnek. Ez ugyanaz
+    // a kezelés, mint a lenti `catch`-é — üres eredmény, warning a logban.
+    if (!enumerated) {
+      logStructured({
+        level: 'warn',
+        message: 'Daily digest: site-manifest drift-check skipped — a SITE_CONFIG felsorolas nem teljes'
+      });
+      return [];
     }
     return diffManifest(siteManifest as SiteManifest, live);
   } catch (err) {

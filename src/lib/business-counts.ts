@@ -319,7 +319,7 @@ export async function fetchBusinessSourceFindings(
         `SELECT site_id, substr(occurred_at, 1, 10) AS date, status AS event_name, COUNT(*) AS count
          FROM lead_status
          WHERE substr(occurred_at, 1, 10) = ?1
-           AND lead_id NOT LIKE 'smoke-%' AND lead_id NOT LIKE 'dm-validate%'
+           AND lead_id NOT LIKE '%smoke%' AND lead_id NOT LIKE '%dm-validate%'
          GROUP BY site_id, status`
       )
         .bind(date)

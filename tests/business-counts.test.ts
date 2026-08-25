@@ -374,3 +374,27 @@ describe('P1.2 — day semantics and monitoring scope', () => {
     expect(await fetchBusinessSourceFindings(env, '2026-08-23', '2026-08-16')).toBeNull();
   });
 });
+
+/**
+ * 2026-08-25 — a #72 újraírásakor KIESETT két állítás pótlása.
+ *
+ * A #72 40 tesztről 24-re vonta össze a fájlt (részben jogosan: több eset egyetlen
+ * ciklusba került). Kettő viszont NEM kapott utódot, és mindkettő a „néma zöld"
+ * osztályt őrzi — pont azt, amiért az egész P1.2 létezik.
+ */
+describe('P1.2 — a #72 összevonáskor elveszett két garancia', () => {
+  it('SOSEM jelentett site NEM riaszt (a business-láb UNARMED tulajdonsága)', () => {
+    // Előzmény NÉLKÜL nincs mihez képest „elhallgatni". Ha valaki később a KONFIGURÁLT
+    // site-listához mérne a MEGFIGYELT előzmény helyett, minden be nem kötött CRM
+    // azonnal napi warningot szülne — és két hét alatt megtanulnánk átlapozni a
+    // levelet. Ez a teszt tiltja meg ezt az átírást.
+    expect(findSilentBusinessSources([], [], YESTERDAY)).toEqual([]);
+  });
+
+  it('hiányzó LEDGER binding → null, NEM üres tömb', async () => {
+    // Ugyanaz a hibaosztály, amit a Codex a #70-ben megfogott: a hívó a `?? []`-lal
+    // a BUKÁST „nincs eltérés"-re fordította, és a napi riport zöld lett egy olyan
+    // láb fölött, ami el sem indult. A `null` az egyetlen jel, ami ezt megkülönbözteti.
+    expect(await fetchBusinessSourceFindings({} as any, YESTERDAY, '2026-08-16')).toBeNull();
+  });
+});
