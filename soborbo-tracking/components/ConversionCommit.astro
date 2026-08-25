@@ -1,0 +1,83 @@
+---
+/**
+ * <ConversionCommit /> — a P5 lánc HARMADIK lépése: a siker-oldalon elsüti a
+ * submitkor LETETT konverziót.
+ *
+ * ⚠️ AZ `eventId`-t MÁR ELLENŐRZÖTTEN ADD ÁT. Ez a komponens nem hitelesít:
+ * amit kap, azt commitolja. A hitelesítés a lap SZERVER-OLDALI renderjében
+ * történik, az aláírt, egyszer-használatos tokennel:
+ *
+ * ```astro
+ * ---
+ * import { consumeConversionCommitToken, kvCommitTokenStore } from '../lib/tracking/conversion-token';
+ * import ConversionCommit from '../components/ConversionCommit.astro';
+ *
+ * const r = await consumeConversionCommitToken(Astro.url.searchParams.get('ct'), {
+ *   secret: Astro.locals.runtime.env.CONVERSION_COMMIT_SECRET,
+ *   siteId: Astro.url.hostname,
+ *   store: kvCommitTokenStore(Astro.locals.runtime.env.COMMIT_TOKENS),
+ * });
+ * if (!r.ok) console.warn('[tracking]', r.code, r.message);   // néma ág nincs
+ * // A köszönő-oldal SOSEM cache-elhető: a token egyszer használatos, egy
+ * // cache-elt HTML pedig más látogatónak adná oda a commit-parancsot.
+ * Astro.response.headers.set('Cache-Control', 'no-store');
+ * ---
+ * <ConversionCommit eventId={r.ok ? r.eventId : null} />
+ * ```
+ *
+ * IDENTITY (Enhanced Conversions). Navigáció után a böngésző memóriabeli
+ * identity-puffere üres — ha EC-match kell, a siker-oldal a SAJÁT üzleti
+ * rekordjából adja át. Ilyenkor az adat a lap HTML-jébe kerül (nem
+ * `sessionStorage`-ba, nem URL-be, nem dataLayerbe), ezért a `no-store`
+ * fejléc nem opcionális. Identity nélkül a konverzió akkor is elmegy, csak
+ * gyengébb match-csel — és ezt TRK-5002 jelzi, nem nyeljük le.
+ */
+
+interface Props {
+  /** A szerver által IGAZOLT event_id. `null`/üres → a komponens nem tesz semmit. */
+  eventId?: string | null;
+  /** Opcionális EC-identity a siker-oldal szerver-oldali renderjéből. */
+  identity?: {
+    email?: string;
+    phone?: string;
+    firstName?: string;
+    lastName?: string;
+  } | null;
+}
+
+const { eventId = null, identity = null } = Astro.props;
+const payload = eventId ? { eventId, identity: identity ?? null } : null;
+---
+
+{payload && (
+  <script type="application/json" data-sb-conversion-commit set:html={JSON.stringify(payload)} />
+  <script>
+    import { commitPendingConversion } from '../lib';
+
+    function runCommit() {
+      const node = document.querySelector('[data-sb-conversion-commit]');
+      if (!node || node.dataset.sbCommitDone === '1') return;
+      // Egy dokumentumon belül egyszer: az astro:page-load view transition
+      // esetén újra lefutna, és a `already_committed` ág ugyan megvédene, de
+      // fölösleges munkát és félrevezető diagnosztikát termelne.
+      node.dataset.sbCommitDone = '1';
+
+      let parsed;
+      try {
+        parsed = JSON.parse(node.textContent || '{}');
+      } catch {
+        console.error('[tracking] ConversionCommit payload is not valid JSON — no conversion committed');
+        return;
+      }
+      if (!parsed || typeof parsed.eventId !== 'string' || !parsed.eventId) return;
+
+      const outcome = commitPendingConversion(parsed.eventId, parsed.identity || undefined);
+      document.dispatchEvent(new CustomEvent('sb:conversion-committed', {
+        detail: { eventId: parsed.eventId, outcome },
+      }));
+    }
+
+    document.addEventListener('astro:page-load', runCommit);
+    if (document.readyState !== 'loading') runCommit();
+  </script>
+)}

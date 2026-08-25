@@ -37,6 +37,20 @@ export const TRACKING_CODES = {
   // SIKERE után ég el; ezek a kódok mondják meg, mi lett a letett konverzióval.
   CONVERSION_COMMITTED:    { code: 'TRK-5000', severity: 'info',  message: 'Staged browser conversion committed after backend success' },
   CONVERSION_COMMIT_CONSENT_REVOKED: { code: 'TRK-5001', severity: 'warn', message: 'Staged conversion dropped: marketing consent was withdrawn between submit and success page' },
+  // A konverzió elmegy, de Enhanced-Conversions identity nélkül — gyengébb
+  // match-rate. Navigációs (PRG) úton ez azt jelenti, hogy a siker-oldal nem
+  // adott át identityt a szerver-oldali renderből. NEM néma degradáció.
+  CONVERSION_COMMIT_WITHOUT_IDENTITY: { code: 'TRK-5002', severity: 'warn', message: 'Conversion committed without Enhanced-Conversions identity — weaker match; the success page passed no identity' },
+  // fetch-út: a backend válaszát nem lehetett a siker-kontraktus szerint
+  // értelmezni. Fail-closed: NEM commitolunk. Egy „majd csak sikerült" ág itt
+  // pontosan azt a fantom-konverziót termelné újra, amiért a P5 készült.
+  CONVERSION_SUBMIT_RESPONSE_INVALID: { code: 'TRK-5003', severity: 'error', message: 'Form submit response did not match the success contract ({ok:true,event_id}) — no conversion committed' },
+  // fetch-út: a backend elutasított vagy a hálózat elszállt.
+  CONVERSION_SUBMIT_FAILED: { code: 'TRK-5004', severity: 'warn',  message: 'Form submit failed (non-2xx or network) — no conversion committed' },
+  // fetch-út: a backend MÁS event_id-t igazolt vissza, mint amit a böngésző
+  // letett. Ez szerződésszegés (a backendnek a rejtett mező id-jét kell
+  // visszaadnia), és dedup-törést jelentene — nem commitolunk.
+  CONVERSION_SUBMIT_EVENT_ID_MISMATCH: { code: 'TRK-5005', severity: 'error', message: 'Backend confirmed a different event_id than the browser staged — Meta dedup would break; no conversion committed' },
 } as const satisfies Record<string, CodeDef>;
 
 export type TrackingCodeKey = keyof typeof TRACKING_CODES;
