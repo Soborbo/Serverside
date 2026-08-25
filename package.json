@@ -8,7 +8,6 @@
     "tail": "wrangler tail",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "check:events": "node server/check-event-contract.mjs",
     "check:contract": "node scripts/contract-hash.mjs --check",
     "check:roundtrip": "node scripts/roundtrip-check.mjs",
     "check:docs": "node scripts/check-doc-truth.mjs",
@@ -18,7 +17,9 @@
     "compliance:selftest": "node tests/compliance/selftest/run-selftest.mjs",
     "check:lockfile": "node scripts/check-lockfile-complete.mjs package-lock.json && node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json",
     "gen:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs",
-    "check:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs --check && node --experimental-transform-types --no-warnings scripts/check-error-code-emission.mjs"
+    "check:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs --check && node --experimental-transform-types --no-warnings scripts/check-error-code-emission.mjs",
+    "check:engine-events": "node server/check-event-contract.mjs",
+    "check:live-gtm": "node --experimental-transform-types --no-warnings --import ./scripts/lib/ts-resolve-hook.mjs scripts/check-live-gtm.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260717.1",

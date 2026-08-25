@@ -8,12 +8,12 @@
 > vele" tudás van, amit generálni nem lehet. Ez a tábla a TELJESSÉGET garantálja —
 > azt, hogy egyetlen kód se maradjon dokumentálatlanul.
 
-**Kódok száma:** 134
+**Kódok száma:** 149
 
 | Retryability | Kódok | Jelentés |
 |---|---|---|
-| `RETRYABLE` | 45 | átmeneti — egy későbbi próbálkozás sikerülhet |
-| `OPERATOR_ACTION` | 31 | emberi beavatkozás kell |
+| `RETRYABLE` | 46 | átmeneti — egy későbbi próbálkozás sikerülhet |
+| `OPERATOR_ACTION` | 45 | emberi beavatkozás kell |
 | `TERMINAL` | 24 | végleges — ugyanez a payload sosem megy át |
 | `CONFIG_BLOCKED` | 21 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
 | `POLICY_SKIP` | 9 | szándékos kihagyás vagy informatív jel — nincs mit újrapróbálni |
@@ -102,6 +102,21 @@
 | `TRK-840-012` | `DATAMANAGER_MALFORMED_RESPONSE` | google-data-manager | critical | `RETRYABLE` | `lib/datamanager.ts` | Something went wrong on our side. Your request was not affected. | Data Manager returned 2xx with an unparseable body — the delivery state is UNKNOWN, so it is NOT booked as accepted | `gads-offline-error-granularity.test.ts` |
 | `TRK-840-013` | `DATAMANAGER_INVALID_CLICK_ID` | google-data-manager | warning | `POLICY_SKIP` | `lib/datamanager.ts` | Something went wrong on our side. Your request was not affected. | Click identifier (gclid/gbraid/wbraid) is malformed — dropped before the send so it cannot cause a blanket 400 | `gads-offline-error-granularity.test.ts` |
 | `TRK-840-014` | `DATAMANAGER_RESPONSE_NO_REQUEST_ID` | google-data-manager | warning | `POLICY_SKIP` | `lib/datamanager.ts` | Something went wrong on our side. Your request was not affected. | Data Manager 2xx carried no requestId — accepted on the HTTP status, but the vendor trace is missing | `gads-offline-error-granularity.test.ts` |
+| `TRK-850-001` | `GTM_TAG_MISSING` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | An expected GTM tag is absent from the live container — that browser leg does not fire at all | `gtm-conformance.test.ts` |
+| `TRK-850-002` | `GTM_TAG_PAUSED` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | An expected GTM tag exists but is PAUSED — it looks configured and fires nothing | `gtm-conformance.test.ts` |
+| `TRK-850-003` | `GTM_TRIGGER_MISSING` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | An expected custom-event trigger is absent — the tag can never fire for that event | `gtm-conformance.test.ts` |
+| `TRK-850-004` | `GTM_EVENT_NAME_MISMATCH` | gtm-conformance | warning | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | A live trigger listens on an event name the code never emits (or vice versa) | `gtm-conformance.test.ts` |
+| `TRK-850-005` | `GTM_CONVERSION_ID_MISMATCH` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | The live Google Ads conversion ID differs from the expected one — conversions land in the wrong account | `gtm-conformance.test.ts` |
+| `TRK-850-006` | `GTM_CONVERSION_LABEL_MISMATCH` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | The live Google Ads conversion label differs from the expected one — conversions land on the wrong action | `gtm-conformance.test.ts` |
+| `TRK-850-007` | `GTM_ENHANCED_CONVERSIONS_MISSING` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | Enhanced Conversions is not enabled on a Google Ads conversion tag (INV-009) | `gtm-conformance.test.ts` |
+| `TRK-850-008` | `GTM_EC_USER_DATA_VARIABLE_MISSING` | gtm-conformance | warning | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | The Enhanced-Conversions user-data variable is missing or not wired to the conversion tag | `gtm-conformance.test.ts` |
+| `TRK-850-009` | `GTM_CONSENT_SETTINGS_MISSING` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | A consent-bound tag carries no consent settings — it may fire before or without consent | `gtm-conformance.test.ts` |
+| `TRK-850-010` | `GTM_DUPLICATE_CONVERSION_TAG` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | More than one tag books the same conversion — double counting inflates the bidding signal | `gtm-conformance.test.ts` |
+| `TRK-850-011` | `GTM_UNKNOWN_CONVERSION_TAG` | gtm-conformance | critical | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | An unknown but CONVERSION-CAPABLE tag exists in the live container — nobody owns it and it can book money | `gtm-conformance.test.ts` |
+| `TRK-850-012` | `GTM_LEGACY_TRIGGER_ACTIVE` | gtm-conformance | warning | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | A retired/legacy event trigger is still active in the live container | `gtm-conformance.test.ts` |
+| `TRK-850-013` | `GTM_UNSUPPORTED_CUSTOM_HTML` | gtm-conformance | warning | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | A Custom HTML tag on the money path (gtag/fbq/conversion call) — unreviewable and outside the contract | `gtm-conformance.test.ts` |
+| `TRK-850-014` | `GTM_CONTAINER_MISMATCH` | gtm-conformance | warning | `OPERATOR_ACTION` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | The live container/version is not the one the site is expected to run | `gtm-conformance.test.ts` |
+| `TRK-850-015` | `GTM_CONFORMANCE_UNAVAILABLE` | gtm-conformance | critical | `RETRYABLE` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | The GTM conformance check could not read the live container — this is DEGRADED, not zero findings | `gtm-conformance.test.ts` |
 | `TRK-810-001` | `MSADS_DISPATCH_FAILED` | microsoft-ads | warning | `RETRYABLE` | *alvó* | Something went wrong on our side. Your request was not affected. | Microsoft Ads offline conversion upload failed | *alvó* |
 | `TRK-810-002` | `MSADS_API_TIMEOUT` | microsoft-ads | warning | `RETRYABLE` | *alvó* | Something went wrong on our side. Your request was not affected. | Microsoft Ads API call exceeded timeout | *alvó* |
 | `TRK-820-001` | `TIKTOK_DISPATCH_FAILED` | tiktok | warning | `RETRYABLE` | `lib/tiktok.ts` | Something went wrong on our side. Your request was not affected. | TikTok Events API call failed | `forwarders.test.ts` |
