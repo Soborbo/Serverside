@@ -56,6 +56,47 @@ describe('handleAdmin — auth gate', () => {
   });
 });
 
+describe('handleAdmin — fleet-health (F8 / P12)', () => {
+  it('401 token nélkül — a flotta-nézet nem szivároghat ki hitelesítés nélkül', async () => {
+    const res = await handleAdmin(
+      req('fh1.example.com', 'GET', '/api/event/admin/fleet-health'),
+      makeEnv(),
+      ctx
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('200 + riport akkor is, ha a flotta RED — ez RIPORT, nem liveness-probe', async () => {
+    const env = makeEnv({
+      SITE_CONFIG: {
+        list: async () => ({ keys: [{ name: 'fh.example.com' }], list_complete: true }),
+        get: async () => ({ site_id: 'fh', country_code: 'HU', currency: 'HUF' })
+      },
+      LEDGER: {
+        prepare: () => ({
+          bind: () => ({ all: async () => ({ results: [] }), first: async () => null }),
+          all: async () => ({ results: [] }),
+          first: async () => null
+        })
+      }
+    });
+    const res = await handleAdmin(
+      req('fh2.example.com', 'GET', '/api/event/admin/fleet-health', TOKEN),
+      env,
+      ctx
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.sites).toHaveLength(1);
+    // Az ingest lefutott és tényleg nulla → RED; a flotta ettől RED, a válasz mégis 200.
+    expect(body.fleet_overall).toBe('RED');
+    expect(body.config_enumeration_complete).toBe(true);
+    // A két állandó vakfolt a riportban is nevesítve van.
+    expect(body.sites[0].blind_spots).toContain('gtm_conformance');
+    expect(body.sites[0].blind_spots).toContain('inventory');
+  });
+});
+
 describe('handleAdmin — dispatch + guards', () => {
   it('404 on unknown admin path', async () => {
     const res = await handleAdmin(

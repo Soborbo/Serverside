@@ -326,6 +326,14 @@ export enum TrackingErrorCode {
   // 021 — a szintetikus smoke-lead lánc bukott. Ez a napi „él-e a pénz-út"
   // próba; kód nélkül a napi digest szövegében tűnt el.
   SMOKE_LEAD_CHECK_FAILED = 'TRK-950-021',
+  /**
+   * F8 · P12 — a flotta-egészség nézet egyik ALKÉRDÉSE bukott el (D1/KV query).
+   * A nézet ilyenkor NEM lesz szűkebb és NEM lesz zöldebb: az érintett dimenzió
+   * UNKNOWN-ra vált, ami a rollupban a YELLOW FÖLÖTT van. A kód azért kell, hogy
+   * a MÉRÉS SAJÁT kiesése greppelhető legyen — enélkül a vak dimenzió és a
+   * ténylegesen mért, ép dimenzió megkülönböztethetetlen lenne a logban (§17).
+   */
+  FLEET_HEALTH_QUERY_FAILED = 'TRK-950-022',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -548,6 +556,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'The critical SMS alert could not be sent — the last-resort escalation channel is down',
   [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]:
     'The synthetic smoke-lead chain failed: the daily proof that the money path is alive did not pass',
+  [TrackingErrorCode.FLEET_HEALTH_QUERY_FAILED]:
+    'A fleet-health sub-query failed — the affected dimension degrades to UNKNOWN (never to GREEN, never to zero)',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]:
     'Cross-platform reconciliation is not running (no recon config, or every leg skipped) — the Model 2 browser/GTM blind spot is unmonitored',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
@@ -690,6 +700,9 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.ALERT_EMAIL_FAILED]: 'critical',
   [TrackingErrorCode.ALERT_SMS_FAILED]: 'critical',
   [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]: 'critical',
+  // Warning, nem critical: a nezet MAGA nem penzut, es a kiesest a UNKNOWN
+  // dimenzio amugy is lathatova teszi. Nema viszont nem lehet.
+  [TrackingErrorCode.FLEET_HEALTH_QUERY_FAILED]: 'warning',
   // A penz-utat erinto GTM-elteresek kritikusak: a gateway-oldalon SEMMILYEN
   // jelet nem hagynak, tehat csak itt derulhetnek ki.
   [TrackingErrorCode.GTM_TAG_MISSING]: 'critical',
@@ -951,6 +964,7 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.ALERT_EMAIL_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.ALERT_SMS_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.SMOKE_LEAD_CHECK_FAILED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.FLEET_HEALTH_QUERY_FAILED]: 'RETRYABLE',
   // A GTM-elteresek MIND emberi beavatkozast kernek: a kontener kezzel
   // szerkesztheto, retry nem javitja.
   [TrackingErrorCode.GTM_TAG_MISSING]: 'OPERATOR_ACTION',

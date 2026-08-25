@@ -8,11 +8,11 @@
 > vele" tudás van, amit generálni nem lehet. Ez a tábla a TELJESSÉGET garantálja —
 > azt, hogy egyetlen kód se maradjon dokumentálatlanul.
 
-**Kódok száma:** 149
+**Kódok száma:** 150
 
 | Retryability | Kódok | Jelentés |
 |---|---|---|
-| `RETRYABLE` | 46 | átmeneti — egy későbbi próbálkozás sikerülhet |
+| `RETRYABLE` | 47 | átmeneti — egy későbbi próbálkozás sikerülhet |
 | `OPERATOR_ACTION` | 45 | emberi beavatkozás kell |
 | `TERMINAL` | 24 | végleges — ugyanez a payload sosem megy át |
 | `CONFIG_BLOCKED` | 21 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
@@ -22,7 +22,7 @@
 | Code | Symbol | Component | Severity | Retryability | Trigger | User response | Operator action | Test |
 |---|---|---|---|---|---|---|---|---|
 | `TRK-000-001` | `UNHANDLED_EXCEPTION` | worker-infra | critical | `UNKNOWN` | `worker.ts` | Something went wrong on our side. Your request was not affected. | Unhandled exception in Worker fetch handler | — |
-| `TRK-000-002` | `KV_READ_FAILED` | worker-infra | warning | `RETRYABLE` | `lib/config.ts`, `routes/business-counts.ts` +3 | Something went wrong on our side. Your request was not affected. | KV namespace read operation failed | — |
+| `TRK-000-002` | `KV_READ_FAILED` | worker-infra | warning | `RETRYABLE` | `lib/config.ts`, `lib/fleet-collect.ts` +4 | Something went wrong on our side. Your request was not affected. | KV namespace read operation failed | — |
 | `TRK-000-003` | `KV_WRITE_FAILED` | worker-infra | warning | `RETRYABLE` | *leváltva* | Something went wrong on our side. Your request was not affected. | KV namespace write operation failed | *leváltva* |
 | `TRK-000-004` | `R2_READ_FAILED` | worker-infra | warning | `RETRYABLE` | *leváltva* | Something went wrong on our side. Your request was not affected. | R2 bucket read operation failed | *leváltva* |
 | `TRK-000-005` | `R2_WRITE_FAILED` | worker-infra | warning | `RETRYABLE` | *leváltva* | Something went wrong on our side. Your request was not affected. | R2 bucket write operation failed | *leváltva* |
@@ -161,6 +161,7 @@
 | `TRK-950-019` | `ALERT_EMAIL_FAILED` | reconciliation | critical | `RETRYABLE` | `lib/notify.ts` | Something went wrong on our side. Your request was not affected. | The alert email could not be sent — every other failure in the system just went silent, because the news reaches no human | `notify.test.ts` |
 | `TRK-950-020` | `ALERT_SMS_FAILED` | reconciliation | critical | `RETRYABLE` | `lib/notify.ts` | Something went wrong on our side. Your request was not affected. | The critical SMS alert could not be sent — the last-resort escalation channel is down | `notify.test.ts` |
 | `TRK-950-021` | `SMOKE_LEAD_CHECK_FAILED` | reconciliation | critical | `OPERATOR_ACTION` | `scheduled/daily-digest.ts` | Something went wrong on our side. Your request was not affected. | The synthetic smoke-lead chain failed: the daily proof that the money path is alive did not pass | `daily-digest-handler.test.ts` |
+| `TRK-950-022` | `FLEET_HEALTH_QUERY_FAILED` | reconciliation | warning | `RETRYABLE` | `lib/fleet-collect.ts` | Something went wrong on our side. Your request was not affected. | A fleet-health sub-query failed — the affected dimension degrades to UNKNOWN (never to GREEN, never to zero) | — |
 | `TRK-960-001` | `RETENTION_QUERY_FAILED` | retention | warning | `RETRYABLE` | `scheduled/retention.ts` | Something went wrong on our side. Your request was not affected. | Ledger retention D1 delete query failed | — |
 | `TRK-960-002` | `RETENTION_R2_FAILED` | retention | warning | `RETRYABLE` | `scheduled/retention.ts` | Something went wrong on our side. Your request was not affected. | Dead-letter R2 retention purge failed | — |
 | `TRK-EVT-001` | `UNKNOWN_EVENT_NAME` | event-contract | info | `TERMINAL` | `routes/conversion.ts` | Something went wrong on our side. Your request was not affected. | event_name not in the canonical ALLOWED set (events.json) | `conversion-route.test.ts` |
