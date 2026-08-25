@@ -15,3 +15,7 @@ prod-audit/
 # Compliance harness: az önteszt kimenete tranziens (a dátumozott flotta-baseline
 # viszont MEGY a repóba — az a mérés lényege).
 tests/compliance/selftest/last-run/
+
+# A KV-ből újragenerált manifest (scripts/apply-kv-recon-config.sh). Titok-mentes
+# (a generátor sha256-tal helyettesíti), de MUNKAFÁJL — a repóba a src/site-manifest.json megy.
+site-manifest.generated.json

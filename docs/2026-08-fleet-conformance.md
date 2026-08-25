@@ -556,3 +556,12 @@ events" toggle (az ki van kapcsolva), hanem **5 aktív Event Setup Tool szabály
 konzultációt"; 3× Schedule: „időpontfoglalás", „időpontok budára/pestre") — a
 pixel-config `estruleengine` bejegyzéseiből igazolva. Fix: Events Manager → Event
 setup → Manage events → szabályok törlése. Részletek az audit-doksi Headline 2-ben.
+
+**Mért tanulság (2026-08-24, flotta-szinten hasznos):** az `fbq('set','autoConfig',
+false, <pixel_id>)` MÁR NEM kapcsolja ki a Meta Event Setup Tool szabályokat — a
+signals/config autoConfig=false mellett is betölt és feltétel nélkül aktiválja az
+`est` plugint (beautyflow-n élő teszttel igazolva: a szabály-Lead a GTM 41-es
+verzió publikálása után is tüzelt). EST-duplázást csak az Events Manager-beli
+szabálytörlés szüntet meg; erre publikus API nincs. Az autoConfig=false az
+automatikus gomb/microdata-gyűjtést tiltja — privacy-okból bent maradt a
+beautyflow Meta Pixel - Base tagben.
