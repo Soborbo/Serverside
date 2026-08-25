@@ -50,6 +50,7 @@ beérkezett nem-GET kéréseket. Ha ez a szám nem nulla, az önteszt bukik.
 | **B** elfogad mindent | egy kattintás az accept gombra |
 | **C** elutasít mindent | egy kattintás a reject gombra — **ez a legfontosabb** |
 | **D** visszavonás | elfogad → újratölt → revisit → elutasít |
+| **E** analytics-only | **részleges** consent: analitika IGEN, marketing NEM (F7) |
 | **GPC** | mint az A, `Sec-GPC: 1` fejléccel (csak megfigyelés) |
 
 Mindegyik **friss `browser.newContext()`-ben**, nulla átvitt állapottal.
@@ -60,6 +61,47 @@ hozzáférés is engedélyköteles), `document.cookie` olvasás, `consent defaul
 GTM-hez képest, GTM noscript iframe, banner-UI (reject gomb megléte, mért méret /
 kontraszt / betűméret arány, kattintásszám), süti-tájékoztató harmadik felekkel,
 és elutasítás utáni pingekben az azonosító-szivárgás.
+
+### Az E (analytics-only) forgatókönyv — és miért magvetett sütivel megy
+
+A B és a C két SZÉLSŐ eset. A legtöbb CMP-integráció ezekre van bekötve, és
+pont ezért csúszik át rajtuk némán egy „minden vagy semmi" implementáció. A
+valódi próba a RÉSZLEGES döntés.
+
+A döntést a CMP saját süti-formátumában **ültetjük be** betöltés előtt
+(`cookieyes-consent` vagy `sbo_consent` v2), nem a beállítás-panelt kattintjuk
+végig: a kategória-kapcsolók CMP-nként és nyelvenként mások, és egy elrontott
+kattintás-sorozat CSENDBEN „elfogad mindent"-et adna — amit a szcenárió
+„nincs marketing"-ként könyvelne. A magvetés után **ellenőrizzük**, hogy a CMP
+elfogadta-e a döntést (nem jön-e vissza a banner); ha nem, a szcenárió **N-A**
+indoklással, nem hamis PASS.
+
+### Vendor-leltár (F7)
+
+Minden lefutott fázisból leltár készül arról, KIK futnak az oldalon. A
+`lib/vendor-registry.mjs` kimondja, mit ismerünk; **amit nem, az
+`unknown_vendor`**, és nevesített megállapítás lesz belőle — nem néma `other`.
+
+Ez a korábbi állapot javítása: az `'other'` gyűjtőkategóriában egy sose látott
+mérőszkript és egy webfont megkülönböztethetetlen volt, vagyis a mérés hiánya
+jóváhagyásnak látszott.
+
+**Report-only.** Az ismeretlen vendor önmagában nem jogsértés (lehet legitim, de
+a regiszterből hiányzó CDN). A teendő a regiszter bővítése VAGY a szkript
+eltávolítása — ember dönt. A terv sorrendje: report-only → alert → gate.
+
+### Statikus forrás-scan (F7)
+
+A futásidejű mérés azt látja, ami EGY betöltésen elindult. A statikus scan az
+oldal HTML-jét és az **első fél-beli** szkripteket olvassa, és:
+
+- **FAIL**: PII a `dataLayer.push`-ban (CLAUDE.md 15.) — a szerzőtől függetlenül
+  jogsértés, az F12-es bámészkodó is látja;
+- **INFO**: nyers consent-parse (INV-005) és közvetlen `fbq`/`gtag` hívás
+  (INV-006) — bundle-ölt forrásból NEM eldönthető, hogy a site szerzője írta-e,
+  vagy a tracking-csomagunk hozta be, ezért ember dönt;
+- **INFO**: a forrásban DEKLARÁLT, de futásidőben soha nem induló tracker — ez
+  feltételes betöltő, tehát a futásidejű PASS nem fedi le azt a lábat.
 
 ## Amit a mérés NEM tud
 
@@ -87,11 +129,15 @@ máshonnan. A riport fejlécében jelezve van, ha ez a mód volt bekapcsolva.
 | `run.mjs` | a futtató: forgatókönyvek, safety-net, riport-írás |
 | `lib/instrument.mjs` | az oldalba injektált műszer (storage/cookie/dataLayer + submit-blokk) |
 | `lib/classify.mjs` | request-osztályozás + ping-azonosító vizsgálat |
+| `lib/vendor-registry.mjs` | **a** vendor-igazság: minta → név, kategória, consent-osztály (F7) |
+| `lib/inventory.mjs` | vendor-leltár fázisonként + analytics-only értékelés (F7) |
+| `lib/static-scan.mjs` | forrás-scan: tiltott minták + deklarált trackerek (F7) |
 | `lib/banner.mjs` | banner-felderítés, WCAG-kontraszt, gomb-egyenrangúság |
 | `lib/checks.mjs` | megfigyelés → PASS/FAIL/N-A + bizonyíték |
 | `lib/report.mjs` | `report.json` + `report.md` |
 | `selftest/` | helyi, szándékosan szabálysértő fixture — a műszer kalibrálása |
 | `compliance-lib.test.ts` | a tiszta mag unit tesztjei (a `npm test` futtatja) |
+| `inventory-lib.test.ts` | a leltár + statikus scan unit tesztjei (a `npm test` futtatja) |
 
 ## Böngészők
 

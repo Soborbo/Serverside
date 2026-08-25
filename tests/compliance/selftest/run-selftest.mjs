@@ -50,7 +50,22 @@ const EXPECTED_FAILS = [
   'UI_reject_equal_prominence',
   'C_no_consent_bound_requests',
   'C_pings_carry_no_identifiers',
-  'D_withdrawal_purges'
+  'D_withdrawal_purges',
+  // F7 — a fixture PII-t tol a dataLayerbe (CLAUDE.md 15.). Ez a szerzőtől
+  // függetlenül jogsértés, tehát a statikus scannek FAIL-t kell adnia rá.
+  'STATIC_no_pii_in_source'
+];
+
+/**
+ * F7 — REPORT-ONLY megállapítások. Ezek szándékosan nem buktatnak, de az
+ * öntesztnek bizonyítania KELL, hogy a műszer LÁTJA őket: egy néma INFO és egy
+ * hiányzó ellenőrzés a riportban megkülönböztethetetlen lenne.
+ */
+const EXPECTED_INFOS = [
+  'INV_unknown_vendors',
+  'INV_unknown_vendor_pre_consent',
+  'STATIC_no_forbidden_calls',
+  'STATIC_runtime_gap'
 ];
 
 const EXPECTED_PASSES = ['UI_reject_button_present', 'UI_clicks_to_reject', 'MISC_cookie_policy_names_third_parties'];
@@ -86,6 +101,40 @@ async function main() {
       if (byId[id]?.status !== 'PASS') {
         problems.push(`${id}: PASS-t vártunk, kaptunk ${byId[id]?.status ?? 'semmit'} — a műszer HAMIS riasztást ad`);
       }
+    }
+
+    for (const id of EXPECTED_INFOS) {
+      if (byId[id]?.status !== 'INFO') {
+        problems.push(`${id}: INFO-t vártunk, kaptunk ${byId[id]?.status ?? 'semmit'} — a report-only műszer néma`);
+      }
+    }
+
+    // Az ismeretlen vendort NÉVVEL kell megneveznie: egy szám („1 ismeretlen")
+    // nem elég ahhoz, hogy reggel el lehessen dönteni, mit kell csinálni vele.
+    const unknownEvidence = JSON.stringify(byId['INV_unknown_vendors']?.evidence ?? []);
+    if (!unknownEvidence.includes('selftest-unknown-vendor.test')) {
+      problems.push(
+        'INV_unknown_vendors: a bizonyíték nem nevezi meg a fixture ismeretlen hostját — ' +
+          `kaptuk: ${unknownEvidence.slice(0, 200)}`
+      );
+    }
+
+    // A leltárnak MINDEN fázisból építkeznie kell, és nem szabad a first-party
+    // saját kéréseit vendorként felsorolnia.
+    const inv = site.inventory;
+    if (!inv || !Array.isArray(inv.rows) || inv.rows.length === 0) {
+      problems.push('A vendor-leltár üres — pedig a fixture Google/Meta/ismeretlen kéréseket is indít');
+    } else if (inv.rows.some((r) => r.category === 'first_party')) {
+      problems.push('A leltárban first-party sor van — a saját kérések nem vendorok, elnyomnák a jelet');
+    }
+
+    // A statikus scan a forrásban DEKLARÁLT, de sosem futó Ads-azonosítót is lássa.
+    const gapEvidence = JSON.stringify(byId['STATIC_runtime_gap']?.evidence ?? []);
+    if (!gapEvidence.includes('google_ads_conversion')) {
+      problems.push(
+        'STATIC_runtime_gap: a forrásban deklarált, de futásidőben néma Ads-azonosítót nem nevezte meg — ' +
+          `kaptuk: ${gapEvidence.slice(0, 200)}`
+      );
     }
 
     // Minden FAIL mellett KELL bizonyíték.

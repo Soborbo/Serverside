@@ -68,6 +68,22 @@
     new Image().src = 'https://www.google-analytics.com/g/collect?v=2&tid=G-SELFTEST&uid=user-123&ep.email=a%40b.com';
     new Image().src = 'https://www.facebook.com/tr?id=1&ev=PageView';
 
+    // ── F7 · ISMERETLEN VENDOR (a vendor-regiszterben SZÁNDÉKOSAN nincs benne) ──
+    // A leltárnak ezt `unknown_vendor`-ként KELL nevesítenie, nem `other`-ként
+    // elhallgatnia. Ez a fixture kalibrálja azt, hogy a műszer látja az ismeretlent.
+    new Image().src = 'https://px.selftest-unknown-vendor.test/pixel.gif?id=1';
+
+    // ── F7 · PII A dataLayerBEN (CLAUDE.md 15.) — a statikus scan FAIL-je ──────
+    window.dataLayer.push({ event: 'lead', user_data: { email: 'nobody@example.com' } });
+
+    // ── F7 · DEKLARÁLT, DE SOHA NEM FUTÓ tracker ─────────────────────────────
+    // Az AW- azonosító itt csak a forrásban létezik; futásidőben egyetlen Ads-kérés
+    // sem indul belőle. A statikus↔futásidejű összevetésnek ezt a RÉST kell látnia.
+    // Ugyanígy egy kikommentelt Meta-snippet: visszakapcsolható, tehát számít.
+    //   fbq('init', '1234567890123456');
+    var DECLARED_ADS_ID = 'AW-1234567890';
+    void DECLARED_ADS_ID;
+
     // ── A safety-net próbája ────────────────────────────────────────────────
     // Mindkettőnek MEG KELL HIÚSULNIA: a DOM-blokk a submit-eseményt fogja meg,
     // a hálózati abort pedig a first-party POST-ot.
