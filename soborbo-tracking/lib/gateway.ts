@@ -433,14 +433,23 @@ export function collectAttribution(): AttributionParams {
     // no-op
   }
 
-  if (adGranted && !fresh.gclid) {
+  // A SORREND KÖTÖTT — két őr, ebben a sorrendben:
+  //  1. Az URL is hozhat több Google-ID-t (redirect / tag-manager artefakt):
+  //     egyre szűkítjük.
+  //  2. A `_gcl_aw` cookie-fallback CSAK akkor futhat, ha az URL EGYIK Google
+  //     klikk-ID-t sem hozta. A cookie a KORÁBBI kattintásé; ha most `gbraid`
+  //     érkezett, a `keepSingleGoogleClickId` prioritása (gclid > gbraid) pont
+  //     az ELAVULT cookie-gclid-et választaná a friss gbraid helyett — egy
+  //     visszatérő fizetett látogatónál néma, rossz-kattintás attribúció.
+  keepSingleGoogleClickId(fresh);
+
+  if (adGranted && !GOOGLE_CLICK_KEYS.some((k) => fresh[k])) {
     const g = gclidFromCookie();
     if (g) fresh.gclid = g;
   }
 
-  // A friss jelekből EGY Google klikk-ID marad, és a tárolt testvérek is
-  // takarítódnak — enélkül a merge két, egymásnak ellentmondó klikk-ID-t vinne.
-  keepSingleGoogleClickId(fresh);
+  // A tárolt testvérek is takarítódnak — enélkül a merge két, egymásnak
+  // ellentmondó klikk-ID-t vinne.
   const cleanedStore = dropStaleGoogleClickIds(stored, fresh);
 
   // Last-touch: the fresh URL signals override the stored ones.
