@@ -80,6 +80,19 @@ jobs:
       - name: Error-code catalogue + emission coverage
         run: npm run check:error-codes
 
+      # F9 — a csomag verzió-tekintélye és a terjesztési manifeszt.
+      # A verzió HÁROM helyen él (package.json + a böngésző-bundle-be forduló
+      # CLIENT_LIB_VERSION + a site-okra ÖNÁLLÓAN másolódó BACKEND_LIB_VERSION);
+      # a duplikáció szerkezeti, ezért őrt kap. Amikor ez az őr megszületett, a
+      # három érték már szét is csúszott (6.2.1 / 6.2.1 / 6.2.0).
+      - name: Package version authority (three copies, one truth)
+        run: npm run check:package-version
+
+      # A manifeszt teszi auditálhatóvá a bemásolt példányokat: enélkül egy
+      # site-on sodródó másolatról semmit nem lehet gépileg állítani.
+      - name: Distribution manifest in sync
+        run: npm run check:dist-manifest
+
   # A soborbo-tracking kliens-lib csomag (2026-07-21 óta itt él, sajat package.json +
   # jsdom vitest). A ../src/events.json-t OLVASSA (egyetlen forras, nincs vendor-masolat).
   tracking-package:
