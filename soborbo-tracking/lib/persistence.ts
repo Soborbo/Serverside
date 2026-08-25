@@ -479,20 +479,28 @@ function removeMarketingLocalStorage(): void {
  * by prefix from `document.cookie` — a hard-coded list would silently miss the
  * actual property's cookie, which is the whole point of the purge.
  */
-const VENDOR_PREFIXES = {
-  /** GA4: client id + per-stream session state. */
-  analytics: ['_ga'],
+const VENDOR_COOKIES = {
+  /**
+   * GA4: a `_ga` client-id süti PONTOS néven, a per-stream session süti
+   * (`_ga_<STREAM>`) prefixszel. A prefix szándékosan `_ga_` és nem `_ga`: a
+   * puszta `_ga` prefix a Google Ads-hez tartozó `_gac_<ID>`-t, az UA-örökség
+   * `_gat*`-ot és a `_gali`-t is elvinné — azok nem analytics-kategóriájúak.
+   */
+  analytics: { exact: ['_ga'], prefixes: ['_ga_'] },
   /** Google Ads conversion linker (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`). */
-  marketing: ['_gcl_']
+  marketing: { exact: [], prefixes: ['_gcl_'] }
 } as const;
 
-/** Every cookie NAME currently visible to JS that starts with one of the prefixes. */
-function cookieNamesByPrefix(prefixes: readonly string[]): string[] {
+type VendorCookieMatch = { readonly exact: readonly string[]; readonly prefixes: readonly string[] };
+
+/** Every cookie NAME currently visible to JS that matches exactly or by prefix. */
+function matchingCookieNames(match: VendorCookieMatch): string[] {
   if (typeof document === 'undefined') return [];
   const names = new Set<string>();
   for (const part of document.cookie.split(';')) {
     const name = part.split('=')[0].trim();
-    if (name && prefixes.some((p) => name === p || name.startsWith(p))) names.add(name);
+    if (!name) continue;
+    if (match.exact.includes(name) || match.prefixes.some((p) => name.startsWith(p))) names.add(name);
   }
   return [...names];
 }
@@ -512,7 +520,7 @@ export function purgeMarketingStorage(): void {
   removeMarketingLocalStorage();
   expireCookie('_fbp');
   expireCookie('_fbc');
-  for (const name of cookieNamesByPrefix(VENDOR_PREFIXES.marketing)) expireCookie(name);
+  for (const name of matchingCookieNames(VENDOR_COOKIES.marketing)) expireCookie(name);
 }
 
 /**
@@ -521,17 +529,23 @@ export function purgeMarketingStorage(): void {
  * a denied jel a küldést állítja meg, a 2 évre kiírt azonosítót nem.
  */
 export function purgeAnalyticsStorage(): void {
+  resetSession();
+  for (const name of matchingCookieNames(VENDOR_COOKIES.analytics)) expireCookie(name);
+}
+
+/** Storage-only half of the analytics purge — shared with clearTrackingData. Never touches cookies. */
+function resetSession(): void {
   ssRm(SESSION_KEY);
   memorySession = null;
-  for (const name of cookieNamesByPrefix(VENDOR_PREFIXES.analytics)) expireCookie(name);
 }
 
 /**
  * Legacy "clear everything" helper. Behaviour UNCHANGED (localStorage keys +
- * `sb_session` + memory session; it does NOT touch the Meta cookies) — the
- * consent-withdrawal path is the category-split pair above, which does.
+ * `sb_session` + memory session; it does NOT touch ANY cookie — neither the Meta
+ * nor the Google ones) — the consent-withdrawal path is the category-split pair
+ * above, which does.
  */
 export function clearTrackingData(): void {
   removeMarketingLocalStorage();
-  purgeAnalyticsStorage();
+  resetSession();
 }

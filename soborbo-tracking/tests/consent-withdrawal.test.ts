@@ -132,6 +132,18 @@ describe('visszavonás — a Google saját sütijei', () => {
     expect(document.cookie).not.toContain('_ga_ABC123XYZ=');
   });
 
+  it('az analytics visszavonása csak a pontos `_ga`-t és a `_ga_<STREAM>`-et viszi, a `_gac_*`-ot NEM', () => {
+    initTracking();
+    setCookie('_gac_UA-123', 'x');
+    setCookie('_ga', 'GA1.1.x');
+    setCookie('_ga_ABC', 'GS1.x');
+    emitConsentUpdate({ analytics: false, marketing: true });
+
+    expect(document.cookie).not.toContain('_ga=');
+    expect(document.cookie).not.toContain('_ga_ABC=');
+    expect(document.cookie).toContain('_gac_UA-123=x');
+  });
+
   it('az analytics visszavonása NEM viszi el a Google Ads sütiket (az marketing)', () => {
     initTracking();
     seedVendorCookies();
