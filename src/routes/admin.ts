@@ -37,10 +37,6 @@ export async function handleAdmin(
   const url = new URL(request.url);
   const hostname = url.hostname;
 
-  // Defense-in-depth a token brute-force ellen: IP-kulcsos throttle az auth
-  // ELŐTT, hogy egy próbálkozó ne tudjon korlátlan tokent végigpróbálni. Külön
-  // ADMIN_LIMITER budget, fallback INGEST_LIMITER; binding nélkül kimarad.
-  // Fail-open: limiter-hiba nem zárhatja ki a legitim admin-műveletet.
   const limiter = env.ADMIN_LIMITER || env.INGEST_LIMITER;
   if (limiter) {
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
@@ -97,23 +93,6 @@ export async function handleAdmin(
 }
 
 // ── GET /admin/consent-stats ─────────────────────────────────────────────────
-/**
- * Soborbo CMP — consent-arányok site × banner_version bontásban, a `cky_agreement`
- * egyezési aránnyal és a medián helyett használt átlagos `interaction_ms`-szel.
- *
- * MI EZ A HÁROM SZÁM, ÉS MIÉRT ÉPP EZ:
- *  1. accept/reject arány banner-verziónként — az A/B-variánsok összevetése. A
- *     baseline NEM a receipts-alapú 78% (az event-szintű szám, nem látogatói),
- *     hanem a CookieYes Consent Log tényleges aránya ugyanarra az időszakra.
- *  2. `cky_agreement` — a párhuzamos ablak fő mérőszáma: ugyanazt látja-e a két
- *     rendszer UGYANARRA a látogatóra. Ha ez tartósan < 1, a pilot nem
- *     élesíthető tovább, mert nem tudjuk, melyik fordítás a rossz.
- *  3. `interaction_ms` — mennyi idő alatt döntenek. A NULL-ok aránya (döntés
- *     nélkül elhagyott banner) legalább annyira érdekes, mint az átlag.
- *
- * A `consent_metrics` NEM JOIN-olható a `consent_log`-hoz (ID-mentes), ezért a
- * megjelenés-számok KÜLÖN blokkban jönnek — ez nem hiányosság, hanem a lényeg.
- */
 async function handleConsentStats(env: Env, hostname: string): Promise<Response> {
   const siteConfig = await getSiteConfig(hostname, env);
   if (!siteConfig) return json({ error: 'no_site_config', hostname }, 404);
@@ -130,8 +109,6 @@ async function handleConsentStats(env: Env, hostname: string): Promise<Response>
       )
         .bind(siteConfig.site_id)
         .all(),
-      // A NULL-ok (nincs CookieYes-olvasat) KIMARADNAK a nevezőből — különben a
-      // párhuzamos ablak vége után az arány magától „romlani" látszana.
       env.LEDGER.prepare(
         `SELECT COUNT(*) AS comparable,
                 SUM(CASE WHEN cky_agreement = 1 THEN 1 ELSE 0 END) AS agreed
@@ -158,15 +135,11 @@ async function handleConsentStats(env: Env, hostname: string): Promise<Response>
     return json({
       site_id: siteConfig.site_id,
       window_days: 30,
-      // Ha ez 'cookieyes', a táblák üresek — nem hiba, hanem a Fázis 1 inertsége.
       consent_provider: siteConfig.consent?.provider ?? 'cookieyes',
       decisions: decisions.results ?? [],
       cky_agreement: {
         comparable,
         agreed: agreement?.agreed ?? 0,
-        // null, ha nincs összevethető sor — NEM 0 és NEM 1. A „nincs adat" és a
-        // „teljes egyetértés" megkülönböztetése ugyanaz a hibaosztály, mint a
-        // source_consistent üresen-igaz esete.
         rate: comparable > 0 ? (agreement!.agreed ?? 0) / comparable : null
       },
       banner_impressions: shown.results ?? []
@@ -180,16 +153,6 @@ async function handleConsentStats(env: Env, hostname: string): Promise<Response>
 }
 
 // ── POST /admin/test-alert ───────────────────────────────────────────────────
-/**
- * Kiküld egy próba-riasztást az ADMIN_EMAIL bindingen. Azért van, mert a
- * riasztási lánc a legcsendesebben romló dolog az egész rendszerben: a
- * `sendAdminEmail` MINDEN hibát elnyel (catch + log), tehát egy rossz FROM-cím
- * vagy egy nem verifikált destination úgy néz ki, mintha minden rendben lenne —
- * egészen addig, amíg egy VALÓDI incidensnél nem érkezik meg a levél.
- * (Pontosan ez állt fenn: a FROM `@soborbo.com` volt, ami nincs is a fiókon.)
- *
- * Ez a végpont teszi a láncot bármikor ellenőrizhetővé, deploy nélkül.
- */
 async function handleTestAlert(env: Env): Promise<Response> {
   if (!env.ADMIN_EMAIL) {
     return json({ error: 'no_email_binding', detail: 'ADMIN_EMAIL send_email binding not bound' }, 503);
@@ -207,8 +170,6 @@ async function handleTestAlert(env: Env): Promise<Response> {
     'info'
   );
 
-  // A binding elutasítása (nem verifikált destination, rossz MIME) NEM mehet
-  // `sent: true`-ként vissza — pont ez a csendes hiba, amit ez a végpont keres.
   if (!accepted) {
     return json(
       {
@@ -219,7 +180,6 @@ async function handleTestAlert(env: Env): Promise<Response> {
       502
     );
   }
-  // „Átvéve", nem „kézbesítve" — a végső bizonyíték továbbra is a beérkezett levél.
   return json({ sent: true, at: stamp, note: 'Binding accepted it. Confirm arrival in the inbox.' }, 200);
 }
 
@@ -229,9 +189,6 @@ async function handleReconReport(request: Request, env: Env): Promise<Response> 
   const hours = Number.isFinite(hoursRaw) ? Math.min(Math.max(hoursRaw, 1), 168) : 24;
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-  // A site-configok az offline láb dependency-állapotához kellenek (customer_id /
-  // conversion action / OAuth). KV-hiba esetén üres lista → a láb NEM némul el,
-  // csak a `blocked_by` marad feloldatlan.
   let siteConfigs: Awaited<ReturnType<typeof listMonitoredSiteConfigsWithCompleteness>>['configs'] = [];
   let configsComplete = false;
   try {
@@ -246,8 +203,6 @@ async function handleReconReport(request: Request, env: Env): Promise<Response> 
     return json({ error: 'ledger_unavailable', detail: 'No D1 LEDGER binding or query failed' }, 503);
   }
   const summary = summarize(inputs, DEFAULT_THRESHOLDS);
-  // A teljességet a válasz is hordozza: egy on-demand riport sem sugallhatja, hogy
-  // szűrt lista mögött teljes kép van.
   return json(
     { window_hours: hours, since, config_enumeration_complete: configsComplete, summary, sites: inputs },
     200
@@ -266,8 +221,7 @@ async function handleLeadTrail(env: Env, hostname: string, leadId: string): Prom
   if (trail === null) {
     return json({ error: 'ledger_unavailable' }, 503);
   }
-  const found =
-    trail.events.length + trail.deliveries.length + trail.lead_status.length > 0;
+  const found = trail.events.length + trail.deliveries.length + trail.lead_status.length > 0;
   return json({ site_id: siteConfig.site_id, lead_id: leadId, found, trail }, 200);
 }
 
@@ -291,13 +245,9 @@ async function handleDlqReplay(
     return json({ error: 'invalid_json' }, 400);
   }
 
-  // Egy konkrét record kulcs szerint: replay VAGY discard (= do-not-replay).
   if (typeof body.key === 'string') {
     const key = body.key;
     if (body.discard === true) {
-      // A do_not_replay flag a D1 idempotency táblában a valós elnyomó — az R2
-      // objektum törlése önmagában NEM akadályozná meg, hogy egy duplikátum vagy
-      // re-ingest újra fan-outoljon. Előbb kiolvassuk a rekordot a flaghez.
       const obj = await env.DEAD_LETTER.get(key);
       let flagged = false;
       if (obj) {
@@ -310,7 +260,7 @@ async function handleDlqReplay(
             String(record.event_payload.event_id ?? '')
           );
         } catch {
-          // corrupt rekord → csak törlés (nincs mit flagelni)
+          // corrupt rekord → csak törlés
         }
       }
       await deleteDeadLetter(env, key);
@@ -322,6 +272,7 @@ async function handleDlqReplay(
       });
       return json({ action: 'discard', key, ok: true, do_not_replay_flagged: flagged }, 200);
     }
+
     const obj = await env.DEAD_LETTER.get(key);
     if (!obj) return json({ error: 'key_not_found', key }, 404);
     let record: DeadLetterRecord;
@@ -331,9 +282,6 @@ async function handleDlqReplay(
       return json({ error: 'corrupt_record', key }, 422);
     }
     const result = await retrySingle(env, record);
-    // Skip-siker (épp hiányzó platform-config) NEM kézbesítés: a rekordot NEM
-    // töröljük — különben a replay „sikere" az event egyetlen példányát
-    // semmisítené meg, miközben vendor-hívás nem történt.
     const ok = isRealRetrySuccess(result);
     if (ok) {
       await recordRetryDelivery(env, record, result);
@@ -354,10 +302,9 @@ async function handleDlqReplay(
     );
   }
 
-  // Bulk replay (opcionálisan site_id prefixre szűrve).
-  const max = Number.isFinite(body.max as number) ? Math.min(Math.max(body.max as number, 1), 100) : 50;
-  // Segment-prefix (`site_id/`), NEM substring — különben a `site_id: "a"`
-  // minden olyan tenant rekordját listázná, amelynek id-je `a`-val kezdődik.
+  const max = Number.isFinite(body.max as number)
+    ? Math.min(Math.max(body.max as number, 1), 100)
+    : 50;
   const sitePrefix = typeof body.site_id === 'string' && body.site_id ? `${body.site_id}/` : undefined;
   let pending: { key: string; record: DeadLetterRecord }[];
   try {
@@ -400,7 +347,7 @@ async function handleDlqReplay(
   return json({ action: 'replay', attempted: pending.length, succeeded, failed }, 200);
 }
 
-// ── GET /admin/health-check (onboarding validator #19) ───────────────────────
+// ── GET /admin/health-check ──────────────────────────────────────────────────
 type CheckStatus = 'PASS' | 'WARN' | 'FAIL' | 'SKIP';
 interface Check {
   name: string;
@@ -418,16 +365,13 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
   }
 
   const checks: Check[] = [];
-  const add = (name: string, status: CheckStatus, detail: string) => checks.push({ name, status, detail });
+  const add = (name: string, status: CheckStatus, detail: string) =>
+    checks.push({ name, status, detail });
 
   add('site_config', 'PASS', `site_id=${siteConfig.site_id}, country=${siteConfig.country_code}`);
 
-  // Meta (opcionális blokk — a site be lehet kötve, mielőtt a CAPI access token
-  // elkészül; ilyenkor a Meta-láb tisztán kimarad, lásd config.ts `meta?`).
   const meta = siteConfig.meta;
   if (!meta) {
-    // WARN, nem FAIL: a cső él és a ledger mér, de a Metához NEM megy konverzió.
-    // Ez pontosan az az állapot, amit nem szabad „zöldnek" hinni.
     add(
       'meta_config',
       'WARN',
@@ -436,7 +380,6 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
   } else {
     add('meta_pixel_id', meta.pixel_id ? 'PASS' : 'FAIL', present(meta.pixel_id));
     add('meta_access_token', meta.access_token ? 'PASS' : 'FAIL', present(meta.access_token));
-    // CLAUDE.md 17: test_event_code prod-ban Test stream-be küld → csendes hiba.
     add(
       'meta_test_event_code',
       meta.test_event_code ? 'WARN' : 'PASS',
@@ -446,20 +389,24 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
     );
   }
 
-  // GA4 (optional — a migration site may omit the ga4 block; the gateway then
-  // skips the MP leg so its browser GA4 isn't double-counted).
   add(
     'ga4_config',
-    !siteConfig.ga4 ? 'SKIP' : (siteConfig.ga4.measurement_id && siteConfig.ga4.api_secret ? 'PASS' : 'FAIL'),
+    !siteConfig.ga4
+      ? 'SKIP'
+      : siteConfig.ga4.measurement_id && siteConfig.ga4.api_secret
+        ? 'PASS'
+        : 'FAIL',
     !siteConfig.ga4
       ? 'omitted — GA4 MP disabled for this site (browser GA4 only)'
       : `measurement_id=${present(siteConfig.ga4.measurement_id)}, api_secret=${present(siteConfig.ga4.api_secret)}`
   );
 
-  // Google Ads (opcionális — customer_id nélkül a gads no-op). A `gads` blokk maga
-  // is hiányozhat egy kézzel írt/migrációs configból (a KV JSON vakon SiteConfig-ra
-  // castolódik); optional chaining nélkül ez TypeError→500-at adna pont az onboarding-
-  // health-checkben, ami az ilyen hiányos site-okat hivatott diagnosztizálni.
+  // Az explicit elvárás a configtól FÜGGETLEN truth. Ha offline gads elvárt, a
+  // customer_id eltűnése maga a money-path kiesés; nem lehet WARN csak azért, mert
+  // a hiányzó config miatt a későbbi OAuth-ág már nem fut le.
+  const offlineExplicitlyExpected =
+    (siteConfig.expected_platforms?.offline ?? []).includes('gads');
+
   if (siteConfig.gads?.customer_id) {
     const actions = siteConfig.gads.conversion_actions;
     add(
@@ -468,34 +415,12 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
       actions ? `${Object.keys(actions).length} action(s) mapped` : 'no conversion_actions map'
     );
 
-    // vNext P2 — WORKER-SZINTŰ OAuth-secretek, KÜLÖN a per-customer tokentől.
-    //
-    // Miért külön check: ha a client id/secret hiányzik a workerről, a
-    // `getAccessToken` a refresh-hívásnál bukik, és a régi `gads_oauth` sor
-    // „no access token (run OAuth flow)"-t írt — ami MISDIAGNOSIS. Az OAuth-flow
-    // újrafuttatása ilyenkor NEM segít (az /oauth-init maga is client_id nélkül
-    // építené a Google-URL-t), az operátor pedig órákat tölthet a rossz nyomon.
-    // Pontosan ez az osztály vitte a beautyflow offline Google Ads lábát hetekig
-    // néma TRK-800-001-be (2026-08-11), miután a dashboardon kezelt client id egy
-    // deploynál elveszett — azóta él a wrangler.toml [vars]-ában.
     const missingOAuthSecrets: string[] = [];
     if (!env.GADS_OAUTH_CLIENT_ID) missingOAuthSecrets.push('GADS_OAUTH_CLIENT_ID');
     if (!env.GADS_OAUTH_CLIENT_SECRET) missingOAuthSecrets.push('GADS_OAUTH_CLIENT_SECRET');
 
-    // A hard rule: ha ez a site OFFLINE Google-lábat VÁR (van conversion action VAGY
-    // az expected_platforms.offline nevesíti a gads-ot), akkor a törött OAuth nem
-    // „figyelmeztetés" — a pénzút áll. RED, nem WARN, nem silent skip.
-    //
-    // A PUSZTA `customer_id` viszont NEM elég a piroshoz (2026-08-24 review). Egy
-    // site futhat úgy, hogy a Google Ads konverziói BÖNGÉSZŐ-oldaliak (AWCT +
-    // Enhanced Conversions a GTM-ből), és nincs CRM/offline lifecycle-lába — ott a
-    // gateway OAuth-ja teljesen irreleváns a pénzút szempontjából. A customer_id
-    // ilyenkor is jelen van (a cross-check GAQL-lába használja). Az ilyen site-ot
-    // pirosra festeni riasztás-fáradtságot termel, ami PONT azt a néma hibát fedné
-    // el, amiért az egész lánc létezik. Webshop/paywall profilon ez lesz a jellemző.
     const offlineExpected =
-      (actions && Object.keys(actions).length > 0) ||
-      (siteConfig.expected_platforms?.offline ?? []).includes('gads');
+      Boolean(actions && Object.keys(actions).length > 0) || offlineExplicitlyExpected;
     const moneyPathNote = offlineExpected
       ? ' — OFFLINE MONEY PATH DOWN: ez a site vár Google Ads offline feltöltést'
       : '';
@@ -515,9 +440,6 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
               '(AWCT/EC) and do not depend on the gateway OAuth. Only the reconciliation GAQL leg is affected.')
     );
 
-    // A developer token CSAK a reconciliation GAQL-lábát kapuzza (lib/cross-check.ts):
-    // a Data Manager offline UPLOAD szándékosan nem küld `developer-token` headert.
-    // Ezért a hiánya WARN (a mérés vakul), nem FAIL (a pénzút megy).
     add(
       'gads_developer_token',
       env.GADS_DEVELOPER_TOKEN ? 'PASS' : 'WARN',
@@ -539,25 +461,39 @@ async function handleHealthCheck(env: Env, hostname: string): Promise<Response> 
             : `no access token — no refresh token stored for customer_id=${siteConfig.gads.customer_id}; run GET /api/event/oauth-init?customer_id=${siteConfig.gads.customer_id}${moneyPathNote}`
       );
     } catch (err) {
-      // Ne szivárogtassunk OAuth-belső hibaüzenetet a válaszba — logba megy.
       logStructured({
         level: 'warn',
         message: 'health-check gads_oauth token fetch threw',
         site_id: siteConfig.site_id,
         error: err instanceof Error ? err.message : String(err)
       });
-      add('gads_oauth', offlineExpected ? 'FAIL' : 'WARN', `token fetch failed (see Worker logs)${moneyPathNote}`);
+      add(
+        'gads_oauth',
+        offlineExpected ? 'FAIL' : 'WARN',
+        `token fetch failed (see Worker logs)${moneyPathNote}`
+      );
     }
   } else {
-    add('gads_customer_id', 'WARN', 'no customer_id — Google Ads dispatch is a no-op for this site');
+    add(
+      'gads_customer_id',
+      offlineExplicitlyExpected ? 'FAIL' : 'WARN',
+      offlineExplicitlyExpected
+        ? 'MISSING customer_id — OFFLINE MONEY PATH DOWN: expected_platforms.offline requires gads'
+        : 'no customer_id — Google Ads offline dispatch is not configured for this site'
+    );
   }
 
-  // Ledger + consent posture
-  add('ledger_binding', env.LEDGER ? 'PASS' : 'WARN', env.LEDGER ? 'D1 LEDGER bound' : 'no D1 — ledger/idempotency/recon are no-op');
+  add(
+    'ledger_binding',
+    env.LEDGER ? 'PASS' : 'WARN',
+    env.LEDGER ? 'D1 LEDGER bound' : 'no D1 — ledger/idempotency/recon are no-op'
+  );
   add(
     'require_consent',
     siteConfig.require_consent === true ? 'PASS' : 'WARN',
-    siteConfig.require_consent === true ? 'fail-closed (EEA-safe)' : 'fail-open — EEA-site-on állítsd true-ra'
+    siteConfig.require_consent === true
+      ? 'fail-closed (EEA-safe)'
+      : 'fail-open — EEA-site-on állítsd true-ra'
   );
 
   const overall: CheckStatus = checks.some((c) => c.status === 'FAIL')
