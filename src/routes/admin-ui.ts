@@ -56,6 +56,18 @@ const ADMIN_UI_HTML = `<!DOCTYPE html>
   .WARN { background:rgba(210,153,34,.15); color:var(--warn); }
   .FAIL,.critical { background:rgba(248,81,73,.15); color:var(--fail); }
   .warning { background:rgba(210,153,34,.15); color:var(--warn); }
+  /* F8 — a flotta-szintek. Az UNKNOWN SAJAT szint kap (lila), hogy vizualisan se
+     legyen osszetevesztheto sem a zolddel, sem a sargaval: a nezet legfobb allitasa,
+     hogy a meretlen NEM egeszseges. A NOT_APPLICABLE halvany szurke — jelen van, de
+     nem allitas. */
+  .GREEN { background:rgba(46,160,67,.15); color:var(--pass); }
+  .YELLOW { background:rgba(210,153,34,.15); color:var(--warn); }
+  .RED { background:rgba(248,81,73,.15); color:var(--fail); }
+  .UNKNOWN { background:rgba(163,113,247,.18); color:#a371f7; }
+  .NOT_APPLICABLE { background:rgba(139,147,163,.12); color:var(--mut); }
+  td.dimcell { text-align:center; padding:4px 3px; }
+  .fleet-legend { font-size:12px; color:var(--mut); margin-top:8px; }
+  .fleet-table th { font-size:11px; white-space:nowrap; }
   pre { background:#0c0e12; border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; max-height:340px; font-size:12px; }
   .mut { color:var(--mut); }
   .err { color:var(--fail); }
@@ -81,6 +93,15 @@ const ADMIN_UI_HTML = `<!DOCTYPE html>
     <h2>Health check</h2>
     <div class="row"><button id="b-health">Run health-check</button></div>
     <div id="out-health"></div>
+  </div>
+
+  <div class="card">
+    <h2>Fleet health (P12)</h2>
+    <div class="row">
+      <button id="b-fleet">Run fleet health</button>
+      <span class="mut">minden site &times; 10 dimenzio</span>
+    </div>
+    <div id="out-fleet"></div>
   </div>
 
   <div class="card">
@@ -191,6 +212,79 @@ const ADMIN_UI_HTML = `<!DOCTYPE html>
         t.appendChild(tr);
       });
       out.appendChild(t);
+    });
+  });
+
+  // ── Fleet health (F8 / P12) ──
+  // KIEMELT SZABALY: az UNKNOWN sosem renderelodhet zoldkent. A cella a sajat
+  // .UNKNOWN osztalyat kapja (lila), a sor vegen pedig KIIRJUK a vakfoltok szamat —
+  // igy a „nem tudjuk" akkor is lathato marad, ha valaki csak a szinekre nez.
+  var FLEET_DIMS = [
+    ['ingest', 'ing'], ['meta', 'meta'], ['google_offline', 'goff'],
+    ['enhanced_conversions', 'ec'], ['cmp', 'cmp'], ['package_version', 'pkg'],
+    ['browser_smoke', 'smoke'], ['business_recon', 'biz'],
+    ['gtm_conformance', 'gtm'], ['inventory', 'inv']
+  ];
+  var SHORT = { GREEN: 'OK', YELLOW: '!', RED: 'X', UNKNOWN: '?', NOT_APPLICABLE: '–' };
+
+  $('b-fleet').addEventListener('click', function () {
+    var out = $('out-fleet'); clear(out); out.appendChild(el('p', 'mut', 'Running…'));
+    api('/api/event/admin/fleet-health').then(function (res) {
+      clear(out);
+      if (!res.body || !res.body.sites) { errLine(out, res); return; }
+      var b = res.body;
+
+      var head = el('p');
+      head.appendChild(el('span', '', 'Fleet: '));
+      head.appendChild(badge(b.fleet_overall));
+      head.appendChild(el('span', 'mut', '  ' + b.sites.length + ' site · ' + b.generated_at));
+      out.appendChild(head);
+
+      if (!b.config_enumeration_complete) {
+        out.appendChild(el('p', 'err',
+          'A KV site-config felsorolas NEM volt teljes — a flotta-szint ezert UNKNOWN. ' +
+          'Amit latsz, az reszlista: a hianyzo site-okrol semmit nem allitunk.'));
+      }
+
+      var t = el('table', 'fleet-table');
+      var thead = el('tr');
+      ['Site', 'Overall'].forEach(function (h) { thead.appendChild(el('th', '', h)); });
+      FLEET_DIMS.forEach(function (d) { thead.appendChild(el('th', '', d[1])); });
+      ['Vak', 'Utolso bizonyitott'].forEach(function (h) { thead.appendChild(el('th', '', h)); });
+      t.appendChild(thead);
+
+      b.sites.forEach(function (site) {
+        var tr = el('tr');
+        var nameCell = el('td', '', site.site_id + (site.monitoring ? '' : ' (nem monitorozott)'));
+        nameCell.title = site.hostname;
+        tr.appendChild(nameCell);
+        var ov = el('td'); ov.appendChild(badge(site.overall)); tr.appendChild(ov);
+
+        var byName = {};
+        site.dimensions.forEach(function (d) { byName[d.dimension] = d; });
+        FLEET_DIMS.forEach(function (d) {
+          var dim = byName[d[0]];
+          var td = el('td', 'dimcell');
+          if (!dim) { td.appendChild(el('span', 'badge UNKNOWN', '?')); tr.appendChild(td); return; }
+          var span = el('span', 'badge ' + dim.level, SHORT[dim.level] || dim.level);
+          span.title = d[0] + ': ' + dim.detail;
+          td.appendChild(span);
+          tr.appendChild(td);
+        });
+
+        var blind = el('td', site.blind_spots.length ? 'mut' : 'ok',
+          site.blind_spots.length ? String(site.blind_spots.length) : '0');
+        blind.title = site.blind_spots.join(', ');
+        tr.appendChild(blind);
+        tr.appendChild(el('td', 'mut', site.last_healthy_at || 'soha'));
+        t.appendChild(tr);
+      });
+      out.appendChild(t);
+
+      out.appendChild(el('p', 'fleet-legend',
+        'OK = GREEN · ! = YELLOW · X = RED · ? = UNKNOWN (meretlen — NEM egeszseges) · ' +
+        '– = NOT_APPLICABLE (a site configja kimondottan nem varja ezt a labat). ' +
+        'Vidd az eger ala a cellat az indoklasert.'));
     });
   });
 

@@ -12,6 +12,7 @@ import {
 } from '../lib/deadletter';
 import { retrySingle, isRealRetrySuccess, recordRetryDelivery } from '../scheduled/retry';
 import { sendAdminEmail } from '../lib/notify';
+import { collectFleetHealth } from '../lib/fleet-collect';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 /**
@@ -24,6 +25,7 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
  *   GET  /api/event/admin/leads/:lead_id
  *   POST /api/event/admin/dlq/replay   { key? | site_id?, max?, discard? }
  *   GET  /api/event/admin/health-check
+ *   GET  /api/event/admin/fleet-health
  *
  * Minden mutáló művelet (replay/discard) auditálható: a fan-out/retry a ledgerbe
  * ír, így bizonyítható, ki mit replay-elt. A health-check SOHA nem ad vissza
@@ -81,6 +83,9 @@ export async function handleAdmin(
   }
   if (request.method === 'GET' && path === 'health-check') {
     return handleHealthCheck(env, hostname);
+  }
+  if (request.method === 'GET' && path === 'fleet-health') {
+    return handleFleetHealth(env);
   }
   if (request.method === 'POST' && path === 'test-alert') {
     return handleTestAlert(env);
@@ -345,6 +350,29 @@ async function handleDlqReplay(
   });
   void ctx;
   return json({ action: 'replay', attempted: pending.length, succeeded, failed }, 200);
+}
+
+// ── GET /admin/fleet-health ──────────────────────────────────────────────────
+/**
+ * F8 · P12 — EGY képernyő az EGÉSZ flottáról, site-onként 10 dimenzióval.
+ *
+ * A meglévő `health-check` EGY site configját nézi; ez a nézet minden site-ot
+ * végigmér, és MÉRT adatot (D1) is használ, nem csak config-jelenlétet.
+ *
+ * A HTTP-státusz SZÁNDÉKOSAN 200 akkor is, ha a flotta RED: ez egy RIPORT, nem
+ * egy liveness-probe. Egy 500-as válasz elrejtené a riportot pont akkor, amikor
+ * a legjobban kell. A gépi fogyasztó a `fleet_overall` mezőt olvassa.
+ */
+async function handleFleetHealth(env: Env): Promise<Response> {
+  const report = await collectFleetHealth(env, Date.now());
+  logStructured({
+    level: 'info',
+    message: 'fleet-health report generated',
+    sites: report.sites.length,
+    fleet_overall: report.fleet_overall,
+    config_enumeration_complete: report.config_enumeration_complete
+  });
+  return json(report, 200);
 }
 
 // ── GET /admin/health-check ──────────────────────────────────────────────────

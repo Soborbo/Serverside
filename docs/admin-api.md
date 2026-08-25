@@ -87,6 +87,48 @@ Ellenőrzések: `site_config`, `meta_pixel_id`, `meta_access_token`,
 `gads_conversion_actions`, `gads_oauth` (élő token-csere), `ledger_binding`,
 `require_consent` (WARN ha nem fail-closed). Secret-érték SOHA nem szerepel a válaszban.
 
+## GET /api/event/admin/fleet-health
+
+F8 · P12 — **EGY képernyő az egész flottáról.** A `health-check` egyetlen site
+CONFIGJÁT nézi; ez minden site-ot végigmér, és MÉRT adatot (D1) is használ.
+
+```bash
+curl -s https://<host>/api/event/admin/fleet-health -H "X-Admin-Token: $ADMIN_API_TOKEN"
+```
+
+Site-onként 10 dimenzió: `ingest`, `meta`, `google_offline`,
+`enhanced_conversions`, `cmp`, `package_version`, `browser_smoke`,
+`business_recon`, `gtm_conformance`, `inventory`. Minden dimenzió szintje
+`GREEN | YELLOW | RED | UNKNOWN | NOT_APPLICABLE`.
+
+**A nézet egyetlen kemény invariánsa: az UNKNOWN SOHA nem GREEN.** Ebből három
+gyakorlati szabály következik, és mindhármat teszt őrzi:
+
+1. **A `null` nem nulla.** Ha egy D1-lekérdezés elbukik (TRK-950-022), az érintett
+   dimenzió UNKNOWN lesz — nem „0 konverzió" (ami RED-et adna, tehát hazudna a hiba
+   természetéről), és főleg nem zöld.
+2. **A `NOT_APPLICABLE` csak EXPLICIT config-elvárásból származhat**
+   (`expected_platforms`). Egy KV-ből kiesett `meta` blokk és egy szándékosan
+   meta-nélküli site a delivery-sorból nézve azonos — ezért a „nem várjuk" csak
+   kimondva érvényes. Kimondás nélkül: UNKNOWN.
+3. **A rollupban az UNKNOWN a YELLOW FÖLÖTT van** (RED > UNKNOWN > YELLOW > GREEN):
+   a méretlen pénzútról nem tudjuk, mekkora a baj, a sárgáról igen.
+
+Két dimenzió MA ÁLLANDÓ vakfolt, és ez szándékosan látszik: a `gtm_conformance`
+offline konténer-exportot igényel (`npm run check:live-gtm`), a runtime `inventory`
+(F7) pedig nincs a gateway-be kötve. Ezért ma minden site összesített szintje
+legfeljebb UNKNOWN — a mért lábak igazsága viszont dimenziónként látszik, és a
+válasz `blind_spots` mezője nevesíti, mit nem mérünk.
+
+A `config_enumeration_complete: false` (részleges KV-felsorolás) KEMÉNYEN UNKNOWN-ra
+viszi a flotta szintjét: részlistából nem következik, hogy a nem látott site-ok
+rendben vannak. A `monitoring:false` site-ok MEGJELENNEK (jelölve) — egy
+flotta-nézetből néma kizárás ugyanaz a hibaosztály lenne.
+
+A HTTP-státusz RED flotta esetén is **200**: ez riport, nem liveness-probe. A gépi
+fogyasztó a `fleet_overall` mezőt olvassa. A vizuális változat: `admin-ui` →
+„Fleet health (P12)" kártya.
+
 ## MCP?
 
 Ez az API a helyes absztrakciós szint. Egy MCP csak vékony wrapper lenne fölötte, és

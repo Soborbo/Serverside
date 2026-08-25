@@ -25,4 +25,16 @@ describe('handleAdminUI', () => {
     expect(html).toContain('X-Admin-Token');
     expect(html).not.toContain('ADMIN_API_TOKEN');
   });
+
+  it('a fleet-health kártya be van kötve, és az UNKNOWN SAJÁT (nem zöld) stílust kap', async () => {
+    const html = await handleAdminUI().text();
+    expect(html).toContain('/api/event/admin/fleet-health');
+    // A legfontosabb vizuális invariáns: az UNKNOWN nem oszthat osztályt a GREEN-nel,
+    // és nem a zöld változóból veszi a színét. Enélkül a „nem tudjuk" egy pillantásra
+    // ugyanaz lenne, mint a „rendben" — pontosan az a hiba, ami ellen a nézet épült.
+    const unknownRule = /\.UNKNOWN \{[^}]*\}/.exec(html)?.[0] ?? '';
+    expect(unknownRule).not.toBe('');
+    expect(unknownRule).not.toContain('--pass');
+    expect(unknownRule).not.toContain('46,160,67');
+  });
 });
