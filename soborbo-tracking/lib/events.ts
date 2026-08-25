@@ -9,6 +9,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent } from './consent';
 import { getSessionId, getDevice, getAttribution, getPageUrl, normalizeEmail, normalizePhone, sanitizeName, registerMarketingPurgeHook } from './persistence';
 import { report, redactPii, enableDiagDebug } from './observability';
+import { generateUUID } from './uuid';
 
 declare global {
   interface Window {
@@ -35,11 +36,38 @@ function push(data: Record<string, unknown>): void {
 
 // ── Event ID ───────────────────────────────────────────────────────
 
+/**
+ * Az `event_id` — a dedup-kulcs, amit a Meta Pixel és a CAPI ugyanarra az
+ * eseményre kap.
+ *
+ * ── MIÉRT NEM SAJÁT TARTALÉKÁG ───────────────────────────────────────────────
+ * Ez a függvény korábban SAJÁT tartalékággal rendelkezett, ami NEM UUID-t adott:
+ * `${Date.now().toString(36)}-${Math.random()…}`. Két baj volt vele:
+ *
+ *   1. A csomag SAJÁT `uuid.ts`-e pont ezt a hibaosztályt utasítja el
+ *      („collisions cause silent dedup failures and ROAS distortion"), tehát a
+ *      csomagon belül KÉT, egymásnak ellentmondó szabály élt ugyanarra a
+ *      kulcsra. Az egyik elvből dobott, a másik némán gyengébbet adott.
+ *   2. A CLAUDE.md 2. pontja `event_id`-t „plain UUID"-ként írja le. Egy
+ *      `m1abc-x8f2k3lq-…` alak a gateway regexén átmegy (`[a-zA-Z0-9_-]+`),
+ *      tehát SEMMI nem jelezte volna, hogy nem UUID.
+ *
+ * Mostantól a kanonikus `generateUUID()` crypto-útjait használja. Az utolsó
+ * mentsvár SZÁNDÉKOSAN v4-ALAKÚ (nem dobás): egy elveszett konverzió rosszabb,
+ * mint egy gyengébb entrópiájú — de továbbra is 122 bites és ütközésmentes
+ * gyakorlatban — azonosító. A `uuid.ts` dobó viselkedése ott marad, ahol a
+ * hívó fel van készülve rá.
+ */
 export function generateEventId(): string {
-  const uuid = typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
-  return uuid;
+  try {
+    return generateUUID();
+  } catch {
+    // Nem biztonságos kontextus (http://, régi böngésző): v4-ALAKÚ tartalék.
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  }
 }
 
 // ── Calculator / Quiz ──────────────────────────────────────────────

@@ -141,6 +141,25 @@ describe('vendorolt példány drift-riportja', () => {
     expect(v.text).toContain('ÖNÁLLÓ implementáció');
   });
 
+  it('a --paths szűkítés CSAK a megadott előtagra ítél, és KIÍRJA, mi maradt kívül', () => {
+    // Egy site JOGGAL vendorolhat részhalmazt (a painless React-alapú, az Astro
+    // komponensekre nincs szüksége). Szűrő nélkül a riport örökké piros lenne
+    // olyasmiről, amit a site sosem akart — és két hét alatt megtanulnánk
+    // figyelmen kívül hagyni.
+    const r = compareVendoredCopy(
+      '/fake',
+      manifest,
+      () => ['gateway-dispatch.ts'],
+      () => 'DISPATCH',
+      ['server/']
+    );
+    expect(r.summary).toEqual({ identical: 1, drifted: 0, missing: 0 });
+    expect(verdict(r).level).toBe('CLEAN');
+    // A szűrés LÁTHATÓ: e nélkül egy szűk --paths úgy adna CLEAN-t, hogy közben
+    // a csomag felét meg sem néztük.
+    expect(r.out_of_scope).toEqual(['lib/gateway.ts', 'lib/consent.ts']);
+  });
+
   it('az idegen fájl látszik, de NEM buktat — lehet a site saját kódja', () => {
     const r = run({
       'lib/gateway.ts': 'GATEWAY',
