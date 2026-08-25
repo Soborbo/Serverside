@@ -10,6 +10,33 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.4.1 (2026-08-25)
+
+### Javítva — az elavult `_gcl_aw` cookie legyőzte a friss URL-klikk-ID-t
+
+A 6.4.0 helyesen szűkítette egyre a Google klikk-ID-ket, de a `_gcl_aw`
+cookie-fallback ELŐTTE futott, és a régi őre csak a `gclid`-et nézte
+(`!fresh.gclid`). Egy visszatérő fizetett látogatónál, aki `?gbraid=…`-del
+landolt, miközben a böngészőjében ott volt egy korábbi kattintás
+`_gcl_aw`-cookie-ja, a fallback a RÉGI gclid-et is „frissnek" jelölte — a
+`keepSingleGoogleClickId` prioritása (`gclid` > `gbraid`) pedig pont azt
+választotta, és a FRISS `gbraid` eldobódott.
+
+Ez a 6.4.0-ban lett rosszabb: előtte mindkét ID kiment (ellentmondásos, de a
+friss ID legalább ott volt), utána determinisztikusan az ELAVULT nyert. Az
+offline / Enhanced Conversions feltöltés így a rossz kattintáshoz köt, némán.
+
+A sorrend mostantól kötött: URL → egy ID kiválasztása → cookie CSAK akkor, ha
+az URL EGYIK Google klikk-ID-t sem hozta.
+
+**A painless forkja ezt már javította** (painless #39, 2026-07-26); a kanonikus
+mag a fordított sorrendet vitte, ezért az F9/3.4 transzport-delegálása
+(painless #52) a site-on REGRESSZIÓT okozott. A paritás-harness ezt nem fogta
+meg — nem volt cookie-fallback esete. Most van, öt új teszttel
+(`tests/google-click-id-exclusivity.test.ts`).
+
+---
+
 ## 6.4.0 (2026-08-25)
 
 ### Javítva — a Google klikk-ID-k kölcsönös kizárását nem tartotta be a tároló

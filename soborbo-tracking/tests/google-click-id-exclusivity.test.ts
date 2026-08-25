@@ -106,3 +106,65 @@ describe('nincs friss Google klikk-ID', () => {
     expect(out.wbraid).toBeUndefined();
   });
 });
+
+/**
+ * A `_gcl_aw` COOKIE-FALLBACK NEM ELŐZHETI MEG A FRISS URL-JELET.
+ *
+ * A fallback azért van, hogy a belső oldalon konvertáló látogatónál is legyen
+ * klikk-ID, amikor az URL-ből már kikopott. A cookie viszont a KORÁBBI
+ * kattintásé — ha az URL MOST hozott egy `gbraid`/`wbraid`-et, a cookie gclid-je
+ * elavult, és a `keepSingleGoogleClickId` prioritása (gclid > gbraid) pont a
+ * RÉGI-t választaná a FRISS helyett. Ezért a sorrend kötött:
+ *   1. URL → 2. egy ID kiválasztása → 3. cookie CSAK ha egyik sincs.
+ *
+ * A painless forkja ezt már javította (#39); a kanonikus mag a fordított
+ * sorrendet vitte, így az F9/3.4 delegálása visszahozta a hibát.
+ */
+describe('`_gcl_aw` cookie-fallback', () => {
+  function setGclAw(gclid: string) {
+    document.cookie = `_gcl_aw=GCL.1690000000.${gclid};path=/`;
+  }
+
+  it('friss URL-gbraid mellett a RÉGI cookie-gclid nem futhat be', () => {
+    setGclAw('REGI-GCLID');
+    setUrl('?gbraid=UJ-GBRAID');
+
+    const out = collectAttribution();
+    expect(out.gbraid).toBe('UJ-GBRAID');
+    expect(out.gclid, 'az elavult cookie-gclid legyőzte a friss gbraid-et').toBeUndefined();
+  });
+
+  it('friss URL-wbraid mellett sem', () => {
+    setGclAw('REGI-GCLID');
+    setUrl('?wbraid=UJ-WBRAID');
+
+    const out = collectAttribution();
+    expect(out.wbraid).toBe('UJ-WBRAID');
+    expect(out.gclid).toBeUndefined();
+  });
+
+  it('friss URL-gclid mindig veri a cookie-t', () => {
+    setGclAw('REGI-GCLID');
+    setUrl('?gclid=UJ-GCLID');
+    expect(collectAttribution().gclid).toBe('UJ-GCLID');
+  });
+
+  it('URL-jel HÍJÁN viszont a cookie a mentőöv — ez a fallback célja', () => {
+    setGclAw('COOKIE-GCLID');
+    setUrl('/koszonjuk');
+
+    const out = collectAttribution();
+    expect(out.gclid).toBe('COOKIE-GCLID');
+  });
+
+  it('tárolt gclid + cookie-gclid + friss gbraid → CSAK a friss gbraid marad', () => {
+    localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify({ gclid: 'TAROLT-REGI' }));
+    setGclAw('COOKIE-REGI');
+    setUrl('?gbraid=UJ-GBRAID');
+
+    const out = collectAttribution();
+    expect(out.gbraid).toBe('UJ-GBRAID');
+    expect(out.gclid).toBeUndefined();
+    expect(stored().gclid, 'a tárolóban is csak egy klikk-ID maradhat').toBeUndefined();
+  });
+});
