@@ -1,14 +1,14 @@
 # F9/3 — Painless: leltár és adapter-szerződés (1–2. lépés)
 
-**Állapot:** 1–2. lépés kész (leltár + adapter-felület). A 3. lépés (paritás-harness
-a MAI fork ellen) a következő munka; a csere a 4–6.
+**Állapot:** 1–3. lépés KÉSZ (leltár + adapter-felület + paritás-harness).
+A következő munka a 4. lépés: a kanonikus mag az adapter mögé.
 
 **A jóváhagyott sorrend, amiből ez a dokumentum az első kettő:**
 
 ```
-1. Painless public tracking API leltár        ← EZ A DOKUMENTUM
-2. compatibility adapter API megtervezése     ← EZ A DOKUMENTUM
-3. paritás-harness a MAI fork ellen
+1. Painless public tracking API leltár        ← KÉSZ (ez a dokumentum)
+2. compatibility adapter API megtervezése     ← KÉSZ (ez a dokumentum)
+3. paritás-harness a MAI fork ellen           ← KÉSZ (painless #50)
 4. kanonikus mag az adapter mögé
 5. ugyanazok a paritás-tesztek GREEN
 6. fork-fájlok eltávolítása
@@ -36,6 +36,18 @@ A `src/lib/tracking/index.ts` **27 nevet** exportál 7 modulból. A site-ban
 | `utm-capture.ts` (164) | `captureUTMs`, `readAttribution`, `readAffiliateCode`, `buildAttribution` | Attribúció. A kanonikus `persistence.ts` fedi, **más tárolási alakkal**. |
 | `worker-dispatch.ts` | `dispatchWorkerConversion` | Böngésző→gateway POST. A kanonikus `gateway.ts` fedi. |
 | `uuid.ts`, `config.ts` | `generateUUID`, `CURRENCY`, `DEFAULT_COUNTRY` | Triviális; a kanonikusban is van. |
+
+> ⚠️ **A MIGRÁCIÓS FELÜLET NAGYOBB, MINT A KÖNYVTÁR.** A böngésző-ág transzportja
+> — `sendToWorker`, `collectAttribution`, `trackConversion` — a
+> **`src/lib/worker-tracking.ts`-ben** él, a `src/lib/tracking/` KÖNYVTÁRON KÍVÜL:
+> 518 sor, 22 import-hely. A `check-vendored-copy` ezt nem látta, mert a
+> vendorolt könyvtárat nézi. A cserénél ez is a hatókör része.
+>
+> 🛑 **NE TÉPD KI a Turnstile-t ebből a fájlból.** A `getTurnstileToken` /
+> `prewarmTurnstileToken` NEM a törölt gateway-kapu maradványa: a site SAJÁT
+> `/api/contact/` végpontjának bot-védelme (`EquityCalculator.astro`,
+> `later-life-moves.astro`). A CLAUDE.md 10. pontja a GATEWAY Turnstile-járól
+> szól — aki a kettőt összekeveri, kiveszi a site űrlap-védelmét.
 
 **Szerver-oldal:** `gateway-dispatch.ts` (578 sor) + `server.ts` + `smoke.ts`, 5 élő
 API-hívási ponton. Ez a réteg a **legközelebb** áll a kanonikushoz — a
@@ -162,7 +174,32 @@ esetén a fork implementációja megy a kukába, nem a kanonikusé.
 
 ---
 
-## 4. A 3. lépés (paritás-harness) terve
+## 4. A paritás-harness (3. lépés) — KÉSZ, és mit talált
+
+`painless: src/lib/tracking/parity-harness.test.ts`, 19 eset. **Az első futása
+egy néma, éles hibát talált**, ami a #87 osztálya:
+
+```
+bemenet:   +44 (0)7123-456.789
+böngésző:  +4407123456.789     ← ez ment a Meta Pixelnek
+szerver:   +447123456789       ← ez ment a CAPI-nak
+```
+
+Két oka volt: a takarítás nem vitte el a **pontot**, és a `+`-szal kezdődő szám
+**korai return**-nel kilépett, bent hagyva a `(0)` trunk-nulláját. A Pixel és a
+CAPI két külön embert látott ugyanabban a látogatóban — a dedup elromlott, a
+match-minőség némán esett. A hívási pontok mind a `normalizeUserData`-n mennek
+át, tehát ez valódi felhasználói bemeneten futott.
+
+Miért nem derült ki: a meglévő `normalize.test.ts` **csak tiszta alakokat**
+fedett (`+447700900123`, `+44 7700 900123`) — `(0)`-t és pontot egyet sem.
+Javítva a painless #50-ben (a kanonikus `stripTrunkPrefix` portja).
+
+**Rögzített szerződés, ami lábon lövős:** a `readUserDataFromDOM()` törlés után
+ÜRES OBJEKTUMOT ad, nem `undefined`-ot. Egy `if (readUserDataFromDOM())` igazat
+adna egy üres objektumra is — a csere után ennek azonosnak kell maradnia.
+
+### A harness eredeti terve (megvalósítva)
 
 Karakterizációs teszt a **MAI fork** ellen, három megfigyelhető kimenetre:
 
