@@ -10,6 +10,30 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.3.1 (2026-08-25)
+
+### Javítva — a csomagon belül KÉT, egymásnak ellentmondó szabály élt az `event_id`-re
+
+A `lib/uuid.ts` elvből DOB, ha nincs biztonságos kontextus („collisions cause
+silent dedup failures and ROAS distortion"), a `generateEventId()` viszont
+némán egy NEM-UUID tartalékot adott:
+`${Date.now().toString(36)}-${Math.random()…}`. A gateway regexe
+(`[a-zA-Z0-9_-]+`) ezt átengedi, tehát SEMMI nem jelezte volna, hogy az
+`event_id` nem UUID — pedig a CLAUDE.md 2. pontja annak írja le.
+
+Mostantól a `generateEventId()` a kanonikus `generateUUID()` crypto-útjait
+használja. Az utolsó mentsvár SZÁNDÉKOSAN v4-ALAKÚ és nem dobás: egy elveszett
+konverzió rosszabb, mint egy gyengébb entrópiájú azonosító.
+
+### Hozzáadva — `check:vendored --paths=` részhalmaz-ellenőrzés
+
+Egy site jogosan vendorolhatja a csomag EGY RÉSZÉT (a painless React-alapú, az
+Astro-komponensekre nincs szüksége). A szűrő EXPLICIT és szűkítő, és a kimenet
+mindig kiírja, hány fájl maradt a vizsgálaton kívül — a szűrés így látható
+marad, nem tünteti el a különbséget.
+
+---
+
 ## 6.3.0 (2026-08-25)
 
 ### Javítva — a site-backend consent-parsere elvágta volna a saját CMP-s site-ok szerver-lábát

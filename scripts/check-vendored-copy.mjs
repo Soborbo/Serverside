@@ -17,10 +17,21 @@
  * bizonyíték, nem verdikt.
  *
  * Használat:
- *   node scripts/check-vendored-copy.mjs <site-könyvtár> [--json]
+ *   node scripts/check-vendored-copy.mjs <site-könyvtár> [--json] [--paths=lib/,server/]
  *
  * Példa:
  *   node scripts/check-vendored-copy.mjs d:/painlessremovals/src/lib/tracking
+ *   node scripts/check-vendored-copy.mjs <dir> --paths=lib/
+ *
+ * ── A `--paths` és miért NEM lyuk a kapun ────────────────────────────────────
+ * Egy site JOGGAL vendorolhatja a csomag EGY RÉSZÉT: a painless React-alapú, az
+ * Astro-komponensekre nincs szüksége. Enélkül a riport 8 „hiányzó" komponenst
+ * jelentene olyasmiről, amit a site sosem akart — és egy örökké piros riportot
+ * két hét alatt megtanulnánk figyelmen kívül hagyni.
+ *
+ * A szűrő ezért EXPLICIT és SZŰKÍTŐ: a hívó KIMONDJA, mit vendorolt, és CSAK
+ * arra kap ítéletet. A kimenet mindig kiírja, hány fájl maradt a vizsgálaton
+ * kívül — a szűrés így látható marad, nem tünteti el a különbséget.
  *
  * Kilépési kód: 0, ha nincs `drifted` vagy `missing` fájl; különben 1.
  * (A `unknown_extra` NEM buktat: az lehet a site saját kódja is.)
@@ -49,12 +60,22 @@ function candidatePaths(manifestPath) {
  * @param {object} manifest
  * @returns {{version: string, rows: Array<object>, summary: Record<string, number>, extras: string[]}}
  */
-export function compareVendoredCopy(vendorDir, manifest, readdir = walkFiles, read = (p) => fs.readFileSync(p, 'utf8')) {
+export function compareVendoredCopy(
+  vendorDir,
+  manifest,
+  readdir = walkFiles,
+  read = (p) => fs.readFileSync(p, 'utf8'),
+  pathPrefixes = null
+) {
   const present = new Set(readdir(vendorDir));
   const rows = [];
   const matched = new Set();
 
+  const inScope = (rel) => pathPrefixes === null || pathPrefixes.some((prefix) => rel.startsWith(prefix));
+  const outOfScope = Object.keys(manifest.files).filter((rel) => !inScope(rel));
+
   for (const [rel, meta] of Object.entries(manifest.files)) {
+    if (!inScope(rel)) continue;
     let hit = null;
     for (const cand of candidatePaths(rel)) {
       if (present.has(cand)) {
@@ -79,7 +100,15 @@ export function compareVendoredCopy(vendorDir, manifest, readdir = walkFiles, re
   const extras = [...present].filter((p) => !matched.has(p)).sort();
   const summary = { identical: 0, drifted: 0, missing: 0 };
   for (const r of rows) summary[r.status] += 1;
-  return { version: manifest.version, rows, summary, extras };
+  return {
+    version: manifest.version,
+    rows,
+    summary,
+    extras,
+    // A szűrés MINDIG látszik: enélkül egy szűk `--paths` úgy adna CLEAN-t,
+    // hogy közben a csomag felét meg sem néztük.
+    out_of_scope: outOfScope
+  };
 }
 
 function walkFiles(dir, base = dir, acc = []) {
@@ -132,7 +161,15 @@ if (process.argv[1]?.endsWith('check-vendored-copy.mjs')) {
     process.exit(2);
   }
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-  const result = compareVendoredCopy(path.resolve(dir), manifest);
+  const pathsArg = process.argv.find((a) => a.startsWith('--paths='));
+  const pathPrefixes = pathsArg
+    ? pathsArg
+        .slice('--paths='.length)
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)
+    : null;
+  const result = compareVendoredCopy(path.resolve(dir), manifest, undefined, undefined, pathPrefixes);
   const v = verdict(result);
 
   if (process.argv.includes('--json')) {
@@ -140,6 +177,11 @@ if (process.argv[1]?.endsWith('check-vendored-copy.mjs')) {
   } else {
     console.log(`\n── Vendorolt példány: ${dir}`);
     console.log(`   Kiadás: ${manifest.name}@${manifest.version}`);
+    if (pathPrefixes) {
+      console.log(
+        `   Szűkítve: ${pathPrefixes.join(', ')} — ${result.out_of_scope.length} fájl a vizsgálaton KÍVÜL`
+      );
+    }
     console.log(`   ${v.level} — ${v.text}\n`);
     for (const r of result.rows) {
       const mark = { identical: '  ok  ', drifted: ' DRIFT', missing: 'HIÁNYZ' }[r.status];
