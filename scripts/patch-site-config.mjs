@@ -14,6 +14,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { deepMerge } from './deep-merge.mjs';
 
 const [hostname, patchRaw] = process.argv.slice(2);
 if (!hostname || !patchRaw) {
@@ -37,20 +38,9 @@ const current = JSON.parse(
 );
 const patch = JSON.parse(patchRaw);
 
-const merged = { ...current };
-for (const [k, v] of Object.entries(patch)) {
-  if (v === null) {
-    delete merged[k];
-  } else if (v && typeof v === 'object' && !Array.isArray(v)) {
-    merged[k] = { ...(current[k] ?? {}) };
-    for (const [ik, iv] of Object.entries(v)) {
-      if (iv === null) delete merged[k][ik];
-      else merged[k][ik] = iv;
-    }
-  } else {
-    merged[k] = v;
-  }
-}
+// Rekurzív merge (scripts/deep-merge.mjs): egy nested map-be írt kulcs NEM cseréli
+// le a map többi elemét — lásd ott, miért.
+const merged = deepMerge(current, patch);
 
 wrangler([
   'kv',
