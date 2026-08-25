@@ -95,7 +95,11 @@ async function fetchVersion(baseUrl, attempts = 3) {
 }
 
 async function main() {
-  const baseUrl = process.argv[2] || process.env.WORKER_URL || 'https://event-gateway.golaxo.workers.dev';
+  // A fallback a tenant-semleges custom domain. NEM `*.workers.dev`: azt a
+  // Cloudflare nem irányítja erre a Workerre (edge-404), és a kézzel indított
+  // futás így NÉMÁN más végpontot mérne, mint a workflow — pont az a
+  // determinizmus-rés, ami miatt az őr hetekig hálózati hibával bukott.
+  const baseUrl = process.argv[2] || process.env.WORKER_URL || 'https://tracking.soborbo.co.uk';
   let version;
   try {
     version = await fetchVersion(baseUrl);
