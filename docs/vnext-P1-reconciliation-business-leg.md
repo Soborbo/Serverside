@@ -106,6 +106,12 @@ A böngésző-oldali `minSample: 10` itt használhatatlan: a lifecycle-eseménye
 | **regresszió** (elsődleges) | 24 óra | „tegnap még ment, ma nem" — volumentől függetlenül |
 | **abszolút** | 7 nap gördülő | „egy hete kap, egy hete nem tölt fel" |
 
+> **A lábak kulcshalmaza a KÉT ABLAK UNIÓJA** (2026-08-24 hotfix). Ha csak a 24 órás
+> sorokon iterálnánk, egy 4 nappal ezelőtt beérkezett, azóta soha nem kézbesített
+> esemény NEM kapna lábat — és az abszolút detektor pont arra az esetre nem futna le,
+> amire készült. A hiányzó 24 órás érték **nulla** (nem a 7 napos), hogy a regresszió-
+> detektor `expected24 > 0` feltétele helyesen néma maradjon.
+
 A tervi DoD („a szándékosan kikapcsolt offline-láb 24 órán belül piros") a **regresszió**-
 detektoron teljesül: nem darabszám kell hozzá, hanem a `last_accepted_at` megléte. Ez
 ugyanaz a minta, amit az `expected_platforms` a napi digestben már használ (a megfigyelt
@@ -174,7 +180,7 @@ később bekapcsolni"):
 
 | állapot | mikor | mit tesz |
 |---|---|---|
-| `BLOCKED_DEPENDENCY` | hiányzik egy előfeltétel: `customer_id` / `conversion_action` / OAuth worker-secret / refresh token | **NINCS drift-finding.** A hiba ismert, a health-check jelzi. De a láb **nem néma**: riportsor + `TRK-950-015` warning-log az okkal |
+| `BLOCKED_DEPENDENCY` | hiányzik egy előfeltétel: `customer_id` / `conversion_action` / OAuth worker-secret / refresh token | **NINCS drift-FINDING** (nincs második CRITICAL ugyanarról), de **van napi operational warning**: riportsor + `TRK-950-015` + a levél kimegy. A health-check ON-DEMAND, az email PUSH — a láthatóságot nem adjuk fel, csak a duplikált riasztást |
 | `UNARMED` | előfeltételek rendben, de **nincs bizonyított sikeres feltöltés** | a 24h REGRESSZIÓ-detektor nem alkalmazható (nincs mihez mérni); a 7 napos ABSZOLÚT igen |
 | `ARMED` | van legalább egy `accepted` + **nem-NULL `http_status`** + nem-szintetikus offline delivery | minden detektor él |
 
@@ -189,6 +195,26 @@ működött lábon.
 **Ez oldja fel a §6-ban leírt P2-függést is:** nem kell megvárni a
 secret-helyreállítást az implementációval, mert amíg az OAuth hiányzik, a láb
 magától `BLOCKED_DEPENDENCY`-ben áll és nem riaszt.
+
+### 2.6b Config-feloldás: a RÉSZLISTA nem exclusion filter (2026-08-24 hotfix)
+
+A `monitoring: false` szűrő CSAK teljes SITE_CONFIG-listával használható. A KV-listázás
+lapozás közben elbukhat, és a `listMonitoredSiteConfigs` ilyenkor az addig összegyűjtött
+RÉSZLISTÁT adja vissza. Teljesnek hinni azt jelentené, hogy 15 site-ból 8 után elbukó
+listázás mellett a maradék 7 offline sorai kiszűrődnek, finding nem keletkezik, és a
+monitor tisztának látszik — pontosan a néma-zöld osztály.
+
+Ezért a listázó `{ configs, complete }`-et ad
+(`listMonitoredSiteConfigsWithCompleteness`), és `complete === false` esetén:
+
+- a részlistát **nem** használjuk szűrőként (bővebb, kevésbé pontos riport — **nem
+  szűkebb**);
+- `TRK-950-018` warning + `config_enumeration_complete: false` a napi log-sorban;
+- a levélben DEGRADED-blokk, ami kimondja, hogy mit jelent.
+
+A back-compat `listMonitoredSiteConfigs` megmarad azoknak a hívóknak, akik a listát
+csak POZITÍV irányban használják (végigiterálnak rajta); aki NEGATÍV következtetést von
+le belőle, annak kötelező a `…WithCompleteness` változat.
 
 ### 2.7 D1-lekérdezések (a meglévő `fetchReconInputs` mellé)
 
@@ -320,6 +346,14 @@ A hívónak tudnia kell javítani, ezért minden elutasítás megnevezi az okot
 
 `count: 0` **érvényes** — a „ma nulla lead" valós, mérendő információ.
 
+**Teljes napi snapshot-CSERE, nem részleges upsert** (2026-08-24 hotfix). A payload a
+nap TELJES aggregátuma, ezért a tárolás is teljes csere: a nap nem-heartbeat sorainak
+törlése, majd a heartbeat + az aktuális snapshot beszúrása — mind egy `batch()`-ben
+(D1-en tranzakció). A korábbi „csak upsert" modell csak a MÁSODIK payloadban is
+szereplő event-nevekre volt javító hatású: egy javított, üres snapshot után a régi
+darabszám bent maradt, és a recon egy olyan üzleti számhoz mért, amit a CRM már
+visszavont.
+
 **Jelzősor (heartbeat).** Minden sikeres beküldés kiír egy `event_name =
 '__report__'`, `count = 0` sort. Enélkül egy nulla-lifecycle-es nap (amikor a CRM
 dokumentált `GROUP BY` lekérdezése ÜRES tömböt ad) nem hagyna nyomot, és a
@@ -416,6 +450,7 @@ TRK-950-015  RECON_OFFLINE_BLOCKED            warning       ✅ KIOSZTVA (P1.1)
                                                              helyett — lásd §2.6)
 TRK-950-016  RECON_BUSINESS_SOURCE_DRIFT      critical      ✅ KIOSZTVA (P1.2)
 TRK-950-017  RECON_BUSINESS_SOURCE_MISSING    warning       ✅ KIOSZTVA (P1.2)
+TRK-950-018  RECON_CONFIG_ENUMERATION_INCOMPLETE warning    ✅ KIOSZTVA (hotfix)
 ```
 
 > A sávot **nem** szabad újrahasznosítani: a `TRK-910` blokk kommentje

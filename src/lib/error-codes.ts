@@ -252,6 +252,13 @@ export enum TrackingErrorCode {
    * site nem riaszt (nincs bekotve), egy elhallgato igen.
    */
   RECON_BUSINESS_SOURCE_MISSING = 'TRK-950-017',
+  /**
+   * A SITE_CONFIG felsorolas NEM volt teljes (a KV-listazas lapozas kozben elbukott).
+   * A reconciliation ilyenkor NEM szur a `monitoring` flagre — a reszlistabol NEGATIV
+   * kovetkeztetest levonni azt jelentene, hogy a fel nem oldott site-ok NEMAN kiesnek a
+   * meresbol. A riport degraded: bovebb es kevesbe pontos, NEM szukebb.
+   */
+  RECON_CONFIG_ENUMERATION_INCOMPLETE = 'TRK-950-018',
 
   RETENTION_QUERY_FAILED = 'TRK-960-001',
   RETENTION_R2_FAILED = 'TRK-960-002',
@@ -410,6 +417,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'CRM reports more business events than reached the gateway: the CRM->gateway dispatch is dropping',
   [TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING]:
     'A site that used to report daily business counts has gone silent: the CRM cron itself may be down',
+  [TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE]:
+    'SITE_CONFIG enumeration was incomplete: reconciliation ran unfiltered (degraded, not narrower)',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]:
     'Cross-platform reconciliation is not running (no recon config, or every leg skipped) — the Model 2 browser/GTM blind spot is unmonitored',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]:
@@ -526,6 +535,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // recon csak lathatova teszi. Critical-la emelve duplan riasztana ugyanarrol.
   [TrackingErrorCode.RECON_OFFLINE_BLOCKED]: 'warning',
   [TrackingErrorCode.RECON_BUSINESS_SOURCE_MISSING]: 'warning',
+  [TrackingErrorCode.RECON_CONFIG_ENUMERATION_INCOMPLETE]: 'warning',
   [TrackingErrorCode.RECON_CROSS_CHECK_NOT_RUNNING]: 'warning',
   [TrackingErrorCode.EMQ_BELOW_THRESHOLD]: 'warning',
   // Info, NEM warning: a Dataset Quality API a standard CAPI (client system user)

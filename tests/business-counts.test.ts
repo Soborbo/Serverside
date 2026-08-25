@@ -188,35 +188,41 @@ describe('Codex #4 — nem létező naptári nap elutasítása', () => {
 });
 
 describe('Codex #3 — az eseménytelen nap NEM „elhallgatott CRM"', () => {
-  it('minden sikeres beküldés ír JELZŐSORT, üres counts esetén is', async () => {
-    const written: unknown[][] = [];
+  // A #71 hotfix óta a DELETE is bindol (teljes snapshot-csere), ezért az INSERT-eket
+  // a statement TÍPUSA szerint kell kiválogatni — a puszta bind-számolás félrevezetne.
+  function insertRecordingEnv() {
+    const inserts: unknown[][] = [];
     const env: any = {
       LEDGER: {
-        prepare: () => ({ bind: (...args: unknown[]) => { written.push(args); return {}; } }),
+        prepare: (q: string) => ({
+          bind: (...args: unknown[]) => {
+            if (!q.trim().startsWith('DELETE')) inserts.push(args);
+            return {};
+          }
+        }),
         batch: async () => []
       }
     };
+    return { env, inserts };
+  }
+
+  it('minden sikeres beküldés ír JELZŐSORT, üres counts esetén is', async () => {
+    const { env, inserts } = insertRecordingEnv();
     // A CRM dokumentált GROUP BY lekérdezése egy nulla-lifecycle-es napon ÜRES tömböt ad.
     const ok = await storeBusinessCounts(env, 'painless', { date: '2026-08-23', counts: [] });
     expect(ok).toBe(true);
-    expect(written).toHaveLength(1);
-    expect(written[0][2]).toBe(BUSINESS_REPORT_HEARTBEAT);
-    expect(written[0][3]).toBe(0);
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][2]).toBe(BUSINESS_REPORT_HEARTBEAT);
+    expect(inserts[0][3]).toBe(0);
   });
 
   it('a jelzősor NEM-üres beküldésnél is megy (egységes „jelentkezett-e ma" kérdés)', async () => {
-    const written: unknown[][] = [];
-    const env: any = {
-      LEDGER: {
-        prepare: () => ({ bind: (...args: unknown[]) => { written.push(args); return {}; } }),
-        batch: async () => []
-      }
-    };
+    const { env, inserts } = insertRecordingEnv();
     await storeBusinessCounts(env, 'painless', {
       date: '2026-08-23',
       counts: [{ event_name: 'lead_qualified', count: 4 }]
     });
-    expect(written.map((w) => w[2])).toEqual([BUSINESS_REPORT_HEARTBEAT, 'lead_qualified']);
+    expect(inserts.map((w) => w[2])).toEqual([BUSINESS_REPORT_HEARTBEAT, 'lead_qualified']);
   });
 
   it('a jelzősor miatt az eseménytelen nap NEM ad business_source_missing-et', () => {
@@ -469,5 +475,107 @@ describe('Codex #2 — a lekérdezés bukása NEM „nincs eltérés"', () => {
       '2026-08-16'
     );
     expect(r).toBeNull();
+  });
+});
+
+/**
+ * 2026-08-24 merge-gate review (#71 hotfix) — HIGH: tranziens KV-hiba ≠ „nincs ilyen site".
+ *
+ * A route korábban `getSiteConfig()`-ot használt, ami MINDKÉT okra `null`-t ad. Egy
+ * másodperces KV-blip így 404-nek látszott. A CRM sender a 404-et a szokásos olvasat
+ * szerint PERMANENSNEK veszi → a napi aggregátum és a heartbeat VÉGLEG eltűnik, és
+ * ráadásul a hallgatás-detektor is hamisan szólal meg rá.
+ */
+describe('#71 HIGH — KV-blip 503, nem 404', () => {
+  const body = { date: YESTERDAY, counts: [{ event_name: 'lead_qualified', count: 4 }] };
+
+  it('SITE_CONFIG.get dob → 503 (retry-olható), NEM 404', async () => {
+    const res = await handleBusinessCounts(
+      req('bcx1.example.com', 'global-admin-token', body),
+      makeEnv({
+        SITE_CONFIG: {
+          get: async () => {
+            throw new Error('KV transient failure');
+          }
+        }
+      })
+    );
+    expect(res.status).toBe(503);
+    const parsed = JSON.parse(await res.text());
+    expect(parsed.error).toBe('config_unavailable');
+  });
+
+  it('tényleg nincs ilyen host → továbbra is 404 (permanens)', async () => {
+    const res = await handleBusinessCounts(
+      req('bcx2.example.com', 'global-admin-token', body),
+      makeEnv({ SITE_CONFIG: { get: async () => null } })
+    );
+    expect(res.status).toBe(404);
+    expect(JSON.parse(await res.text()).error).toBe('unknown_site');
+  });
+});
+
+/**
+ * 2026-08-24 merge-gate review (#71 hotfix) — MEDIUM: a payload TELJES napi snapshot.
+ *
+ * A korábbi „csak upsert" modell csak azokra az event-nevekre volt javító hatású,
+ * amiket a MÁSODIK payload is tartalmazott. Egy javított, üres snapshot után a régi
+ * darabszám bent maradt, és a recon egy olyan üzleti számhoz mérte a gateway-t, amit
+ * a CRM már visszavont.
+ */
+describe('#71 MEDIUM — teljes snapshot-csere, nem részleges upsert', () => {
+  /**
+   * A statementeket a VÉGREHAJTÁSNÁL nézzük, nem az előkészítésnél: ami `bind()`-olva
+   * lett, de nem került a `batch()`-be, az nem fut le. (Az első nekifutásomban a
+   * tesztek a bind-okra álltak, és emiatt a DELETE kivétele mellett is zöldek
+   * maradtak — a teszt az előkészítést mérte, nem a hatást.)
+   */
+  function recordingEnv() {
+    let batched: Array<{ kind: 'delete' | 'insert'; args: unknown[] }> = [];
+    const env: any = {
+      LEDGER: {
+        prepare: (q: string) => {
+          const kind = q.trim().startsWith('DELETE') ? ('delete' as const) : ('insert' as const);
+          return { bind: (...args: unknown[]) => ({ kind, args }) };
+        },
+        batch: async (rows: Array<{ kind: 'delete' | 'insert'; args: unknown[] }>) => {
+          batched = rows;
+          return [];
+        }
+      }
+    };
+    return { env, executed: () => batched };
+  }
+
+  it('a nap korábbi ÜZLETI sorait törli, a heartbeatet KIVÉVE', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(env, 'painless', {
+      date: '2026-08-23',
+      counts: [{ event_name: 'lead_qualified', count: 4 }]
+    });
+    const del = executed().find((o) => o.kind === 'delete');
+    expect(del, 'nincs VÉGREHAJTOTT DELETE — a kimaradó event-név bent maradna').toBeDefined();
+    expect(del!.args).toEqual(['painless', '2026-08-23', BUSINESS_REPORT_HEARTBEAT]);
+  });
+
+  it('ÜRES javított snapshot is törli a korábbi darabszámokat', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(env, 'painless', { date: '2026-08-23', counts: [] });
+    expect(executed().filter((o) => o.kind === 'delete')).toHaveLength(1);
+    // …és a jelzősor ilyenkor is kimegy: a nap „jelentkezett, de nulla esemény".
+    const inserts = executed().filter((o) => o.kind === 'insert');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].args[2]).toBe(BUSINESS_REPORT_HEARTBEAT);
+  });
+
+  it('a törlés és a beszúrás EGY batch-ben megy (D1-en tranzakció)', async () => {
+    const { env, executed } = recordingEnv();
+    await storeBusinessCounts(env, 'painless', {
+      date: '2026-08-23',
+      counts: [{ event_name: 'lead_qualified', count: 4 }, { event_name: 'revenue_confirmed', count: 1 }]
+    });
+    // DELETE + heartbeat + 2 üzleti sor — nincs olyan pillanat, amikor a nap üres.
+    expect(executed()).toHaveLength(4);
+    expect(executed()[0].kind).toBe('delete');
   });
 });
