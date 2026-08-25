@@ -93,6 +93,13 @@ jobs:
       - name: Distribution manifest in sync
         run: npm run check:dist-manifest
 
+      # A GA4 a `source`/`medium`/`campaign` NEVŰ event-paramétert MANUÁLIS
+      # kampány-jelzésnek veszi: a címke a MUNKAMENET forrása lesz. A painless
+      # GA4-ében ez 90 nap alatt 93 munkamenetet vitt CTA-címkére. A meglévő két
+      # előfordulás nevesített alapvonalon van; ÚJAT nem engedünk be.
+      - name: GA4 reserved campaign params (ratchet)
+        run: npm run check:ga4-params
+
   # A soborbo-tracking kliens-lib csomag (2026-07-21 óta itt él, sajat package.json +
   # jsdom vitest). A ../src/events.json-t OLVASSA (egyetlen forras, nincs vendor-masolat).
   tracking-package:
