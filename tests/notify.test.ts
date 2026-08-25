@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { sendAdminEmail } from '../src/lib/notify';
+import { describe, it, expect, vi } from 'vitest';
+import { sendAdminEmail, sendCriticalSMS } from '../src/lib/notify';
 import type { Env } from '../src/env';
 
 /**
@@ -122,5 +122,53 @@ describe('sendAdminEmail — a hiba nem csordul ki, de nem is hazudik', () => {
   it('false, ha a binding elutasítja — a hívó (konverziós út) NEM dől el tőle', async () => {
     const ok = await sendAdminEmail(envWithBinding([], true), 'x', '<p>x</p>');
     expect(ok).toBe(false);
+  });
+});
+
+/**
+ * §13/§17 — a RIASZTÁSI CSATORNA saját hibája.
+ *
+ * Ez a rendszer legélesebb néma-hiba esete: ha a levél vagy az SMS nem megy
+ * ki, minden MÁS baj is néma marad, mert a hír nem jut el emberhez. Eddig
+ * mindkét ág kód nélküli `level:'error'` sort írt — vagyis a riasztás kiesése
+ * volt a legkevésbé riasztható esemény.
+ */
+describe('a riasztási csatorna kiesése kódot kap', () => {
+  it('a levélküldés bukása TRK-950-019-et logol', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => {
+      lines.push(String(l));
+    });
+    await sendAdminEmail(envWithBinding([], true), 'tárgy', 'törzs');
+    spy.mockRestore();
+    expect(lines.join(' ')).toContain('TRK-950-019');
+  });
+
+  it('az SMS-küldés bukása TRK-950-020-at logol', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => {
+      lines.push(String(l));
+    });
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401 }) as unknown as Response);
+
+    await sendCriticalSMS(
+      {
+        TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 'tok',
+        TWILIO_FROM_NUMBER: '+441111111111', ADMIN_PHONE: '+442222222222'
+      } as unknown as Env,
+      'kritikus'
+    );
+
+    vi.unstubAllGlobals();
+    spy.mockRestore();
+    expect(lines.join(' ')).toContain('TRK-950-020');
+  });
+
+  it('a hiányzó Twilio-konfig NEM hibakód — az szándékos kihagyás', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => { errors.push(String(l)); });
+    await sendCriticalSMS({} as unknown as Env, 'kritikus');
+    spy.mockRestore();
+    expect(errors.join(' ')).not.toContain('TRK-950-020');
   });
 });

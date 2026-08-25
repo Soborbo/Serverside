@@ -19,3 +19,7 @@ tests/compliance/selftest/last-run/
 # A KV-ből újragenerált manifest (scripts/apply-kv-recon-config.sh). Titok-mentes
 # (a generátor sha256-tal helyettesíti), de MUNKAFÁJL — a repóba a src/site-manifest.json megy.
 site-manifest.generated.json
+
+# §15 — a futásidejű error-code emisszió-napló (a vitest setup-hook írja,
+# a check-error-code-emission.mjs olvassa). Munkatermék, nem forrás.
+.error-code-emission/

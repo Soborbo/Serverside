@@ -60,6 +60,16 @@ jobs:
       - name: Test
         run: npm test
 
+      # §15 — az error-code katalógus TELJESSÉGE. Két külön állítás:
+      #   (1) a generált `docs/vnext-error-codes.md` szinkronban van a kóddal —
+      #       enélkül a katalógus úgy sodródna el, ahogy a kézzel írt runbook
+      #       tette (131 kódból 65 szerepelt benne, a teljes money-path sáv nem);
+      #   (2) minden AKTÍV kód ténylegesen KIVÁLTÓDIK a suite alatt, racsnival:
+      #       új lefedetlen kód → bukás, és a nevesített hiány csak szűkülhet.
+      # A `npm test` UTÁN fut, mert annak a melléktermékét (emisszió-napló) olvassa.
+      - name: Error-code catalogue + emission coverage
+        run: npm run check:error-codes
+
   # A soborbo-tracking kliens-lib csomag (2026-07-21 óta itt él, sajat package.json +
   # jsdom vitest). A ../src/events.json-t OLVASSA (egyetlen forras, nincs vendor-masolat).
   tracking-package:

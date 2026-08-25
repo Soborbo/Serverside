@@ -16,7 +16,9 @@
     "test:watch": "vitest",
     "compliance": "node tests/compliance/run.mjs",
     "compliance:selftest": "node tests/compliance/selftest/run-selftest.mjs",
-    "check:lockfile": "node scripts/check-lockfile-complete.mjs package-lock.json && node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json"
+    "check:lockfile": "node scripts/check-lockfile-complete.mjs package-lock.json && node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json",
+    "gen:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs",
+    "check:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs --check && node --experimental-transform-types --no-warnings scripts/check-error-code-emission.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260717.1",

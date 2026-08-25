@@ -92,9 +92,13 @@ export async function sendAdminEmail(
     });
     return true;
   } catch (err) {
+    // A RIASZTÁSI CSATORNA maga bukott el. Kód nélkül erre nem lehetett
+    // riasztást kötni — vagyis a riasztás kiesése volt a legkevésbé
+    // riasztható esemény a rendszerben.
     logStructured({
       level: 'error',
-      message: 'Failed to send admin email',
+      error_code: TrackingErrorCode.ALERT_EMAIL_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.ALERT_EMAIL_FAILED],
       subject: fullSubject,
       error: err instanceof Error ? err.message : String(err)
     });
@@ -144,7 +148,8 @@ export async function sendCriticalSMS(env: Env, message: string): Promise<void> 
   } catch (err) {
     logStructured({
       level: 'error',
-      message: 'Failed to send SMS alert',
+      error_code: TrackingErrorCode.ALERT_SMS_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.ALERT_SMS_FAILED],
       error: err instanceof Error ? err.message : String(err)
     });
   }
