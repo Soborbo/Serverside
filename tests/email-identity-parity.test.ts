@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { normalizeEmail as serverNormalizeEmail } from '../src/lib/hash';
 import { normalizeEmail as browserNormalizeEmail } from '../soborbo-tracking/lib/persistence';
 import {
   EMAIL_IDENTITY_MAX_OCTETS,
-  normalizeEmailIdentity
+  normalizeEmailIdentity,
+  utf8OctetLength
 } from '../soborbo-tracking/lib/email-identity';
 
 /**
@@ -114,4 +115,112 @@ describe('PARITÁS — a böngésző-láb és a Worker BITRE ugyanazt adja', () 
       expect(server).toBe(normalizeEmailIdentity(input));
     });
   }
+});
+
+/**
+ * AZ OKTETSZÁMLÁLÓ RUNTIME-FÜGGETLEN — és a `TextEncoder` az ORÁKULUM, nem a
+ * megvalósítás.
+ *
+ * Egy korábbi változat feature-detectet használt: `TextEncoder`, ha van,
+ * különben `length * 4`. Az a fallback nem konzervatív becslés volt, hanem
+ * HAMIS: egy 87 oktetes ASCII cím 348-nak számított, tehát egy `TextEncoder`
+ * nélküli böngésző ELDOBTA azt, amit a Worker ELFOGADOTT — a feature-detect
+ * visszahozta ugyanazt az identity-aszimmetriát, amit a modul felszámol.
+ *
+ * Az invariáns nem az, hogy „ne engedjen át többet, mint a másik láb", hanem
+ * hogy UGYANARRA A STRINGRE MINDEN RUNTIME UGYANAZT A SZÁMOT ADJA.
+ */
+describe('utf8OctetLength — a TextEncoder csak orákulum', () => {
+  const oracle = (s: string) => new TextEncoder().encode(s).length;
+
+  const SAMPLES: Array<[string, string]> = [
+    ['tiszta ASCII', 'user-' + 'a'.repeat(70) + '@example.com'],
+    ['ures', ''],
+    ['2-oktetes latin ekezet', 'áéíóöőúüű@example.com'],
+    ['3-oktetes CJK', '日本語@example.com'],
+    ['3-oktetes cirill', 'почта@example.com'],
+    ['4-oktetes emoji (surrogate par)', '\u{1f44d}\u{1f3af}@example.com'],
+    ['emoji ZWJ-szekvencia', '\u{1f468}‍\u{1f469}‍\u{1f467}@example.com'],
+    ['maganyos HIGH surrogate', 'a\ud83d@example.com'],
+    ['maganyos LOW surrogate', 'a\ude00@example.com'],
+    ['ket maganyos surrogate forditva', '\udc00\ud800@example.com'],
+    ['vegyes', 'Jo-napot\u{1f44d}@példa.hu']
+  ];
+
+  for (const [label, sample] of SAMPLES) {
+    it(`${label}: kezi szamlalo === TextEncoder`, () => {
+      expect(utf8OctetLength(sample)).toBe(oracle(sample));
+    });
+  }
+
+  it('a hatar korul minden hosszon egyezik (240-260 ASCII oktet)', () => {
+    for (let n = 240; n <= 260; n++) {
+      const addr = emailOfOctets(n);
+      expect(utf8OctetLength(addr), `n=${n}`).toBe(oracle(addr));
+    }
+  });
+});
+
+describe('a hossz-dontes nem fugghet a runtime-tol', () => {
+  it('REGRESSZIO: 80-200 karakteres tiszta ASCII cim SOSEM valik ervenytelenne', () => {
+    // Ez bukott a `length * 4` fallbackkel: 64 karakter folott minden ASCII
+    // cim 254 fole „nott", es a bongeszo-lab eldobta.
+    for (let n = 80; n <= 200; n++) {
+      const addr = emailOfOctets(n);
+      expect(normalizeEmailIdentity(addr), `${n} oktetes ASCII cim elveszett`).toBe(addr);
+    }
+  });
+
+  it('ASCII 254 -> ACCEPT, 255 -> REJECT', () => {
+    expect(normalizeEmailIdentity(emailOfOctets(254))).toBe(emailOfOctets(254));
+    expect(normalizeEmailIdentity(emailOfOctets(255))).toBeUndefined();
+  });
+
+  it('multibyte 254 -> ACCEPT, 256 -> REJECT', () => {
+    // 121 x U+00E1 (242 oktet) + '@example.com' (12) = 254 pontosan.
+    const at254 = 'á'.repeat(121) + '@example.com';
+    expect(new TextEncoder().encode(at254).length).toBe(254);
+    expect(normalizeEmailIdentity(at254)).toBe(at254);
+
+    const over = 'á'.repeat(122) + '@example.com'; // 256
+    expect(new TextEncoder().encode(over).length).toBe(256);
+    expect(normalizeEmailIdentity(over)).toBeUndefined();
+  });
+});
+
+/**
+ * A HIÁNYZÓ `TextEncoder` RUNTIME — az egyetlen teszt, ami a hibát MEGFOGJA.
+ *
+ * A fenti esetek egy `TextEncoder`-rel rendelkező runtime-ban futnak, ezért a
+ * feature-detectes megvalósításon IS zöldek voltak: a hibás ág sosem futott le.
+ * Pontosan ezért maradt láthatatlan a `length * 4` fallback.
+ *
+ * Ez a blokk kiveszi a `TextEncoder`-t a globális scope-ból, ÚJRAIMPORTÁLJA a
+ * modult, és ugyanazokat az eredményeket várja. A feature-detectes változaton
+ * ez bukik; a determinisztikus számlálón átmegy — és őrként megmarad arra az
+ * esetre, ha valaki később visszatenne egy runtime-függő kódutat.
+ */
+describe('TextEncoder nelkuli runtime', () => {
+  it('ugyanazt a dontest hozza, mint a TextEncoderes', async () => {
+    const ascii = 'user-' + 'a'.repeat(70) + '@example.com';
+    const expectedOctets = new TextEncoder().encode(ascii).length;
+    expect(expectedOctets).toBe(87);
+
+    vi.resetModules();
+    vi.stubGlobal('TextEncoder', undefined);
+    try {
+      const mod = await import('../soborbo-tracking/lib/email-identity');
+      expect(
+        mod.utf8OctetLength(ascii),
+        'TextEncoder nelkul mas oktetszamot kaptunk ugyanarra a stringre'
+      ).toBe(expectedOctets);
+      expect(
+        mod.normalizeEmailIdentity(ascii),
+        'egy 87 oktetes ASCII cim elveszett, mert nem volt TextEncoder'
+      ).toBe(ascii);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
 });

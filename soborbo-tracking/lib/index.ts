@@ -68,6 +68,7 @@ export {
 // `src/lib/hash.ts` is importál. Egy identitás → egy byte-string → egy hash.
 export {
   normalizeEmailIdentity,
+  utf8OctetLength,
   EMAIL_IDENTITY_MAX_OCTETS
 } from './email-identity';
 export {

@@ -45,14 +45,51 @@
 /** RFC 5321 — a mailbox gyakorlati maximuma oktetben. */
 export const EMAIL_IDENTITY_MAX_OCTETS = 254;
 
-const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : undefined;
-
-function octetLength(value: string): number {
-  if (encoder) return encoder.encode(value).length;
-  // Ha nincs TextEncoder (nagyon régi runtime), a `length` FELSŐ becslés helyett
-  // alsó lenne — ezért inkább konzervatívan a legrosszabb esetet vesszük, hogy a
-  // korlát sose engedjen át többet, mint amennyit a másik láb elfogadna.
-  return value.length * 4;
+/**
+ * UTF-8 OKTETSZÁMLÁLÁS — SZÁNDÉKOSAN RUNTIME-FÜGGETLEN.
+ *
+ * Itt NINCS `typeof TextEncoder !== 'undefined'` elágazás, és ez a lényeg. Egy
+ * feature-detect két kódutat jelent, két kódút pedig azt, hogy ugyanarra a
+ * címre két runtime KÜLÖNBÖZŐ döntést hozhat — pontosan az az identity-
+ * aszimmetria, amit ez a modul felszámol. Egy korábbi változat `length * 4`-gyel
+ * becsült, ha nem volt `TextEncoder`; egy 87 oktetes ASCII cím így 348-nak
+ * számított, tehát a böngésző ELDOBTA, amit a Worker ELFOGADOTT.
+ *
+ * Az invariáns nem az, hogy „ne engedjen át többet, mint a másik láb", hanem
+ * hogy UGYANARRA A STRINGRE MINDEN RUNTIME UGYANAZT A SZÁMOT ADJA.
+ *
+ * A `TextEncoder` ettől még használható — de csak ORÁKULUMKÉNT a tesztben, ami
+ * bizonyítja, hogy ez a számláló ugyanazt adja. Lásd
+ * `tests/email-identity-parity.test.ts`.
+ *
+ * A surrogate-kezelés a `TextEncoder` viselkedését követi:
+ *   - érvényes surrogate pár (U+10000..U+10FFFF) → 4 oktet
+ *   - MAGÁNYOS surrogate (pár nélküli high vagy low) → 3 oktet, mert a
+ *     `TextEncoder` U+FFFD replacement characterre cseréli (EF BF BD)
+ */
+export function utf8OctetLength(value: string): number {
+  let bytes = 0;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x7f) {
+      bytes += 1;
+    } else if (code <= 0x7ff) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        i++;
+      } else {
+        // Magányos high surrogate → U+FFFD.
+        bytes += 3;
+      }
+    } else {
+      // BMP (a magányos low surrogate is ide esik → U+FFFD, szintén 3).
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
 
 /**
@@ -66,6 +103,6 @@ export function normalizeEmailIdentity(raw: string | null | undefined): string |
   const normalized = raw.trim().toLowerCase();
   if (normalized.length === 0) return undefined;
   if (!normalized.includes('@')) return undefined;
-  if (octetLength(normalized) > EMAIL_IDENTITY_MAX_OCTETS) return undefined;
+  if (utf8OctetLength(normalized) > EMAIL_IDENTITY_MAX_OCTETS) return undefined;
   return normalized;
 }

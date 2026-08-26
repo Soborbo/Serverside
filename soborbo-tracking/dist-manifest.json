@@ -45,8 +45,8 @@
       "role": "browser"
     },
     "lib/email-identity.ts": {
-      "sha256": "faf9f2cd8058e358299d6c99fb26abcec5cc4d4439a7c1287e432d7b4a6a4cd7",
-      "bytes": 4059,
+      "sha256": "0a4393fc8088c25b16eba1b140f931e9c49ae7d00b474ba6d6e5ac7eb13daab9",
+      "bytes": 5437,
       "role": "browser"
     },
     "lib/event-contract.ts": {
@@ -70,8 +70,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "121c5beb7f4de14370dd07a69658ac3dd1b880f1df480f060963bb56876f3c41",
-      "bytes": 22332,
+      "sha256": "db7b7bb9d9bb06943d7de45e536f3bdb079510e32a768ae2ce3e3510994bd704",
+      "bytes": 22351,
       "role": "browser"
     },
     "lib/observability.ts": {

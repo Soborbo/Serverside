@@ -41,6 +41,14 @@ A korlát OKTETBEN mér, nem `String.length`-ben: egy ékezetes helyi rész UTF-
 két oktet karakterenként, tehát a `length`-alapú ellenőrzés átengedne egy 260
 oktetes címet, és a két láb megint elválna.
 
+Az oktetszámláló SZÁNDÉKOSAN runtime-független (`utf8OctetLength`), nincs benne
+`typeof TextEncoder` elágazás. Egy feature-detect két kódutat jelent, két kódút
+pedig azt, hogy ugyanarra a címre két runtime KÜLÖNBÖZŐ döntést hoz — pontosan
+az az aszimmetria, amit ez a modul felszámol. Az invariáns nem az, hogy „ne
+engedjen át többet, mint a másik láb", hanem hogy ugyanarra a stringre minden
+runtime UGYANAZT a számot adja. A `TextEncoder` a tesztben ORÁKULUM, nem
+megvalósítás.
+
 ### Breaking — `normalizeEmail` visszatérési típusa
 
 `(email: string) => string` **→** `(email: string | null | undefined) => string | undefined`.
