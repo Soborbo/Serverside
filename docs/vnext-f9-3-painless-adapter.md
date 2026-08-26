@@ -1,9 +1,11 @@
 # F9/3 — Painless: leltár és adapter-szerződés (1–2. lépés)
 
-**Állapot:** 1–5. lépés KÉSZ. A **böngésző-láb** a kanonikus **6.6.0** magon fut
-(vendorolva, bitre azonosan), a paritás-harness zöld. A **szerver-láb**
-(`gateway-dispatch.ts` + `server.ts` + `smoke.ts`, 879 sor) **még a fork** — ezért
-a 6. lépés részben, a 8–9. nyitva. Az ellenőrzés bizonyítékai a 6. szakaszban.
+**Állapot:** 1–5. lépés KÉSZ, a 6. részben. A **böngésző-láb** és a szerver-láb
+**payload-építője + süti-olvasói** a kanonikus **6.6.1** magon futnak (vendorolva,
+bitre azonosan). Ami MÉG fork: a szerver-láb **transzportja** — `GatewayEnv`,
+binding-feloldás, `sendGatewayConversion` —, mert az átvétel deploy-koordinációt
+igényel (a binding neve `EVENT_GATEWAY` ↔ `GATEWAY`), nem kódcserét. A 8–9. lépés
+ezért nyitva. Bizonyítékok a 6–7. szakaszban.
 
 **A jóváhagyott sorrend, amiből ez a dokumentum az első kettő:**
 
@@ -14,11 +16,14 @@ a 6. lépés részben, a 8–9. nyitva. Az ellenőrzés bizonyítékai a 6. szak
 4. kanonikus mag az adapter mögé              ← KÉSZ (painless #51–#56)
 5. ugyanazok a paritás-tesztek GREEN          ← KÉSZ (21/21)
 6. fork-fájlok eltávolítása                   ← RÉSZBEN: a böngésző-láb kész,
-                                                 a szerver-láb (879 sor) áll
-7. build/test                                 ← KÉSZ (build zöld · 448 + 1148)
-8. deploy
+                                                 a szerver-lábból a payload-építő
+                                                 + süti-olvasók átmentek (578 →
+                                                 340 sor); a transzport áll
+7. build/test                                 ← KÉSZ (build zöld · 450 + 1148)
+8. deploy                                     ← a binding-átnevezés itt dől el
 9. smoke ledger version = 6.6.x               ← a terv 6.3.x-et írt; a csomag
-                                                 azóta 6.6.0 (#99–#102)
+                                                 azóta 6.6.1 (#99–#102 + a
+                                                 szerver-szelet találatai)
 ```
 
 Külön PR-ben, utána: **P5 `commitOnSuccess` rollout.** CMP flip nem keverhető hozzá.
@@ -311,3 +316,67 @@ lesz a migráció kívülről, gépileg igazolható jele** — ez a 9. lépés.
 > **6.6.0** (#99 klikk-ID kölcsönös kizárás, #100 elavult `_gcl_aw`, #101 klikk-ID
 > + háromállapotú consent primitív, #102 e-mail-identitás). A smoke-nak `6.6.x`-et
 > kell látnia, nem `6.3.x`-et.
+
+---
+
+## 7. A szerver-szelet — és három hiba A KANONIKUS MAGBAN
+
+A szerver-láb (`gateway-dispatch.ts` + `server.ts` + `smoke.ts`) volt az utolsó
+fork. A leltár után **578 → 340 sor**: a payload-építő és a süti-olvasók átmentek
+a kanonikus magra, a transzport maradt.
+
+### Ami átment, és ami szándékosan nem
+
+| Rész | Hova került | Miért |
+|---|---|---|
+| `buildGatewayPayload` | kanonikus (burkolóval) | tiszta függvény, ez feji a Metát |
+| `readConsentFromCookie`, `readMetaCookies`, `buildConsentSources`, `resolveTestEventCode` | kanonikus | tiszta függvények, nincs env-függésük |
+| `GatewayEnv`, `gatewayBaseUrl`, `isGatewayConfigured`, `sendGatewayConversion` | **marad site** | deploy-kötött — lásd lent |
+| `splitFullName`, `deliverGatewayConversion`, `service` | **marad site** | nincs kanonikus párjuk |
+
+🛑 **A TRANSZPORT NEM KÓDCSERE, HANEM DEPLOY-KOORDINÁCIÓ.** A service binding neve
+a site-on `EVENT_GATEWAY` (`wrangler.toml:61`), a kanonikus magban `GATEWAY`. Egy
+vak csere itt nem fordítási hibát adna, hanem **néma nullát**: a kanonikus küldő
+`env.GATEWAY`-t keresne, nem találná, a lead-végpont továbbra is 200-at adna, és
+a gateway sosem látná az eventet. Ugyanígy: a `TRACKING_GATEWAY_URL` felülírás a
+kanonikusban nem létezik, és a kanonikus `isGatewayConfigured` megköveteli a
+bindingot. Ezért a transzport a **8. lépéshez** tartozik, nem ehhez.
+
+### A `service` — és miért két teszt pinneli
+
+A kanonikus payload-építő webshop-bérlőkre készült (`contents`, `order_id`); a
+lead-gen `service`-t nem ismeri. A painless HÁROM élő pontról küldi. A burkoló
+visszateszi, és **két** teszt őrzi: egy a builder kimenetén, egy pedig **a
+DRÓTON**. A második azért kell, mert a kanonikus `sendGatewayConversion` a SAJÁT
+payload-építőjét hívja — egy teljes delegálásnál a builder-szintű pin zölden
+hazudna, miközben a mező lecsúszik a kérésről.
+
+### A verzió, ami nem hazudhat
+
+A kanonikus `buildConsentSources` a mag verzióját írja a receiptre. Ezen a
+site-on ez hazugság lenne: a transzport még fork, és **a küldő-úton él a néma
+nulla**. A burkoló ezért visszaírja a site igaz értékét (`0.0.0-painless-fork`).
+A szám akkor vált `6.6.1`-re, amikor a transzport is átment — ez a 9. lépés.
+
+### Három hiba, amit a paritás A KANONIKUS MAGBAN talált
+
+Eddig minden találat a forkot marasztalta el. Itt **fordult az irány**: három
+ponton a fork volt a helyes, és a vak migráció REGRESSZIÓT vitt volna a site-ra.
+Javítva a csomagban — **6.6.1**.
+
+| # | A kanonikus mag hibája | Következmény |
+|---|---|---|
+| 1 | `decodeURIComponent` **őrizetlenül, 3 helyen** | Egy hibás percent-szekvencia `URIError`-t dob. Ezek a függvények a **lead-útvonalon** futnak → **500-as válasz a beküldött űrlapra**. Az ügyfél leadje vész el egy elrontott süti miatt, amit nem is ő írt. |
+| 2 | `raw_cookie` **csonkítatlanul** a receiptre | A teljes consent-süti a `consent_debug` táblába. A fork 200 karakteren vágott; a mag nem. Adatminimalizálási visszalépés. |
+| 3 | `readMetaCookies` → `{ fbc: undefined }` | Egy `'fbc' in cookies` ellenőrzés igazat ad egy **nem létező** klikk-ID-re, és a gateway `fbclid → fbc` rekonstrukciója épp ilyenkor marad ki. |
+
+Az 1. a súlyos: nem mérési hiba, hanem **elveszett konverzió**. A `safeDecodeCookieValue`
+mostantól úgy kezeli a hibás kódolást, mintha a süti ott sem lenne — a hívó a
+szokásos „nincs jelzés" ágra megy. Ez a helyes GDPR-tartás: nem találgatunk, de
+nem is ejtünk leadet.
+
+> **Amit ez a módszerről mond.** A `#53` azt mutatta meg, hogy a vendorolt példány
+> elmaradhat a csomag mögött. Ez a szelet a fordítottját: **a csomag is elmaradhat
+> egy site mögött.** Egy „a kanonikus mindig jobb" feltevés mind a hármat átvitte
+> volna regresszióként. A harness nem azért van, hogy a forkot marasztalja el —
+> azért, hogy a KÜLÖNBSÉG látszódjon, bármelyik irányba mutat.

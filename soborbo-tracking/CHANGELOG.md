@@ -10,6 +10,41 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.1 (2026-08-26)
+
+### Javítva — a site-backend süti-olvasói elejthettek egy leadet
+
+Az F9/3.4 **szerver-szelet** paritás-futása három eltérést mutatott ki a
+painless fork és a kanonikus mag között, és mind a háromban **a fork volt a
+helyes**. Az irány szokatlan: nem a másolat maradt el a csomag mögött, hanem a
+csomag a másolat mögött — egy vak migráció ezeket REGRESSZIÓKÉNT vitte volna a
+site-ra.
+
+**1. `decodeURIComponent` őrizetlenül, három helyen.** Egy hibás percent-
+szekvencia (`%zz`, csonka `%E0`) `URIError`-t dob. Ezek a függvények a site
+LEAD-ÚTVONALÁN futnak: az API-route a konverzió összeállítása közben hívja őket.
+Egy dobás ott nem „hiányzó telemetria", hanem **500-as válasz a beküldött
+űrlapra** — az ügyfél leadje vész el egy elrontott süti miatt, amit nem is ő
+írt. Új `safeDecodeCookieValue`: a hibás kódolás úgy viselkedik, mintha a süti
+ott sem lenne, tehát a hívó a szokásos „nincs jelzés" ágra megy (`undefined` /
+`none`). Ez a helyes GDPR-tartás — nem találgatunk, de nem is ejtünk leadet.
+
+**2. `raw_cookie` csonkítatlanul került a receiptre.** A mező a gateway
+`consent_debug` táblájába megy (14 napos purge), és csak akkor, ha a források
+nem egyeznek — de a diagnózishoz az eleje elég. Új `RAW_COOKIE_MAX = 200`, a
+fork határával azonosan.
+
+**3. `readMetaCookies` `{ fbc: undefined }`-ot adott a hiányzó kulcs helyett.**
+Egy `'fbc' in cookies` vagy `Object.keys(...)` ellenőrzés igazat adott volna egy
+nem létező klikk-ID-re, és a gateway saját `fbclid → fbc` rekonstrukciója épp
+ilyenkor maradt volna ki. Mostantól csak a ténylegesen meglévő kulcsok.
+
+A dróton egyik javítás sem változtat érvényes bemenetre: a `compact()` eddig is
+eldobta az `undefined`-et, a csonkítás csak a hibakereső mezőt érinti, a
+dekódoló-őr pedig csak ott lép be, ahol eddig kivétel volt.
+
+---
+
 ## 6.6.0 (2026-08-26)
 
 ### Javítva — az e-mail-identitás két lába MÁS byte-stringet hashelt

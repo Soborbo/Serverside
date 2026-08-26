@@ -171,6 +171,40 @@ export interface GatewayResult {
 // Short on purpose: this runs inside the lead request, so a sick gateway must not
 // keep the user staring at a spinner. A genuinely lost event is caught by the
 // gateway's own zero-conversion / smoke alerts, not by hammering here.
+/**
+ * A RECEIPTRE KERÜLŐ NYERS SÜTI FELSŐ HATÁRA.
+ *
+ * A `raw_cookie` a gateway `consent_debug` táblájába megy (14 napos purge), és
+ * CSAK akkor, ha a források nem egyeznek. Ettől még nincs okunk a teljes sütit
+ * eltenni: a diagnózishoz az eleje elég, a maradék puszta adattöbblet egy
+ * consent-jellegű mezőben. A painless fork ezt 200-on tartotta; a kanonikus
+ * mag eddig NEM csonkított — ezt a különbséget az F9/3.4 szerver-szelet
+ * paritás-futása mutatta ki.
+ */
+const RAW_COOKIE_MAX = 200;
+
+/**
+ * SÜTI-ÉRTÉK DEKÓDOLÁSA, AMI NEM DOBHAT.
+ *
+ * A `decodeURIComponent` `URIError`-t dob egy hibás percent-szekvenciára
+ * (`%zz`, csonka `%E0`). Ez a modul a site LEAD-ÚTVONALÁN fut: az API-route a
+ * `readConsentFromCookie(...)` / `buildConsentSources(...)` hívást a konverzió
+ * összeállítása közben végzi. Egy dobás ott nem „hiányzó telemetria", hanem
+ * 500-as válasz a beküldött űrlapra — az ügyfél leadje vész el egy elrontott
+ * süti miatt, amit nem is ő írt.
+ *
+ * Ezért a hibás kódolás úgy viselkedik, mintha a süti ott sem lenne: a hívó a
+ * szokásos „nincs jelzés" ágra megy (`undefined` / `none`), ami a helyes GDPR-
+ * tartás — nem találgatunk, de nem is ejtjük el a leadet.
+ */
+function safeDecodeCookieValue(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
 const DEFAULT_RETRY_DELAYS_MS = [400, 1200];
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -219,7 +253,7 @@ export function readConsentFromCookie(
     const idx = part.indexOf('=');
     if (idx < 0) continue;
     if (part.slice(0, idx).trim() === 'cookieyes-consent') {
-      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      raw = safeDecodeCookieValue(part.slice(idx + 1).trim());
       break;
     }
   }
@@ -313,7 +347,7 @@ export function readSboConsentCookieHeader(
     const idx = part.indexOf('=');
     if (idx < 0) continue;
     if (part.slice(0, idx).trim() === 'sbo_consent') {
-      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      raw = safeDecodeCookieValue(part.slice(idx + 1).trim());
       break;
     }
   }
@@ -365,7 +399,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.6.0';
+export const BACKEND_LIB_VERSION = '6.6.1';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
@@ -421,7 +455,7 @@ export function buildConsentSources(
       const idx = part.indexOf('=');
       if (idx < 0) continue;
       if (part.slice(0, idx).trim() !== 'cookieyes-consent') continue;
-      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      raw = safeDecodeCookieValue(part.slice(idx + 1).trim());
       break;
     }
   }
@@ -454,7 +488,7 @@ export function buildConsentSources(
     consent_age_s: sboAge,
     // Raw string: the gateway keeps it ONLY when the sources disagree, in the
     // short-lived consent_debug table (14-day purge). Never in consent_receipts.
-    raw_cookie: present ? raw : undefined,
+    raw_cookie: present && raw ? raw.slice(0, RAW_COOKIE_MAX) : undefined,
   };
 }
 
@@ -548,7 +582,11 @@ export function readMetaCookies(
     if (k === '_fbp' && FBP_RE.test(v)) fbp = v;
     if (k === '_fbc' && FBC_RE.test(v)) fbc = v;
   }
-  return { fbp, fbc };
+  // CSAK a ténylegesen meglévő kulcsok. Egy `{ fbc: undefined }` alak nem
+  // ugyanaz, mint a hiányzó `fbc`: a hívó `'fbc' in cookies` vagy
+  // `Object.keys(...)` ellenőrzése igazat adna egy nem létező klikk-ID-re, és a
+  // gateway saját `fbclid → fbc` rekonstrukciója épp ilyenkor maradna ki.
+  return { ...(fbp ? { fbp } : {}), ...(fbc ? { fbc } : {}) };
 }
 
 /**
