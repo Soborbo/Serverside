@@ -370,10 +370,40 @@ Javítva a csomagban — **6.6.1**.
 | 2 | `raw_cookie` **csonkítatlanul** a receiptre | A teljes consent-süti a `consent_debug` táblába. A fork 200 karakteren vágott; a mag nem. Adatminimalizálási visszalépés. |
 | 3 | `readMetaCookies` → `{ fbc: undefined }` | Egy `'fbc' in cookies` ellenőrzés igazat ad egy **nem létező** klikk-ID-re, és a gateway `fbclid → fbc` rekonstrukciója épp ilyenkor marad ki. |
 
-Az 1. a súlyos: nem mérési hiba, hanem **elveszett konverzió**. A `safeDecodeCookieValue`
-mostantól úgy kezeli a hibás kódolást, mintha a süti ott sem lenne — a hívó a
-szokásos „nincs jelzés" ágra megy. Ez a helyes GDPR-tartás: nem találgatunk, de
-nem is ejtünk leadet.
+Az 1. a súlyos: nem mérési hiba, hanem **elveszett konverzió**.
+
+### „Nem dob" ≠ „jól degradál" — a javítás első változata is hibás volt
+
+A javítás első alakja mindkét hívót ugyanarra vitte: hibás kódolás → `undefined`,
+tehát „mintha a süti ott sem lenne". Ez **fél megoldás volt**, és a saját
+tesztem is átengedte, mert az csak a kivétel HIÁNYÁT állította, a degradáció
+CÉLJÁT nem.
+
+A két hívónak ugyanarra a bemenetre **más a helyes válasza** — és ezt a
+szétválást a Worker `parseConsentCookieHeader`-e ÉS a painless fork is
+egyformán tartotta:
+
+| hívó | a kérdés | degradáció |
+|---|---|---|
+| **kapu** (`readConsentFromCookie`, `readSboConsentCookieHeader`) | „milyen hozzájárulásra hivatkozhatunk?" | `undefined`/`null` → `require_consent`, **fail closed** |
+| **telemetria** (`buildConsentSources`) | „mit láttunk?" | a **nyers, dekódolatlan** értékre esik vissza, és jelent tovább |
+
+A különbség nem elméleti: egy hosszú süti EGYETLEN hibás escape-je miatt a közös
+„adjunk `undefined`-et" elveszítené a mellette álló, tökéletesen olvasható
+`advertisement:yes`-t — a mérés némán nullázódna, miközben a felhasználó igenis
+döntött. A `kulcs:érték,` alak nem igényel dekódolást, tehát a nyers string
+rendszerint ugyanúgy parse-olható.
+
+Két helper lett belőle: `safeDecodeCookieValue` (kapu) és
+`decodeCookieValueLossy` (telemetria). A teszt mostantól **a célt pinneli**:
+ugyanarra a sütire a kapu `undefined`-et ad, a telemetria `cookieyes_cookie`-t
+és a valódi döntést.
+
+> **Amit ez a tesztírásról mond.** Egy `expect(...).not.toThrow()` a kivételt
+> zárja ki, nem a viselkedést rögzíti. Amikor a szerver-láb a kanonikus magra
+> váltott, ez a teszt VÁLTOZATLANUL ZÖLD MARADT egy olyan változás fölött, ami
+> consent-jelzést semmisített volna meg. A robusztusság-teszt akkor ér valamit,
+> ha kimondja, MIRE degradál — nem csak azt, hogy nem dob.
 
 > **Amit ez a módszerről mond.** A `#53` azt mutatta meg, hogy a vendorolt példány
 > elmaradhat a csomag mögött. Ez a szelet a fordítottját: **a csomag is elmaradhat

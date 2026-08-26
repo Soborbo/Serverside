@@ -45,6 +45,33 @@ describe('hibás percent-kódolás a lead-útvonalon', () => {
   });
 });
 
+/**
+ * A „nem dob" MÉG NEM MONDJA MEG, MIRE DEGRADÁL — és a két hívó típusnak MÁS a
+ * helyes válasza UGYANARRA a bemenetre. Ez a szétválás a Worker
+ * `parseConsentCookieHeader`-ében és a painless forkban is így élt; egy közös
+ * „adjunk undefined-et" helyer NÉMÁN elveszítené a mérést.
+ *
+ * A bemenet szándékosan olyan süti, amiben EGY hibás escape van, DE mellette
+ * tökéletesen olvasható a döntés.
+ */
+describe('kapu vs telemetria — ugyanaz a bemenet, két helyes válasz', () => {
+  const READABLE_BUT_MALFORMED = 'cookieyes-consent=consentid:abc%E0,advertisement:yes,analytics:yes';
+
+  it('a KAPU fail closed: sérült stringből nem olvasunk ki jogalapot', () => {
+    expect(readConsentFromCookie(READABLE_BUT_MALFORMED)).toBeUndefined();
+  });
+
+  it('a TELEMETRIA megőrzi a mérést: a nyers értékből a döntés még kiolvasható', () => {
+    const out = buildConsentSources(READABLE_BUT_MALFORMED);
+    expect(out.source_used).toBe('cookieyes_cookie');
+    expect(out.cookie).toEqual({ analytics: true, marketing: true });
+  });
+
+  it('a bemenet tényleg dobna őrizetlenül — különben a teszt semmit sem bizonyít', () => {
+    expect(() => decodeURIComponent('consentid:abc%E0,advertisement:yes,analytics:yes')).toThrow();
+  });
+});
+
 describe('raw_cookie — adatminimalizálás', () => {
   it('a receiptre CSONKÍTVA kerül, sosem teljes egészében', () => {
     const long = 'consentid:' + 'x'.repeat(600) + ',advertisement:yes,analytics:yes';

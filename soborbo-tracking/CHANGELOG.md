@@ -25,9 +25,27 @@ szekvencia (`%zz`, csonka `%E0`) `URIError`-t dob. Ezek a függvények a site
 LEAD-ÚTVONALÁN futnak: az API-route a konverzió összeállítása közben hívja őket.
 Egy dobás ott nem „hiányzó telemetria", hanem **500-as válasz a beküldött
 űrlapra** — az ügyfél leadje vész el egy elrontott süti miatt, amit nem is ő
-írt. Új `safeDecodeCookieValue`: a hibás kódolás úgy viselkedik, mintha a süti
-ott sem lenne, tehát a hívó a szokásos „nincs jelzés" ágra megy (`undefined` /
-`none`). Ez a helyes GDPR-tartás — nem találgatunk, de nem is ejtünk leadet.
+írt.
+
+A „ne dobjon" azonban még nem mondja meg, MIRE degradáljon — és a két hívó
+típusnak MÁS a helyes válasza ugyanarra a bemenetre. Ezt a szétválást a Worker
+`parseConsentCookieHeader`-e és a painless fork is egyformán tartotta:
+
+| hívó | kérdés | degradáció |
+|---|---|---|
+| **kapu** (`readConsentFromCookie`, `readSboConsentCookieHeader`) | „milyen hozzájárulásra hivatkozhatunk?" | `undefined`/`null` → a gateway `require_consent`-re esik és **fail closed** |
+| **telemetria** (`buildConsentSources`) | „mit láttunk?" | a **nyers, dekódolatlan** értékre esik vissza, és jelent tovább |
+
+A különbség nem elméleti: egy hosszú süti EGYETLEN hibás escape-je miatt a közös
+„adjunk `undefined`-et" megoldás elveszítené a mellette álló, tökéletesen
+olvasható `advertisement:yes`-t — a mérés némán nullázódna, miközben a
+felhasználó igenis döntött. A `kulcs:érték,` alak nem igényel dekódolást, tehát a
+nyers string rendszerint ugyanúgy parse-olható.
+
+Ezért két helper: `safeDecodeCookieValue` (kapu → `undefined`) és
+`decodeCookieValueLossy` (telemetria → nyers érték). Teszt pinneli, hogy
+UGYANARRA a bemenetre a kapu `undefined`-et, a telemetria pedig
+`cookieyes_cookie`-t + a valódi döntést adja.
 
 **2. `raw_cookie` csonkítatlanul került a receiptre.** A mező a gateway
 `consent_debug` táblájába megy (14 napos purge), és csak akkor, ha a források

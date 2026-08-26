@@ -193,15 +193,41 @@ const RAW_COOKIE_MAX = 200;
  * 500-as válasz a beküldött űrlapra — az ügyfél leadje vész el egy elrontott
  * süti miatt, amit nem is ő írt.
  *
- * Ezért a hibás kódolás úgy viselkedik, mintha a süti ott sem lenne: a hívó a
- * szokásos „nincs jelzés" ágra megy (`undefined` / `none`), ami a helyes GDPR-
- * tartás — nem találgatunk, de nem is ejtjük el a leadet.
+ * ── KÉT DEGRADÁCIÓ, MERT KÉT KÜLÖNBÖZŐ KÉRDÉS ───────────────────────────────
+ * A „ne dobjon" még nem mondja meg, MIRE degradáljon. A két hívó típus mást
+ * kíván, és ezt a különbséget a Worker `parseConsentCookieHeader`-e és a
+ * painless fork is EGYFORMÁN tartotta — érdemes nem összemosni:
+ *
+ *   KAPU (`readConsentFromCookie`, `readSboConsentCookieHeader`)
+ *       „Milyen hozzájárulásra HIVATKOZHATUNK?" Egy sérült stringből engedélyt
+ *       kiolvasni találgatás. Ezért `undefined`/`null` → a gateway a
+ *       `require_consent`-re esik vissza és FAIL CLOSED. Ez a helyes GDPR-tartás.
+ *
+ *   TELEMETRIA (`buildConsentSources`)
+ *       „MIT LÁTTUNK?" Itt az eldobás információt semmisít meg: egy hosszú süti
+ *       egyetlen hibás escape-je miatt elveszne a mellette álló, tökéletesen
+ *       olvasható `advertisement:yes`. A dekódolatlan string RENDSZERINT
+ *       ugyanúgy parse-olható (a `kulcs:érték,` alak nem igényel dekódolást),
+ *       ezért a telemetria a NYERS értékre esik vissza, és jelent tovább.
  */
 function safeDecodeCookieValue(value: string): string | undefined {
   try {
     return decodeURIComponent(value);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * A TELEMETRIA dekódolója: hibás kódolásra a NYERS értéket adja vissza, nem
+ * dob és nem ejt. Lásd a fenti „két degradáció" blokkot — itt a mérés
+ * folytonossága a cél, nem a jogalap.
+ */
+function decodeCookieValueLossy(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 
@@ -455,7 +481,7 @@ export function buildConsentSources(
       const idx = part.indexOf('=');
       if (idx < 0) continue;
       if (part.slice(0, idx).trim() !== 'cookieyes-consent') continue;
-      raw = safeDecodeCookieValue(part.slice(idx + 1).trim());
+      raw = decodeCookieValueLossy(part.slice(idx + 1).trim());
       break;
     }
   }

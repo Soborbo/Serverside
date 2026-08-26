@@ -135,8 +135,8 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "f6c1d3748278c352e7ee16b79a0601a6a267fe1a35a9d07007d5fa04d1037d5d",
-      "bytes": 31511,
+      "sha256": "08b2da257645f3cbea3596bb1b83c1ccc71a6736361787bfbfa8e782a23a8095",
+      "bytes": 32800,
       "role": "backend"
     },
     "server/backend/smoke.ts": {
