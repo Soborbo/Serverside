@@ -171,7 +171,10 @@ describe('P6.1 — normalizálás unicode és ékezet mellett', () => {
   });
 
   it('üres/hiányos bemenetre nem gyárt hamis azonosítót', () => {
-    expect(normalizeEmail('')).toBe('');
+    // 6.6.0: az üres bemenet `undefined`, nem üres string. A cél ugyanaz —
+    // „ne gyárts hamis azonosítót" —, de most a hiány EXPLICIT, és a Worker
+    // `hash.ts` is pontosan ezt adja ugyanerre a bemenetre.
+    expect(normalizeEmail('')).toBeUndefined();
     expect(sanitizeName('   ')).toBe('');
   });
 });

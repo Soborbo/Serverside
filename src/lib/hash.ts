@@ -6,6 +6,10 @@
  * Google-nál EC match rate-csökkenést okoz.
  */
 
+// A csomag EGYETLEN e-mail-identitás normalizálója. Szándékosan függőség
+// nélküli modul, hogy a Worker és a böngésző-láb IS importálhassa.
+import { normalizeEmailIdentity } from '../../soborbo-tracking/lib/email-identity';
+
 export type CountryCode = 'GB' | 'HU' | 'EU' | 'US' | 'DE' | 'FR' | 'IT' | 'ES';
 
 export interface PlainUserData {
@@ -42,11 +46,19 @@ export async function sha256Hex(input: string): Promise<string> {
     .join('');
 }
 
+/**
+ * Meta-szabályú e-mail normalizálás. A SZABÁLY a csomag
+ * `email-identity.ts`-ében él — ugyanaz a modul, amit a böngésző-láb is
+ * importál. Egy identitás → egy normalizált byte-string → egy hash.
+ *
+ * Korábban ez a két láb KÜLÖN implementáció volt: a böngésző 254 karakternél
+ * CSONKÍTOTT, a szerver nem, tehát egy hosszú címre két különböző hash
+ * keletkezett. A `@`-őr pedig csak itt volt meg, ami aszimmetrikus `em`-et
+ * hagyott (Pixel hashelte, CAPI eldobta) — identity matching / EMQ / EC
+ * match rate romlás.
+ */
 export function normalizeEmail(email: string | null | undefined): string | undefined {
-  if (typeof email !== 'string') return undefined;
-  const trimmed = email.trim().toLowerCase();
-  if (trimmed.length === 0 || !trimmed.includes('@')) return undefined;
-  return trimmed;
+  return normalizeEmailIdentity(email);
 }
 
 // Domains where Google's user-data formatting spec requires stripping dots and

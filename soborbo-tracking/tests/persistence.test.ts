@@ -15,8 +15,18 @@ describe('normalizeEmail', () => {
   it('lowercases + trims', () => {
     expect(normalizeEmail('  Jane@Example.COM ')).toBe('jane@example.com');
   });
-  it('caps length at 254', () => {
-    expect(normalizeEmail('a'.repeat(300) + '@x.com').length).toBe(254);
+  /**
+   * VISELKEDÉS-VÁLTOZÁS (6.6.0). Korábban 254 karakternél CSONKÍTOTT — ami egy
+   * mesterségesen MÁS címet állított elő, mint amit a Worker `hash.ts`
+   * ugyanabból a bemenetből hashelt. 254 oktet fölött a cím érvénytelen
+   * (RFC 5321), ezért eldobjuk. A parity-bizonyíték:
+   * `tests/email-identity-parity.test.ts`.
+   */
+  it('254 oktet fölött ELDOB, nem csonkít', () => {
+    expect(normalizeEmail('a'.repeat(300) + '@x.com')).toBeUndefined();
+  });
+  it('nem e-mail (nincs @) → undefined', () => {
+    expect(normalizeEmail('not-an-email')).toBeUndefined();
   });
 });
 

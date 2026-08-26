@@ -206,7 +206,13 @@ export function setUserDataForEC(ud: Record<string, string>): void {
 }
 
 function buildConversionPayload(data: ConversionData): Record<string, unknown> {
-  const ud: Record<string, string> = { email: normalizeEmail(data.email) };
+  // Az e-mail mostantól ELDOBHATÓ: `@` nélküli vagy 254 oktetnél hosszabb cím
+  // nem identitás. Korábban a csonkított/érvénytelen alak is bekerült, és a
+  // böngésző-láb olyan `em`-et hashelt, amit a szerver eldobott — aszimmetrikus
+  // user_data ugyanarra az eventre.
+  const ud: Record<string, string> = {};
+  const normalizedEmail = normalizeEmail(data.email);
+  if (normalizedEmail) ud.email = normalizedEmail;
   if (data.phone && data.phone.length >= 8) ud.phone_number = normalizePhone(data.phone);
   if (data.firstName) ud.first_name = sanitizeName(data.firstName);
   if (data.lastName) ud.last_name = sanitizeName(data.lastName);
