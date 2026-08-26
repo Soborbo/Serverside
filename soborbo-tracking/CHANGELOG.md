@@ -10,6 +10,62 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.0 (2026-08-26)
+
+### Javítva — az e-mail-identitás két lába MÁS byte-stringet hashelt
+
+Az e-mail normalizálása három helyen élt, három különböző viselkedéssel:
+
+| láb | szabály |
+|---|---|
+| böngésző-csomag (`persistence.normalizeEmail`) | `trim → lowercase → slice(0, 254)` — **csonkított** |
+| Worker (`src/lib/hash.ts`) | `trim → lowercase → @-őr` — nem csonkított |
+| painless site (`normalizeUserData`) | `trim → lowercase` — se cap, se őr |
+
+A csonkítás a legrosszabb kimenet: 254 oktet fölött a böngésző egy
+MESTERSÉGESEN MÁS címet állított elő (`…@exam`), és arra képzett hash-t, mint
+amit a szerver ugyanabból a bemenetből. Egy identitás, két hash. A hiányzó
+`@`-őr pedig aszimmetriát hagyott: egy elgépelt „e-mail" a böngésző-lábon `em`
+lett, a szerver eldobta — identity matching / EMQ / EC match rate romlás. (A
+Meta dedup ettől független: az az `(event_name, event_id)` páron áll.)
+
+Új, FÜGGŐSÉG NÉLKÜLI modul: `lib/email-identity.ts` →
+`normalizeEmailIdentity()`. Ezt importálja a böngésző-csomag ÉS a Worker
+`src/lib/hash.ts` is — egy identitás → egy normalizált byte-string → egy hash.
+
+A szabály: `trim → lowercase → @-őr → >254 OKTET esetén ELDOBÁS → különben
+változatlan`. A 254-nek szabványos alapja van (RFC 5321 forward-path), de abból
+az következik, hogy a hosszabb cím ÉRVÉNYTELEN — nem az, hogy le kell vágni.
+
+A korlát OKTETBEN mér, nem `String.length`-ben: egy ékezetes helyi rész UTF-8-ban
+két oktet karakterenként, tehát a `length`-alapú ellenőrzés átengedne egy 260
+oktetes címet, és a két láb megint elválna.
+
+Az oktetszámláló SZÁNDÉKOSAN runtime-független (`utf8OctetLength`), nincs benne
+`typeof TextEncoder` elágazás. Egy feature-detect két kódutat jelent, két kódút
+pedig azt, hogy ugyanarra a címre két runtime KÜLÖNBÖZŐ döntést hoz — pontosan
+az az aszimmetria, amit ez a modul felszámol. Az invariáns nem az, hogy „ne
+engedjen át többet, mint a másik láb", hanem hogy ugyanarra a stringre minden
+runtime UGYANAZT a számot adja. A `TextEncoder` a tesztben ORÁKULUM, nem
+megvalósítás.
+
+### Breaking — `normalizeEmail` visszatérési típusa
+
+`(email: string) => string` **→** `(email: string | null | undefined) => string | undefined`.
+
+Üres, `@` nélküli, vagy 254 oktetnél hosszabb bemenetre `undefined` (korábban
+üres string, illetve csonkított cím). A `buildConversionPayload` ennek megfelelően
+csak akkor teszi be az `email` mezőt, ha van érvényes identitás.
+
+### Változatlan
+
+A név/város/irányítószám normalizálás **nem** változott. A `sanitizeName`
+(`trim().slice(0,100)`, lowercase NÉLKÜL) SZÁNDÉKOSAN nem hash-normalizáló — a
+Worker `normalizeName` lowercase-el, tehát erre delegálni némán elrontaná a
+név-hasheket.
+
+---
+
 ## 6.5.0 (2026-08-25)
 
 ### Hozzáadva — a Google klikk-ID szabálya és a háromállapotú marketing-consent PRIMITÍVKÉNT

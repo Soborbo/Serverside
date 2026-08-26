@@ -135,11 +135,21 @@ function ssGet(k: string): string | null { try { return sessionStorage.getItem(k
 function ssSet(k: string, v: string): void { try { sessionStorage.setItem(k, v); } catch { /* */ } }
 function ssRm(k: string): void { try { sessionStorage.removeItem(k); } catch { /* */ } }
 
+import { normalizeEmailIdentity } from './email-identity';
+
 // ── Canonical normalizers (ONE source of truth) ────────────────────
 
-/** Normalize email: lowercase, trim, max 254 chars. */
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase().slice(0, 254);
+/**
+ * Az e-mail identitás-alakja. A SZABÁLY nem itt lakik: a `email-identity.ts`
+ * egyetlen authorityje adja, amit a Worker `src/lib/hash.ts` is importál — így
+ * a böngésző-láb és a CAPI/offline láb BITRE ugyanazt a stringet hasheli.
+ *
+ * A korábbi `slice(0, 254)` CSONKÍTOTT: 254 oktet fölött egy mesterségesen más
+ * címet állított elő, mint a szerver ugyanabból a bemenetből. Most `undefined`
+ * — érvénytelen cím nem lesz fél-identitássá.
+ */
+export function normalizeEmail(email: string | null | undefined): string | undefined {
+  return normalizeEmailIdentity(email);
 }
 
 /**

@@ -64,6 +64,13 @@ export {
 } from './gateway';
 // A Google klikk-ID szabálya EGY authority — a site-adapterek (pl. a painless
 // `pr_tracking` session-store-ja) ezt használják a saját másolatuk helyett.
+// Az e-mail-identitás EGYETLEN normalizálója — ugyanaz a modul, amit a Worker
+// `src/lib/hash.ts` is importál. Egy identitás → egy byte-string → egy hash.
+export {
+  normalizeEmailIdentity,
+  utf8OctetLength,
+  EMAIL_IDENTITY_MAX_OCTETS
+} from './email-identity';
 export {
   GOOGLE_CLICK_KEYS,
   resolveGoogleClickId,

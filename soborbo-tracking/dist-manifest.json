@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.5.0",
-  "file_count": 28,
+  "version": "6.6.0",
+  "file_count": 29,
   "files": {
     "lib/config.ts": {
-      "sha256": "ebb5a080344b0d363a35cb265efbdcd53cb9d028703d860a976461100a1defb5",
+      "sha256": "4b5fc3502a1b03804a9125567c6b3c8cad00098c176e699d82eb41a3967edd52",
       "bytes": 3832,
       "role": "browser"
     },
@@ -44,14 +44,19 @@
       "bytes": 11238,
       "role": "browser"
     },
+    "lib/email-identity.ts": {
+      "sha256": "0a4393fc8088c25b16eba1b140f931e9c49ae7d00b474ba6d6e5ac7eb13daab9",
+      "bytes": 5437,
+      "role": "browser"
+    },
     "lib/event-contract.ts": {
       "sha256": "a54de1339d4c8899b6b2664a4984da9d27113e450c4e9b00801f84a44a482519",
       "bytes": 2307,
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "2b217bd3363441979188d212c28f25ce0b2331dd9592cbb43e6148f6d1e107e1",
-      "bytes": 15874,
+      "sha256": "12f2b5027da782d92d56c83331077af6562c5b83242ab078599b542c1917e609",
+      "bytes": 16237,
       "role": "browser"
     },
     "lib/gateway.ts": {
@@ -65,8 +70,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "bc2a1853415212fa7cd0ff117728894ac84ac129f223bba3e99024497dce1971",
-      "bytes": 22074,
+      "sha256": "db7b7bb9d9bb06943d7de45e536f3bdb079510e32a768ae2ce3e3510994bd704",
+      "bytes": 22351,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -75,8 +80,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "b07910786c60217207373d929800fac32d3380c055ba42820192f9cb91657e6f",
-      "bytes": 26498,
+      "sha256": "817e75d5e2c7e2857edccc2e09b37466a4f3eaca5f89696d83889b4c1fe91702",
+      "bytes": 27005,
       "role": "browser"
     },
     "lib/submit.ts": {
@@ -130,7 +135,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "43ff310f82ba14fde06e6efe95d6df3dfccfd250a107bd247a93b08dd94d7938",
+      "sha256": "0d0d696740bef0f3b2ec40963bafd7cdd7aaed65e870f53a512a8bd3d30c74c3",
       "bytes": 29682,
       "role": "backend"
     },
