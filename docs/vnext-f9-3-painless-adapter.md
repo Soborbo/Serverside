@@ -1,11 +1,10 @@
 # F9/3 — Painless: leltár és adapter-szerződés (1–2. lépés)
 
-**Állapot:** 1–5. lépés KÉSZ, a 6. részben. A **böngésző-láb** és a szerver-láb
-**payload-építője + süti-olvasói** a kanonikus **6.6.1** magon futnak (vendorolva,
-bitre azonosan). Ami MÉG fork: a szerver-láb **transzportja** — `GatewayEnv`,
-binding-feloldás, `sendGatewayConversion` —, mert az átvétel deploy-koordinációt
-igényel (a binding neve `EVENT_GATEWAY` ↔ `GATEWAY`), nem kódcserét. A 8–9. lépés
-ezért nyitva. Bizonyítékok a 6–7. szakaszban.
+**Állapot:** 1–7. és 9. lépés KÉSZ. **A fork elfogyott.** Mindkét láb a kanonikus
+**6.6.2** magon fut (vendorolva, bitre azonosan) — a szerver-láb transzportja is.
+A `BACKEND_LIB_VERSION` már nem `0.0.0-painless-fork`, hanem **a vendorolt magból
+származtatott** érték: kézzel nem hazudható. Marad a **8. lépés (deploy)**.
+Bizonyítékok a 6–8. szakaszban.
 
 **A jóváhagyott sorrend, amiből ez a dokumentum az első kettő:**
 
@@ -15,15 +14,15 @@ ezért nyitva. Bizonyítékok a 6–7. szakaszban.
 3. paritás-harness a MAI fork ellen           ← KÉSZ (painless #50)
 4. kanonikus mag az adapter mögé              ← KÉSZ (painless #51–#56)
 5. ugyanazok a paritás-tesztek GREEN          ← KÉSZ (21/21)
-6. fork-fájlok eltávolítása                   ← RÉSZBEN: a böngésző-láb kész,
-                                                 a szerver-lábból a payload-építő
-                                                 + süti-olvasók átmentek (578 →
-                                                 340 sor); a transzport áll
-7. build/test                                 ← KÉSZ (build zöld · 450 + 1148)
-8. deploy                                     ← a binding-átnevezés itt dől el
-9. smoke ledger version = 6.6.x               ← a terv 6.3.x-et írt; a csomag
-                                                 azóta 6.6.1 (#99–#102 + a
-                                                 szerver-szelet találatai)
+6. fork-fájlok eltávolítása                   ← KÉSZ: a szerver-láb 578 → 353
+                                                 sor, és ami maradt, az env-
+                                                 névadás + logging-burkoló, nem
+                                                 könyvtár-logika
+7. build/test                                 ← KÉSZ (build zöld · 451 + 1148)
+8. deploy                                     ← NYITVA (binding-átnevezés NEM
+                                                 kell: az adapter képezi le)
+9. smoke ledger version = 6.6.x               ← KÉSZ a kód oldalán: a szám a
+                                                 vendorolt magból származik
 ```
 
 Külön PR-ben, utána: **P5 `commitOnSuccess` rollout.** CMP flip nem keverhető hozzá.
@@ -410,3 +409,76 @@ ugyanarra a sütire a kapu `undefined`-et ad, a telemetria `cookieyes_cookie`-t
 > egy site mögött.** Egy „a kanonikus mindig jobb" feltevés mind a hármat átvitte
 > volna regresszióként. A harness nem azért van, hogy a forkot marasztalja el —
 > azért, hogy a KÜLÖNBSÉG látszódjon, bármelyik irányba mutat.
+
+---
+
+## 8. A transzport is átment — és a binding-átnevezés végül NEM kellett
+
+A 7. szakasz azt írta, hogy a transzport deploy-koordinációt igényel, mert a
+binding neve a site-on `EVENT_GATEWAY`, a magban `GATEWAY`. **Ez tévedés volt** —
+pontosabban: a *binding átnevezése* igényelne deployt, a **leképezése** nem.
+
+```ts
+function toCanonicalEnv(env: GatewayEnv): CanonicalGatewayEnv {
+  return { ...env, GATEWAY: env.EVENT_GATEWAY, SITE_URL: gatewayBaseUrl(env) };
+}
+```
+
+A `wrangler.toml` érintetlen, a `TRACKING_GATEWAY_URL` felülírás a `SITE_URL`-be
+hajtva. A küldés — URL, auth-fejléc, retry-politika, a 400/401/403/404
+„ez a mi hibánk, ne retry-old" szabály — mind a kanonikus magé.
+
+### Ami útban állt: a `service`
+
+Egy dolog blokkolta a teljes delegálást: a kanonikus `sendGatewayConversion` a
+SAJÁT payload-építőjét hívja, az pedig nem ismerte a `service`-t. Kiderült, hogy
+ez **kanonikus rés, nem painless-kvirk**:
+
+| láb | küldi a `service`-t? |
+|---|---|
+| kanonikus böngésző (`lib/gateway.ts`) | **igen** — dataLayerre ÉS a `sendToWorker` body-jába |
+| gateway (fogyasztó, `src/lib/ga4.ts`) | **igen** — `params.service` |
+| kanonikus szerver (`server/backend/`) | **NEM** |
+
+Mivel a CLAUDE.md 10. pontja szerint MINDEN high-value konverzió a szerver-
+ingressen jön, a címkét pont ott vesztettük el, ahol a pénz van — a low-risk
+klikk-eventeken viszont megmaradt, tehát a riportban a hiány sem tűnt teljesnek.
+Javítva a **6.6.2**-ben; a painless burkolójából ezzel kikerült.
+
+### A verzió, ami nem tud hazudni
+
+A `BACKEND_LIB_VERSION` már nem literál, hanem **re-export a vendorolt magból**:
+
+```ts
+export { BACKEND_LIB_VERSION } from '@/lib/soborbo-tracking/server/backend/gateway-dispatch';
+```
+
+Egy kézzel karbantartott szám pont azt a driftet fedhetné el, amit a
+`client_lib_version` mérni hivatott. Így a lánc végig gépi:
+**vendorolt mag → `BACKEND_LIB_VERSION` → receipt.**
+
+A régi guard (`toMatch(/^0\.0\.0-/)` + `toContain('fork')`) nem eltűnt, hanem
+**erősebb lett**: ma azt köti le, hogy a szerver- és a böngésző-fél verziója
+EGYEZZEN. A régit egy kézírás kielégítette volna; az újat csak az, ha tényleg a
+magot futtatjuk.
+
+### Ami site-lokális maradt — és miért nem könyvtár-logika
+
+`GatewayEnv` (env-változók NEVEI) · `gatewayBaseUrl` / `isGatewayConfigured`
+(config-politika) · `deliverGatewayConversion` (logging + `waitUntil`) ·
+`splitFullName` (nincs kanonikus párja) · `toCanonicalEnv` / `toCanonicalInput`
+(a fenti nevek leképezése).
+
+### Egy szándékos szigorítás
+
+Binding nélkül a kanonikus küldő `gateway_not_configured`-t ad, és **nem esik
+vissza** `globalThis.fetch`-re. A korábbi fallback on-zone amúgy is néma nulla
+volt (a Cloudflare loop-védelme rövidre zárja a saját zónánk route-jára menő
+subrequestet) — csak épp észrevétlenül. Mostantól a `deliverGatewayConversion`
+hangosan logolja.
+
+> **Amit ez a 7. szakasz állításáról mond.** Ott azt írtam, a transzport
+> deploy-koordinációt igényel. A tétel a *binding átnevezésére* igaz, de abból
+> nem következett, hogy a transzport nem mehet át — csak annyi, hogy nem az
+> átnevezés az útja. Egy „ez deploy-kérdés" címke elég meggyőzően hangzik ahhoz,
+> hogy megállítson egy lépést, amit valójában semmi nem blokkolt.

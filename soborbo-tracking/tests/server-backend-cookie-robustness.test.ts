@@ -4,6 +4,7 @@ import {
   readSboConsentCookieHeader,
   buildConsentSources,
   readMetaCookies,
+  buildGatewayPayload,
 } from '../server/backend/gateway-dispatch';
 
 /**
@@ -97,5 +98,31 @@ describe('readMetaCookies — hiányzó kulcs HIÁNYZIK, nem undefined', () => {
 
   it('süti nélkül üres objektum, sosem szintetizált érték', () => {
     expect(readMetaCookies(null)).toEqual({});
+  });
+});
+
+/**
+ * A `service` MEZŐ KÉT LÁBON — a szerver-ingress ne veszítse el, amit a böngésző küld.
+ *
+ * A böngésző-láb (`lib/gateway.ts`) a `service`-t a dataLayerre ÉS a
+ * `sendToWorker` body-jába is beteszi, a gateway pedig fogyasztja
+ * (`src/lib/ga4.ts` → `params.service`). A szerver-láb payload-építőjéből
+ * viszont hiányzott. Mivel a CLAUDE.md 10. pontja szerint MINDEN high-value
+ * konverzió a szerver-ingressen jön, gyakorlatilag minden lead elvesztette a
+ * címkét — miközben a low-risk klikk-eventek a böngésző-úton megtartották.
+ */
+describe('service — a két láb ugyanazt a mezőt küldi', () => {
+  it('a szerver-payloadra rákerül, ha a hívó adja', () => {
+    const p = buildGatewayPayload({
+      eventName: 'quote_calculator_submitted',
+      eventId: 'e1',
+      service: 'removal',
+    });
+    expect(p.service).toBe('removal');
+  });
+
+  it('nincs kitalált érték, ha a hívó nem adja', () => {
+    const p = buildGatewayPayload({ eventName: 'contact_form_submitted', eventId: 'e2' });
+    expect(p).not.toHaveProperty('service');
   });
 });

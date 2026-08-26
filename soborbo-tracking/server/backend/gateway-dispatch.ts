@@ -121,6 +121,16 @@ export interface GatewayConversionInput {
   /** 3-letter ISO 4217. REQUIRED whenever value is set — there is no default. */
   currency?: string;
   source?: string;
+  /**
+   * Lead-gen szolgáltatás-címke (pl. `removal`, `clearance`).
+   *
+   * A BÖNGÉSZŐ-láb (`lib/gateway.ts`) ezt eddig is küldte — a dataLayerre ÉS a
+   * `sendToWorker` body-jába —, és a gateway fogyasztja is (`src/lib/ga4.ts`:
+   * `params.service`). Csak EBBŐL a lábból hiányzott, tehát a szerver-ingressen
+   * érkező konverziók (a CLAUDE.md 10. pontja szerint MINDEN high-value lead)
+   * némán elvesztették a címkét, miközben a böngésző-út megtartotta.
+   */
+  service?: string;
   userData?: GatewayUserData;
   attribution?: Record<string, string | undefined>;
   consent?: ConsentState;
@@ -425,7 +435,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.6.1';
+export const BACKEND_LIB_VERSION = '6.6.2';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
@@ -658,6 +668,9 @@ export function buildGatewayPayload(input: GatewayConversionInput): Record<strin
     lead_id: input.leadId,
     ...(hasValue ? { value: input.value, currency: input.currency } : {}),
     source: input.source,
+    // Lásd a `service` mező doksiját az inputon: a böngésző-láb eddig is küldte,
+    // a gateway fogyasztja; csak innen hiányzott. A `compact()` kihagyja, ha nincs.
+    service: input.service,
     user_data: userData && Object.keys(userData).length > 0 ? userData : undefined,
     attribution: attribution && Object.keys(attribution).length > 0 ? attribution : undefined,
     consent: input.consent,

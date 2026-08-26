@@ -10,6 +10,31 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.2 (2026-08-26)
+
+### Javítva — a `service` címke csak a böngésző-lábon utazott
+
+A `service` mezőt a böngésző-láb (`lib/gateway.ts`) eddig is küldte: a
+dataLayerre ÉS a `sendToWorker` body-jába. A gateway fogyasztja is
+(`src/lib/ga4.ts` → `params.service`). A **szerver-láb** payload-építőjéből
+viszont hiányzott.
+
+Ez nem kozmetika: a CLAUDE.md 10. pontja szerint MINDEN high-value konverzió
+(form/lead/purchase) a hitelesített szerver-ingressen jön, a böngésző-úton csak
+a low-risk klikk-eventek mehetnek. Vagyis a címkét pont ott vesztettük el, ahol
+a pénz van — miközben a klikk-eventeken megmaradt, tehát a riportban a hiány
+sem tűnt teljesnek.
+
+A mező mostantól a szerver-payloadon is ott van; a `compact()` kihagyja, ha a
+hívó nem adja (nincs kitalált érték).
+
+Ez tette lehetővé, hogy a painless szerver-lába a TRANSZPORTOT is a kanonikus
+küldőre bízza: eddig azért kellett saját `sendGatewayConversion`, mert a
+kanonikus küldő a saját payload-építőjét hívja, az pedig elejtette volna a
+`service`-t.
+
+---
+
 ## 6.6.1 (2026-08-26)
 
 ### Javítva — a site-backend süti-olvasói elejthettek egy leadet
