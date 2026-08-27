@@ -99,9 +99,15 @@ export async function fetchDatasetEmq(
 
 // ── Proxy-metrika: match-kulcs lefedettség a ledgerből (PII nélkül) ──────────
 
-/** Egy match-kulcs lefedettsége százalékban (0-100), 24h vs megelőző 7 nap. */
+/**
+ * Egy match-kulcs lefedettsége százalékban (0-100), 24h vs megelőző 7 nap.
+ *
+ * A `ct`/`zp`/`country` az M5-ben került be. Vendor-oldali indok, hogy pont ez
+ * a három: a Worker felől a META az egyetlen platform, amely cím-mezőt kap
+ * (TikTok csak em/ph, LinkedIn csak em).
+ */
 export interface KeyCoverage {
-  key: 'em' | 'ph' | 'fbc' | 'fbp';
+  key: 'em' | 'ph' | 'fbc' | 'fbp' | 'ct' | 'zp' | 'country';
   pct24h: number;
   pct7d: number;
 }
@@ -134,6 +140,60 @@ export function detectCoverageDrops(stats: CoverageStats): KeyCoverage[] {
       k.pct7d >= COVERAGE_MIN_BASELINE_PCT &&
       k.pct7d - k.pct24h >= COVERAGE_DROP_PCT_POINTS
   );
+}
+
+interface AddressCoverageRow {
+  n24: number;
+  ct24: number;
+  zp24: number;
+  country24: number;
+  n7: number;
+  ct7: number;
+  zp7: number;
+  country7: number;
+}
+
+/**
+ * A cím-mezők (ct/zp/country) lefedettsége — SAJÁT lekérdezésben, hogy a
+ * 0009-es migráció hiánya csak EZT a hármat vigye el, a négy meglévő kulcsot ne.
+ * `null` = az oszlopok még nincsenek meg (vagy query-hiba) → a hívó a
+ * cím-kulcsokat egyszerűen kihagyja, riasztás nélkül.
+ */
+async function collectAddressCoverage(
+  env: { LEDGER?: D1Database },
+  siteId: string,
+  dayAgo: string,
+  eightDaysAgo: string
+): Promise<((n24: number, n7: number) => KeyCoverage[]) | null> {
+  if (!env.LEDGER) return null;
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT
+         SUM(CASE WHEN received_at >= ?1 THEN 1 ELSE 0 END) AS n24,
+         SUM(CASE WHEN received_at >= ?1 AND ct_present = 1 THEN 1 ELSE 0 END) AS ct24,
+         SUM(CASE WHEN received_at >= ?1 AND zp_present = 1 THEN 1 ELSE 0 END) AS zp24,
+         SUM(CASE WHEN received_at >= ?1 AND country_present = 1 THEN 1 ELSE 0 END) AS country24,
+         SUM(CASE WHEN received_at < ?1 THEN 1 ELSE 0 END) AS n7,
+         SUM(CASE WHEN received_at < ?1 AND ct_present = 1 THEN 1 ELSE 0 END) AS ct7,
+         SUM(CASE WHEN received_at < ?1 AND zp_present = 1 THEN 1 ELSE 0 END) AS zp7,
+         SUM(CASE WHEN received_at < ?1 AND country_present = 1 THEN 1 ELSE 0 END) AS country7
+       FROM events_raw
+       WHERE site_id = ?2 AND received_at >= ?3`
+    )
+      .bind(dayAgo, siteId, eightDaysAgo)
+      .first<AddressCoverageRow>();
+    if (!row) return null;
+    const pct = (num: number, den: number): number =>
+      den > 0 ? Math.round((num / den) * 100) : 0;
+    return (n24: number, n7: number): KeyCoverage[] => [
+      { key: 'ct', pct24h: pct(row.ct24 ?? 0, n24), pct7d: pct(row.ct7 ?? 0, n7) },
+      { key: 'zp', pct24h: pct(row.zp24 ?? 0, n24), pct7d: pct(row.zp7 ?? 0, n7) },
+      { key: 'country', pct24h: pct(row.country24 ?? 0, n24), pct7d: pct(row.country7 ?? 0, n7) }
+    ];
+  } catch {
+    // A 0009 még nem futott le ezen a D1-en — a négy meglévő kulcs mérése megy tovább.
+    return null;
+  }
 }
 
 interface CoverageRow {
@@ -185,16 +245,22 @@ export async function collectKeyCoverage(
       den > 0 ? Math.round((num / den) * 100) : 0;
     const n24 = row.n24 ?? 0;
     const n7 = row.n7 ?? 0;
-    return {
-      events24h: n24,
-      events7d: n7,
-      keys: [
-        { key: 'em', pct24h: pct(row.em24 ?? 0, n24), pct7d: pct(row.em7 ?? 0, n7) },
-        { key: 'ph', pct24h: pct(row.ph24 ?? 0, n24), pct7d: pct(row.ph7 ?? 0, n7) },
-        { key: 'fbc', pct24h: pct(row.fbc24 ?? 0, n24), pct7d: pct(row.fbc7 ?? 0, n7) },
-        { key: 'fbp', pct24h: pct(row.fbp24 ?? 0, n24), pct7d: pct(row.fbp7 ?? 0, n7) }
-      ]
-    };
+    const keys: KeyCoverage[] = [
+      { key: 'em', pct24h: pct(row.em24 ?? 0, n24), pct7d: pct(row.em7 ?? 0, n7) },
+      { key: 'ph', pct24h: pct(row.ph24 ?? 0, n24), pct7d: pct(row.ph7 ?? 0, n7) },
+      { key: 'fbc', pct24h: pct(row.fbc24 ?? 0, n24), pct7d: pct(row.fbc7 ?? 0, n7) },
+      { key: 'fbp', pct24h: pct(row.fbp24 ?? 0, n24), pct7d: pct(row.fbp7 ?? 0, n7) }
+    ];
+
+    // A CÍM-KULCSOK KÜLÖN LEKÉRDEZÉSBEN (M5). Ha a 0009-es migráció még nem
+    // futott le ezen a D1-en, a hiányzó oszlop egy KÖZÖS SELECT-ben az EGÉSZ
+    // lekérdezést eldobná — és a digest némán „n/a"-ra váltana MIND A NÉGY
+    // meglévő kulcsra. Egy bővítés nem veheti el a meglévő őröket: a
+    // monitoring-vakfolt rosszabb, mint egy hiányzó sor.
+    const address = await collectAddressCoverage(env, siteId, dayAgo, eightDaysAgo);
+    if (address) keys.push(...address(n24, n7));
+
+    return { events24h: n24, events7d: n7, keys };
   } catch (err) {
     logStructured({
       level: 'info',
