@@ -121,6 +121,16 @@ export interface GatewayConversionInput {
   /** 3-letter ISO 4217. REQUIRED whenever value is set — there is no default. */
   currency?: string;
   source?: string;
+  /**
+   * Lead-gen szolgáltatás-címke (pl. `removal`, `clearance`).
+   *
+   * A BÖNGÉSZŐ-láb (`lib/gateway.ts`) ezt eddig is küldte — a dataLayerre ÉS a
+   * `sendToWorker` body-jába —, és a gateway fogyasztja is (`src/lib/ga4.ts`:
+   * `params.service`). Csak EBBŐL a lábból hiányzott, tehát a szerver-ingressen
+   * érkező konverziók (a CLAUDE.md 10. pontja szerint MINDEN high-value lead)
+   * némán elvesztették a címkét, miközben a böngésző-út megtartotta.
+   */
+  service?: string;
   userData?: GatewayUserData;
   attribution?: Record<string, string | undefined>;
   consent?: ConsentState;
@@ -171,6 +181,66 @@ export interface GatewayResult {
 // Short on purpose: this runs inside the lead request, so a sick gateway must not
 // keep the user staring at a spinner. A genuinely lost event is caught by the
 // gateway's own zero-conversion / smoke alerts, not by hammering here.
+/**
+ * A RECEIPTRE KERÜLŐ NYERS SÜTI FELSŐ HATÁRA.
+ *
+ * A `raw_cookie` a gateway `consent_debug` táblájába megy (14 napos purge), és
+ * CSAK akkor, ha a források nem egyeznek. Ettől még nincs okunk a teljes sütit
+ * eltenni: a diagnózishoz az eleje elég, a maradék puszta adattöbblet egy
+ * consent-jellegű mezőben. A painless fork ezt 200-on tartotta; a kanonikus
+ * mag eddig NEM csonkított — ezt a különbséget az F9/3.4 szerver-szelet
+ * paritás-futása mutatta ki.
+ */
+const RAW_COOKIE_MAX = 200;
+
+/**
+ * SÜTI-ÉRTÉK DEKÓDOLÁSA, AMI NEM DOBHAT.
+ *
+ * A `decodeURIComponent` `URIError`-t dob egy hibás percent-szekvenciára
+ * (`%zz`, csonka `%E0`). Ez a modul a site LEAD-ÚTVONALÁN fut: az API-route a
+ * `readConsentFromCookie(...)` / `buildConsentSources(...)` hívást a konverzió
+ * összeállítása közben végzi. Egy dobás ott nem „hiányzó telemetria", hanem
+ * 500-as válasz a beküldött űrlapra — az ügyfél leadje vész el egy elrontott
+ * süti miatt, amit nem is ő írt.
+ *
+ * ── KÉT DEGRADÁCIÓ, MERT KÉT KÜLÖNBÖZŐ KÉRDÉS ───────────────────────────────
+ * A „ne dobjon" még nem mondja meg, MIRE degradáljon. A két hívó típus mást
+ * kíván, és ezt a különbséget a Worker `parseConsentCookieHeader`-e és a
+ * painless fork is EGYFORMÁN tartotta — érdemes nem összemosni:
+ *
+ *   KAPU (`readConsentFromCookie`, `readSboConsentCookieHeader`)
+ *       „Milyen hozzájárulásra HIVATKOZHATUNK?" Egy sérült stringből engedélyt
+ *       kiolvasni találgatás. Ezért `undefined`/`null` → a gateway a
+ *       `require_consent`-re esik vissza és FAIL CLOSED. Ez a helyes GDPR-tartás.
+ *
+ *   TELEMETRIA (`buildConsentSources`)
+ *       „MIT LÁTTUNK?" Itt az eldobás információt semmisít meg: egy hosszú süti
+ *       egyetlen hibás escape-je miatt elveszne a mellette álló, tökéletesen
+ *       olvasható `advertisement:yes`. A dekódolatlan string RENDSZERINT
+ *       ugyanúgy parse-olható (a `kulcs:érték,` alak nem igényel dekódolást),
+ *       ezért a telemetria a NYERS értékre esik vissza, és jelent tovább.
+ */
+function safeDecodeCookieValue(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A TELEMETRIA dekódolója: hibás kódolásra a NYERS értéket adja vissza, nem
+ * dob és nem ejt. Lásd a fenti „két degradáció" blokkot — itt a mérés
+ * folytonossága a cél, nem a jogalap.
+ */
+function decodeCookieValueLossy(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 const DEFAULT_RETRY_DELAYS_MS = [400, 1200];
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -219,7 +289,7 @@ export function readConsentFromCookie(
     const idx = part.indexOf('=');
     if (idx < 0) continue;
     if (part.slice(0, idx).trim() === 'cookieyes-consent') {
-      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      raw = safeDecodeCookieValue(part.slice(idx + 1).trim());
       break;
     }
   }
@@ -313,7 +383,7 @@ export function readSboConsentCookieHeader(
     const idx = part.indexOf('=');
     if (idx < 0) continue;
     if (part.slice(0, idx).trim() === 'sbo_consent') {
-      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      raw = safeDecodeCookieValue(part.slice(idx + 1).trim());
       break;
     }
   }
@@ -365,7 +435,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.6.0';
+export const BACKEND_LIB_VERSION = '6.6.2';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
@@ -421,7 +491,7 @@ export function buildConsentSources(
       const idx = part.indexOf('=');
       if (idx < 0) continue;
       if (part.slice(0, idx).trim() !== 'cookieyes-consent') continue;
-      raw = decodeURIComponent(part.slice(idx + 1).trim());
+      raw = decodeCookieValueLossy(part.slice(idx + 1).trim());
       break;
     }
   }
@@ -454,7 +524,7 @@ export function buildConsentSources(
     consent_age_s: sboAge,
     // Raw string: the gateway keeps it ONLY when the sources disagree, in the
     // short-lived consent_debug table (14-day purge). Never in consent_receipts.
-    raw_cookie: present ? raw : undefined,
+    raw_cookie: present && raw ? raw.slice(0, RAW_COOKIE_MAX) : undefined,
   };
 }
 
@@ -548,7 +618,11 @@ export function readMetaCookies(
     if (k === '_fbp' && FBP_RE.test(v)) fbp = v;
     if (k === '_fbc' && FBC_RE.test(v)) fbc = v;
   }
-  return { fbp, fbc };
+  // CSAK a ténylegesen meglévő kulcsok. Egy `{ fbc: undefined }` alak nem
+  // ugyanaz, mint a hiányzó `fbc`: a hívó `'fbc' in cookies` vagy
+  // `Object.keys(...)` ellenőrzése igazat adna egy nem létező klikk-ID-re, és a
+  // gateway saját `fbclid → fbc` rekonstrukciója épp ilyenkor maradna ki.
+  return { ...(fbp ? { fbp } : {}), ...(fbc ? { fbc } : {}) };
 }
 
 /**
@@ -594,6 +668,9 @@ export function buildGatewayPayload(input: GatewayConversionInput): Record<strin
     lead_id: input.leadId,
     ...(hasValue ? { value: input.value, currency: input.currency } : {}),
     source: input.source,
+    // Lásd a `service` mező doksiját az inputon: a böngésző-láb eddig is küldte,
+    // a gateway fogyasztja; csak innen hiányzott. A `compact()` kihagyja, ha nincs.
+    service: input.service,
     user_data: userData && Object.keys(userData).length > 0 ? userData : undefined,
     attribution: attribution && Object.keys(attribution).length > 0 ? attribution : undefined,
     consent: input.consent,

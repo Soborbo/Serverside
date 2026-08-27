@@ -10,6 +10,84 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.2 (2026-08-26)
+
+### Javítva — a `service` címke csak a böngésző-lábon utazott
+
+A `service` mezőt a böngésző-láb (`lib/gateway.ts`) eddig is küldte: a
+dataLayerre ÉS a `sendToWorker` body-jába. A gateway fogyasztja is
+(`src/lib/ga4.ts` → `params.service`). A **szerver-láb** payload-építőjéből
+viszont hiányzott.
+
+Ez nem kozmetika: a CLAUDE.md 10. pontja szerint MINDEN high-value konverzió
+(form/lead/purchase) a hitelesített szerver-ingressen jön, a böngésző-úton csak
+a low-risk klikk-eventek mehetnek. Vagyis a címkét pont ott vesztettük el, ahol
+a pénz van — miközben a klikk-eventeken megmaradt, tehát a riportban a hiány
+sem tűnt teljesnek.
+
+A mező mostantól a szerver-payloadon is ott van; a `compact()` kihagyja, ha a
+hívó nem adja (nincs kitalált érték).
+
+Ez tette lehetővé, hogy a painless szerver-lába a TRANSZPORTOT is a kanonikus
+küldőre bízza: eddig azért kellett saját `sendGatewayConversion`, mert a
+kanonikus küldő a saját payload-építőjét hívja, az pedig elejtette volna a
+`service`-t.
+
+---
+
+## 6.6.1 (2026-08-26)
+
+### Javítva — a site-backend süti-olvasói elejthettek egy leadet
+
+Az F9/3.4 **szerver-szelet** paritás-futása három eltérést mutatott ki a
+painless fork és a kanonikus mag között, és mind a háromban **a fork volt a
+helyes**. Az irány szokatlan: nem a másolat maradt el a csomag mögött, hanem a
+csomag a másolat mögött — egy vak migráció ezeket REGRESSZIÓKÉNT vitte volna a
+site-ra.
+
+**1. `decodeURIComponent` őrizetlenül, három helyen.** Egy hibás percent-
+szekvencia (`%zz`, csonka `%E0`) `URIError`-t dob. Ezek a függvények a site
+LEAD-ÚTVONALÁN futnak: az API-route a konverzió összeállítása közben hívja őket.
+Egy dobás ott nem „hiányzó telemetria", hanem **500-as válasz a beküldött
+űrlapra** — az ügyfél leadje vész el egy elrontott süti miatt, amit nem is ő
+írt.
+
+A „ne dobjon" azonban még nem mondja meg, MIRE degradáljon — és a két hívó
+típusnak MÁS a helyes válasza ugyanarra a bemenetre. Ezt a szétválást a Worker
+`parseConsentCookieHeader`-e és a painless fork is egyformán tartotta:
+
+| hívó | kérdés | degradáció |
+|---|---|---|
+| **kapu** (`readConsentFromCookie`, `readSboConsentCookieHeader`) | „milyen hozzájárulásra hivatkozhatunk?" | `undefined`/`null` → a gateway `require_consent`-re esik és **fail closed** |
+| **telemetria** (`buildConsentSources`) | „mit láttunk?" | a **nyers, dekódolatlan** értékre esik vissza, és jelent tovább |
+
+A különbség nem elméleti: egy hosszú süti EGYETLEN hibás escape-je miatt a közös
+„adjunk `undefined`-et" megoldás elveszítené a mellette álló, tökéletesen
+olvasható `advertisement:yes`-t — a mérés némán nullázódna, miközben a
+felhasználó igenis döntött. A `kulcs:érték,` alak nem igényel dekódolást, tehát a
+nyers string rendszerint ugyanúgy parse-olható.
+
+Ezért két helper: `safeDecodeCookieValue` (kapu → `undefined`) és
+`decodeCookieValueLossy` (telemetria → nyers érték). Teszt pinneli, hogy
+UGYANARRA a bemenetre a kapu `undefined`-et, a telemetria pedig
+`cookieyes_cookie`-t + a valódi döntést adja.
+
+**2. `raw_cookie` csonkítatlanul került a receiptre.** A mező a gateway
+`consent_debug` táblájába megy (14 napos purge), és csak akkor, ha a források
+nem egyeznek — de a diagnózishoz az eleje elég. Új `RAW_COOKIE_MAX = 200`, a
+fork határával azonosan.
+
+**3. `readMetaCookies` `{ fbc: undefined }`-ot adott a hiányzó kulcs helyett.**
+Egy `'fbc' in cookies` vagy `Object.keys(...)` ellenőrzés igazat adott volna egy
+nem létező klikk-ID-re, és a gateway saját `fbclid → fbc` rekonstrukciója épp
+ilyenkor maradt volna ki. Mostantól csak a ténylegesen meglévő kulcsok.
+
+A dróton egyik javítás sem változtat érvényes bemenetre: a `compact()` eddig is
+eldobta az `undefined`-et, a csonkítás csak a hibakereső mezőt érinti, a
+dekódoló-őr pedig csak ott lép be, ahol eddig kivétel volt.
+
+---
+
 ## 6.6.0 (2026-08-26)
 
 ### Javítva — az e-mail-identitás két lába MÁS byte-stringet hashelt
