@@ -10,6 +10,33 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.5 (2026-08-27)
+
+### Felvéve — a Google Ads kiterjesztett UTM-jei, hogy ne site-patch legyenek
+
+`utm_id` · `utm_source_platform` · `utm_creative_format` · `utm_marketing_tactic`
+
+Ezek a Google Ads/GA4 **hivatalos** kiterjesztett UTM-paraméterei, amiket az
+auto-taggelt kampány-sablon küld. A magban eddig nem voltak — ezért az
+`olcsokontenerhaz` **vendorolt** `persistence.ts`-ébe kézzel kerültek bele, és
+mellé egy jegyzet:
+
+> „Site-specifikus (olcso ads-setup): a Google Ads kampány-sablon extra UTM-jei.
+> A kanonikus lib frissítésekor EZEKET MEG KELL ŐRIZNI (vendor-diff jegyzet)."
+
+Ez a megjegyzés maga a diagnózis. Egy vendorolt fájlba írt site-lokális bővítés
+a következő re-vendorolásnál **némán eltűnik**, és csak akkor derül ki, amikor a
+kampány-riportban már nincs `utm_id`. A megőrzés nem megoldás, csak halasztás.
+
+Mind a három helyen bekötve: a típusban, a perzisztálandó kulcslistában (enélkül
+az URL-ből felolvasnánk, de az oldalváltást nem élné túl), és az URL-olvasásban
+tárolt fallbackkel.
+
+**Ez szünteti meg az olcso vendor-driftjét**: a re-vendorolás után a másolat
+bitre a kiadásé lehet, kézi patch nélkül.
+
+---
+
 ## 6.6.4 (2026-08-27)
 
 ### Javítva — a NEGYEDIK őrizetlen `decodeURIComponent`, ezúttal a böngésző-lábon
