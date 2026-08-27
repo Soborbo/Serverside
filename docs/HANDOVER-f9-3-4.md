@@ -24,10 +24,33 @@ lead-vesztő hiba a **teljes flottán** javítva, deployolva.
 A ledger `client_lib_version` sorai a `NULL → 0.0.0-painless-fork → 6.6.2` úton
 haladtak; a 6.6.2 megjelenése a migráció kívülről, gépileg igazolható jele.
 
-**Első teendő a következő sessionben:** nézd meg a ledgerben, hogy a
-`consent_receipts.client_lib_version` tényleg `6.6.2`-t mutat-e a painless
-szerver-ingress sorain. Ez az egyetlen bizonyíték, amit még nem tudtunk
-lefuttatni (a ledger-lekérdezéshez nem volt hitelesítés).
+### ✅ Ledger-verifikáció — LEFUTOTT, MINDKÉT LÁB 6.6.2 (2026-08-27)
+
+A handover ezt hagyta egyetlen nyitott bizonyítékként (nem volt hitelesítés).
+Azóta lefutott a `event-gateway-ledger` D1-en, csak olvasással:
+
+| mikor (UTC) | ingress | `client_lib_version` | `source_used` | `finding_codes` | |
+|---|---|---|---|---|---|
+| 11:04:10 | server | **6.6.2** | cookieyes_cookie | – | kézi teszt-lead |
+| 09:44:33 | server | **6.6.2** | cookieyes_cookie | – | **organikus** |
+| 08:31:25 | browser | **6.6.2** | cookieyes_cookie | – | |
+| 04:51:58 | server | `0.0.0-painless-fork` | none | `TRK-910-006` | deploy ELŐTTI cron-smoke |
+
+Két megerősítő jel a verziószámon túl: a **`TRK-910-006` verzió-drift őr eltűnt**
+minden deploy utáni sorról, és a `source_used` `none` → `cookieyes_cookie`-ra
+váltott — tehát nemcsak a verzió stimmel, a consent-forrás feloldása is működik
+a kanonikus magon. **A migráció produkciós adaton igazolt.**
+
+> ⚠️ **A napi cron-smoke NEM újrafuttatható ugyanaznap.** Az `event_id`
+> determinisztikus (`smoke-painless-YYYYMMDD`), a gateway idempotencia-ága pedig
+> KORÁBBAN tér vissza (`src/routes/conversion.ts:669`), mint ahol a receipt
+> íródik (`:834`) — az ismételt tüzelés „duplicate"-ként elnyelődik, és **nem ír
+> új sort**. Új proofhoz friss `event_id` kell: valódi űrlap-beküldés a
+> `TRACKING_TEST_LEAD_EMAIL` címmel (Meta TEST stream,
+> `TRACKING_TEST_EVENT_CODE=TEST_PAINLESS`), vagy a másnapi cron.
+
+> ⚠️ A lekérdezéshez `npx wrangler d1 execute event-gateway-ledger --remote --json
+> --command "..."` kell; az `mcp__cloudflare__d1_query` `[object Object]`-et ad vissza.
 
 ---
 
@@ -106,7 +129,7 @@ Mind merge-elve és deployolva. Részletek:
 
 | Tétel | Megjegyzés |
 |---|---|
-| **Ledger-verifikáció** | `client_lib_version = 6.6.2` a painless szerver-sorain (lásd 1. szakasz) |
+| ~~Ledger-verifikáció~~ | ✅ **LEZÁRVA** — mindkét láb `6.6.2`, a drift-őr eltűnt (lásd 1. szakasz) |
 | **Flotta felzárkóztatása 6.6.2-re** | Site-onkénti könyvtár-upgrade, nem hibajavítás |
 | **`lomtalan.hu` lockfile** | `npm ci` elhasal, `@emnapi/*` hiányzik. A PR nem nyúlt hozzá |
 | **`szelloztessokosan`** | Régebbi, Zaraz-alapú kliens-modell; nincs szerver-láb |
