@@ -53,6 +53,18 @@ export interface TrackingData {
   utm_campaign?: string;
   utm_content?: string;
   utm_term?: string;
+  /**
+   * A Google Ads/GA4 HIVATALOS kiterjesztett UTM-jei — az auto-taggelt
+   * kampany-sablon ezeket kuldi. 6.6.5 elott nem voltak a magban, ezert az
+   * olcsokontenerhaz vendorolt masolataba KEZZEL kerultek bele, egy
+   * „a kovetkezo frissiteskor meg kell orizni" jegyzettel. Egy vendorolt
+   * fajlba irt site-lokalis bovites a kovetkezo re-vendorolasnal nemanan
+   * eltunik — ezert vannak most itt.
+   */
+  utm_id?: string;
+  utm_source_platform?: string;
+  utm_creative_format?: string;
+  utm_marketing_tactic?: string;
   timestamp: number;
   landingPage: string;
 }
@@ -274,7 +286,7 @@ function urlTrackingParams(): Partial<TrackingData> | null {
   const u = new URLSearchParams(window.location.search);
   const p: Partial<TrackingData> = {};
   let any = false;
-  for (const k of ['gclid','gbraid','wbraid','fbclid','utm_source','utm_medium','utm_campaign','utm_content','utm_term'] as const) {
+  for (const k of ['gclid','gbraid','wbraid','fbclid','utm_source','utm_medium','utm_campaign','utm_content','utm_term','utm_id','utm_source_platform','utm_creative_format','utm_marketing_tactic'] as const) {
     const v = u.get(k);
     if (v) { (p as Record<string,string>)[k] = v; any = true; }
   }
@@ -387,6 +399,10 @@ export function getAllTrackingData(): Partial<TrackingData> {
     utm_source: u.get('utm_source') || s?.utm_source, utm_medium: u.get('utm_medium') || s?.utm_medium,
     utm_campaign: u.get('utm_campaign') || s?.utm_campaign, utm_content: u.get('utm_content') || s?.utm_content,
     utm_term: u.get('utm_term') || s?.utm_term,
+    utm_id: u.get('utm_id') || s?.utm_id,
+    utm_source_platform: u.get('utm_source_platform') || s?.utm_source_platform,
+    utm_creative_format: u.get('utm_creative_format') || s?.utm_creative_format,
+    utm_marketing_tactic: u.get('utm_marketing_tactic') || s?.utm_marketing_tactic,
   };
 }
 
