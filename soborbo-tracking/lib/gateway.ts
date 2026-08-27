@@ -90,9 +90,56 @@ export interface ConversionPayload {
   attribution?: AttributionParams;
 }
 
-function getCookie(name: string): string | undefined {
+/**
+ * KÉT DEGRADÁCIÓ, MERT KÉT KÜLÖNBÖZŐ KÉRDÉS.
+ *
+ * Egy hibás percent-szekvencia (`%zz`, csonka `%E0`) `URIError`-t dob. A
+ * szerver-lábon ez 2026-08-26-ban lead-vesztést okozott (500 a beküldött
+ * űrlapra), és ott már két helper őrzi. A BÖNGÉSZŐ-lábon ugyanez nem 500-at ad,
+ * hanem CSENDET: a `getCookie` a konverzió-dispatch útján is fut (`_ga`,
+ * `_gcl_aw`), és egy dobás a `sendToWorker` promise-át utasítja el — a
+ * konverzió némán nem megy ki.
+ *
+ * A KAPU (jogalap) fail-closed: inkább ne legyen consent, mint hamis consent.
+ * Egy fél-dekódolt stringből kiolvasott „advertisement:yes" hamis jogalap lenne.
+ */
+function safeDecodeCookieValue(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A NEM-JOGALAP olvasás (klikk-ID, GA client-ID) a NYERS értékre esik vissza:
+ * ezek azonosítók, nem döntések. Egy `_ga` / `_gcl_aw` érték amúgy sem tartalmaz
+ * percent-kódolást, tehát a nyers érték itt a helyes érték — a dobás viszont a
+ * teljes konverziót vinné el.
+ */
+function decodeCookieValueLossy(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function rawCookie(name: string): string | undefined {
   const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-  return match ? decodeURIComponent(match[2]) : undefined;
+  return match ? match[2] : undefined;
+}
+
+/** Azonosító-olvasás (`_ga`, `_gcl_aw`) — lossy, sosem dob. */
+function getCookie(name: string): string | undefined {
+  const raw = rawCookie(name);
+  return raw === undefined ? undefined : decodeCookieValueLossy(raw);
+}
+
+/** Jogalap-olvasás (`cookieyes-consent`) — fail-closed, sosem dob. */
+function getConsentCookie(name: string): string | undefined {
+  const raw = rawCookie(name);
+  return raw === undefined ? undefined : safeDecodeCookieValue(raw);
 }
 
 function extractGAClientId(gaCookie: string | undefined): string | undefined {
@@ -145,7 +192,7 @@ function getConsentState(): ConsentState | undefined {
     };
   }
 
-  const raw = getCookie('cookieyes-consent');
+  const raw = getConsentCookie('cookieyes-consent');
   if (!raw) return undefined;
 
   const map: Record<string, string> = {};
@@ -237,7 +284,7 @@ const UNAVAILABLE_SOURCE: ConsentSourceSnapshot = { analytics: null, marketing: 
 /** A `cookieyes-consent` süti nyers kategória-térképe (null, ha nincs süti). */
 function readCookieYesCookieRaw(): { raw: string; map: Record<string, string> } | null {
   if (typeof document === 'undefined') return null;
-  const raw = getCookie('cookieyes-consent');
+  const raw = getConsentCookie('cookieyes-consent');
   if (!raw) return null;
   const map: Record<string, string> = {};
   for (const part of raw.split(',')) {

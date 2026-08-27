@@ -10,6 +10,39 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.4 (2026-08-27)
+
+### Javítva — a NEGYEDIK őrizetlen `decodeURIComponent`, ezúttal a böngésző-lábon
+
+A 6.6.1/6.6.2 kör három őrizetlen `decodeURIComponent`-et javított a
+**szerver**-lábon: egy hibás percent-szekvencia (`%zz`, csonka `%E0`)
+`URIError`-t dob, és az a lead-útvonalon 500-as választ adott a beküldött
+űrlapra. A `lib/gateway.ts` `getCookie`-ja viszont **kimaradt** a körből.
+
+Ott a dobás nem 500-at ad, hanem **csendet**. A `getCookie` a
+konverzió-dispatch útján is fut (`_ga` a `sendToWorker`-ben, `_gcl_aw` a
+`collectAttribution`-ben), és egy `URIError` a `sendToWorker` promise-át
+utasítja el — a konverzió némán nem megy ki. A `cookieyes-consent` olvasása
+szintén rajta ült, vagyis egy rossz süti a consent-kiértékelést is elvihette.
+
+**Ugyanaz a két degradáció, mint a szerver-lábon**, mert ugyanaz a két kérdés:
+
+- `getConsentCookie` → **fail-closed** (a jogalap). Egy fél-dekódolt stringből
+  kiolvasott „advertisement:yes" hamis jogalap lenne.
+- `getCookie` → **lossy**, a nyers értékre esik vissza (klikk-ID, GA client-ID).
+  Ezek azonosítók, nem döntések; `_ga`/`_gcl_aw` amúgy sem tartalmaz
+  percent-kódolást, tehát a nyers érték itt a helyes érték — a dobás viszont a
+  teljes konverziót vinné el.
+
+### Új őr
+
+`tests/browser-cookie-decode-guard.test.ts`: a `lib/gateway.ts`-ben nem
+maradhat csupasz `decodeURIComponent`, és a consent-olvasás nem csúszhat át a
+lossy ágra. A hiba azért élhetett túl egy célzott javítókört, mert semmi nem
+mérte, hogy MINDEN dekódolás őrzött-e.
+
+---
+
 ## 6.6.3 (2026-08-27)
 
 ### Kivéve — a `street` sosem létezett a szerződés túloldalán
