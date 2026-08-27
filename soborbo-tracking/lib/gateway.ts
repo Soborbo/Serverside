@@ -42,13 +42,22 @@ declare global {
   }
 }
 
+/**
+ * A gateway `user_data` szerződésének KÜLDŐ oldala. A fogadó oldal a Worker
+ * `PlainUserDataPayload`-ja (`src/types.ts`) — a kettőt a
+ * `tests/user-data-fieldset-parity.test.ts` köti össze, mert egy itt hirdetett,
+ * ott ismeretlen mező NÉMÁN elveszik: se hiba, se log, se metrika.
+ *
+ * A `street` 6.6.3-ban került ki: a Worker sosem fogadta. A `city` marad, de
+ * CSAK valódi strukturált forrásból tölthető — formázott címből parse-olni
+ * tilos (D1).
+ */
 export interface UserData {
   email?: string;
   phone_number?: string;
   first_name?: string;
   last_name?: string;
   city?: string;
-  street?: string;
   postal_code?: string;
   country?: string;
   // Stable user/cookie identifier (Meta external_id → EMQ improvement). The Worker

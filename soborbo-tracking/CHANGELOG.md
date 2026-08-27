@@ -10,6 +10,37 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.3 (2026-08-27)
+
+### Kivéve — a `street` sosem létezett a szerződés túloldalán
+
+A transport `UserData` típusa hirdette a `street` mezőt, a Worker elfogadó
+típusa (`src/types.ts` `PlainUserDataPayload`) viszont **sosem ismerte**. A hívó
+tehát típushelyesen küldhette, a gateway pedig némán eldobta: se hiba, se log,
+se metrika. Ez nem elméleti — a painless a rejtett DOM-oldalcsatornájára ki is
+írta, és onnan az utcanév minden konverzióval kiment a hálózatra, hogy aztán a
+túloldalon a földre essen.
+
+A mező kivezetve. **Ez a szerződés szűkítése**: aki `street`-et állított be,
+annak a hívása mostantól típushibát ad — pontosan azt a jelet, ami eddig
+hiányzott. Adatvesztést nem okoz, mert a mező eddig sem ért célba.
+
+### Új őr — a mezőkészlet mostantól MÉRT
+
+`tests/user-data-fieldset-parity.test.ts`: a transport `UserData` és a Worker
+`PlainUserDataPayload` mezőkészletét veti össze a két forrásfájlból. Kétirányú:
+a transport nem hirdethet olyat, amit a Worker nem fogad (néma adatvesztés), és
+a Worker nem fogadhat olyat, amit a transport nem tud küldeni (elérhetetlen
+funkció). A `street` évekig azért maradhatott bent, mert semmi nem kötötte
+össze a két oldalt.
+
+### A `city` marad — de feltétellel
+
+A `city` a szerződésben marad, tölteni viszont CSAK valódi strukturált
+forrásból szabad; formázott címből parse-olni tilos (D1).
+
+---
+
 ## 6.6.2 (2026-08-26)
 
 ### Javítva — a `service` címke csak a böngésző-lábon utazott
