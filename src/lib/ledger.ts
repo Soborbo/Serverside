@@ -392,6 +392,13 @@ export interface EventRawInput {
   // meg először (a kézbesítés-smoke zöld marad, csak a match-minőség esik).
   fbc_present: boolean;
   fbp_present: boolean;
+  // M5 — a CÍM-mezők jelenléte. A Worker felől a Meta az egyetlen platform,
+  // amely ct/zp/country-t kap, és eddig egy elmaradt cím-mező CSAK az Events
+  // Managerben látszott, késleltetve. A painless böngésző-lába hónapokig
+  // postal_code nélkül küldött, miközben a szerver-lába küldte — némán.
+  ct_present: boolean;
+  zp_present: boolean;
+  country_present: boolean;
 }
 
 export async function recordEventRaw(env: Env, e: EventRawInput): Promise<void> {
@@ -399,8 +406,8 @@ export async function recordEventRaw(env: Env, e: EventRawInput): Promise<void> 
   try {
     await env.LEDGER.prepare(
       `INSERT INTO events_raw
-         (id, event_id, lead_id, site_id, hostname, event_name, event_time, value, currency, ad_allowed, em_present, ph_present, fbc_present, fbp_present, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, event_id, lead_id, site_id, hostname, event_name, event_time, value, currency, ad_allowed, em_present, ph_present, fbc_present, fbp_present, ct_present, zp_present, country_present, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -417,6 +424,9 @@ export async function recordEventRaw(env: Env, e: EventRawInput): Promise<void> 
         e.ph_present ? 1 : 0,
         e.fbc_present ? 1 : 0,
         e.fbp_present ? 1 : 0,
+        e.ct_present ? 1 : 0,
+        e.zp_present ? 1 : 0,
+        e.country_present ? 1 : 0,
         new Date().toISOString()
       )
       .run();

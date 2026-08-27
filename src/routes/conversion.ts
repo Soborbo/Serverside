@@ -827,7 +827,12 @@ function fanOut(
       // A KÜLDÖTT fbc-t rögzítjük (cookie VAGY fbclid-ből épített) — a Meta ezt
       // kapja, tehát a match-minőséget is ez határozza meg.
       fbc_present: Boolean(fbc),
-      fbp_present: Boolean(payload.fbp)
+      fbp_present: Boolean(payload.fbp),
+      // M5 — cím-mezők jelenléte (nem az érték). A hash-elt oldalról olvassuk,
+      // mint az em/ph-t: ami ide eljutott, azt a Meta is megkapja.
+      ct_present: Boolean(hashedUserData.ct),
+      zp_present: Boolean(hashedUserData.zp),
+      country_present: Boolean(hashedUserData.country)
     })
   );
   ctx.waitUntil(
