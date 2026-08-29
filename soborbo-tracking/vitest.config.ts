@@ -4,7 +4,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: false,
-    include: ['tests/**/*.test.ts'],
+    // .mjs too: harnesses for the node-side .mjs tooling (server/*.mjs) live
+    // outside the browser tsconfig on purpose — see the note in
+    // tests/check-event-contract-script.test.mjs.
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.mjs'],
   },
   // The canonical event source lives one level up (Serverside/src/events.json),
   // shared in-repo with the gateway worker — allow Vite to serve it into tests.
