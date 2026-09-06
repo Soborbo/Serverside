@@ -10,6 +10,52 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.6 (2026-09-06)
+
+### Javítva — a first touch elvesztette a kulcsszót és a kreatívot
+
+A `persistFirstTouch` négy mezőt őrzött meg: `utm_source` · `utm_medium` ·
+`utm_campaign` · `gclid`. A last touch (`sb_tracking`) ezzel szemben a teljes
+készletet vezeti, `utm_term`/`utm_content`/`gbraid`/`wbraid`/`fbclid` együtt.
+
+A first touch **egyszer** íródik ki, és utána már sosem rekonstruálható. Ami
+onnan kimaradt, az nem „később pótolható", hanem véglegesen nincs meg: a
+`getAttribution()` így sosem tudta megmondani, melyik **kulcsszó** szerezte az
+ügyfelet — pedig a `first_utm_campaign` alapján a riport azt sugallta, hogy a
+szerző kampány ismert. A két mező mostantól mindkét érintésen ott van
+(`first_utm_term`/`first_utm_content` és `last_utm_term`/`last_utm_content`).
+
+### Javítva — a medium-tábla öt értéket ismert, a többi „referral" lett
+
+A `getSourceType()` pontosan a `cpc|ppc|organic|social|referral` ötöst
+ismerte fel. A valós kampány-sablonok viszont több írásmódot küldenek ugyanarra
+a csatornára, és minden fel nem ismert medium átesett a `utm_source`
+catch-all-on:
+
+    utm_medium=cpm        → referral   (fizetett display)
+    utm_medium=email      → referral   (hírlevél)
+    utm_medium=paid_social → referral  (fizetett social)
+    utm_medium=affiliate  → referral   (véletlenül helyes)
+
+Egy hírlevél-kattintás és egy fizetett display-megjelenés így ugyanabba a
+vödörbe került, mint egy másik oldalról érkező hivatkozás. Visszamenőleg nem
+javítható, mert a nyers medium nem utazik a `source_type` mellett.
+
+A tábla mostantól normalizál (trim + lowercase) és a valós írásmódokat is
+ismeri; a `paid_social` a **költés** tengelyén `paid`, nem `social`.
+
+**A catch-all maga szándékos és marad**: egy megcímkézett látogató nem
+`direct`. Eddig viszont a teszt CÍME ígérte ezt (`bare utm_source → referral`),
+az assert pedig hiányzott — most le van kötve.
+
+### Bővült — az `email` visszatérési érték
+
+`getSourceType()` unió: `paid|organic|social|`**`email`**`|referral|direct`.
+Additív: a `source_type` a `buildSheetsPayload`-on át stringként utazik, hívói
+nem törnek. Aki a régi uniót írja le típusban, annak bővítenie kell.
+
+---
+
 ## 6.6.5 (2026-08-27)
 
 ### Felvéve — a Google Ads kiterjesztett UTM-jei, hogy ne site-patch legyenek
