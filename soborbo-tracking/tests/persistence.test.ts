@@ -101,7 +101,43 @@ describe('attribution — first/last touch + source type', () => {
     setUrl('/?utm_source=newsletter&utm_medium=organic'); captureUrlParams(); persistTrackingParams();
     expect(getSourceType()).toBe('organic');
     resetAll(); setCkyConsent({ marketing: true, analytics: true });
+    // A cim eddig igerte a catch-all-t, de a teszt SOSEM allitotta — ez a sor
+    // koti le a szandekos viselkedest: megcimkezett, be nem sorolhato latogato
+    // `referral`, nem `direct`.
+    setUrl('/?utm_source=partnersite'); captureUrlParams(); persistTrackingParams();
+    expect(getSourceType()).toBe('referral');
+    resetAll(); setCkyConsent({ marketing: true, analytics: true });
     expect(getSourceType()).toBe('direct');
+  });
+
+  it('a medium-tabla a valos irasmodokat is felismeri — nem esnek a catch-all-ba', () => {
+    const cases: Array<[string, string]> = [
+      ['cpm', 'paid'],
+      ['display', 'paid'],
+      ['Paid_Social', 'paid'],
+      ['e-mail', 'email'],
+      ['newsletter', 'email'],
+      ['social_media', 'social'],
+      ['affiliate', 'referral'],
+    ];
+    for (const [medium, expected] of cases) {
+      resetAll(); setCkyConsent({ marketing: true, analytics: true });
+      setUrl(`/?utm_source=x&utm_medium=${medium}`);
+      captureUrlParams(); persistTrackingParams();
+      expect(getSourceType(), `utm_medium=${medium}`).toBe(expected);
+    }
+  });
+
+  it('first touch a kulcsszot es a kreativot is megorzi', () => {
+    setUrl('/?utm_source=google&utm_medium=cpc&utm_term=bristol+removals&utm_content=ad_v2');
+    captureUrlParams(); persistTrackingParams();
+    setUrl('/?utm_source=bing&utm_term=later&utm_content=later_ad');
+    captureUrlParams(); persistTrackingParams();
+    const a = getAttribution();
+    expect(a.first_utm_term).toBe('bristol removals');
+    expect(a.first_utm_content).toBe('ad_v2');
+    expect(a.last_utm_term).toBe('later');
+    expect(a.last_utm_content).toBe('later_ad');
   });
 });
 

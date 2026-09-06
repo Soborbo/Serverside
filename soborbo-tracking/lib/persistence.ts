@@ -73,10 +73,14 @@ export interface AttributionData {
   first_utm_source?: string;
   first_utm_medium?: string;
   first_utm_campaign?: string;
+  first_utm_term?: string;
+  first_utm_content?: string;
   first_gclid?: string;
   last_utm_source?: string;
   last_utm_medium?: string;
   last_utm_campaign?: string;
+  last_utm_term?: string;
+  last_utm_content?: string;
   last_gclid?: string;
 }
 
@@ -302,9 +306,16 @@ export function captureUrlParams(): void {
 
 function persistFirstTouch(params: Partial<TrackingData>): void {
   if (lsGet(FIRST_TOUCH_KEY)) return;
+  // A first touch EGYSZER irodik ki es utana mar sosem rekonstrualhato, ezert
+  // ugyanazt a mezokeszletet orzi, mint a last touch. Korabban csak
+  // source/medium/campaign/gclid ment bele: a SZERZO kulcsszo (`utm_term`), a
+  // kreativ (`utm_content`) es a nem-gclid klikk-ID-k VEGLEG elvesztek, vagyis
+  // a first touch sosem tudta megmondani, melyik kulcsszo hozta az ugyfelet.
   lsSet(FIRST_TOUCH_KEY, JSON.stringify({
     utm_source: params.utm_source, utm_medium: params.utm_medium,
-    utm_campaign: params.utm_campaign, gclid: params.gclid,
+    utm_campaign: params.utm_campaign, utm_term: params.utm_term,
+    utm_content: params.utm_content, gclid: params.gclid,
+    gbraid: params.gbraid, wbraid: params.wbraid, fbclid: params.fbclid,
     timestamp: Date.now(),
   }));
 }
@@ -341,26 +352,62 @@ export function getAttribution(): AttributionData {
     try {
       const f = JSON.parse(fr);
       r.first_utm_source = f.utm_source; r.first_utm_medium = f.utm_medium;
-      r.first_utm_campaign = f.utm_campaign; r.first_gclid = f.gclid;
+      r.first_utm_campaign = f.utm_campaign; r.first_utm_term = f.utm_term;
+      r.first_utm_content = f.utm_content; r.first_gclid = f.gclid;
     } catch { /* */ }
   }
   const s = getStoredData();
   if (s) {
     r.last_utm_source = s.utm_source; r.last_utm_medium = s.utm_medium;
-    r.last_utm_campaign = s.utm_campaign; r.last_gclid = s.gclid;
+    r.last_utm_campaign = s.utm_campaign; r.last_utm_term = s.utm_term;
+    r.last_utm_content = s.utm_content; r.last_gclid = s.gclid;
   }
   return r;
 }
 
-export function getSourceType(): 'paid'|'organic'|'social'|'referral'|'direct' {
+/**
+ * A `utm_medium` cimkek normalizalt tablai.
+ *
+ * ── Miert kellett ─────────────────────────────────────────────────────────────
+ * A tabla eddig PONTOSAN ot erteket ismert (`cpc`, `ppc`, `organic`, `social`,
+ * `referral`). A valos kampany-sablonok viszont tobb irasmodot kuldenek
+ * ugyanarra a csatornara (`paid_social`, `cpm`, `e-mail`, `affiliate`), es
+ * minden fel nem ismert medium atesett a `utm_source` catch-all-on, vagyis
+ * EGYSEGESEN `referral` lett. Egy hirlevel-kattintas (`utm_medium=email`) es
+ * egy fizetett display-megjelenes (`utm_medium=cpm`) igy ugyanabba a vodorbe
+ * kerult, mint egy masik oldalrol erkezo hivatkozas — a lead-riportban ez
+ * nem javithato vissza, mert a nyers medium mar nem utazik a `source_type`
+ * mellett.
+ *
+ * A catch-all MAGA szandekos es marad: egy megcimkezett latogato nem `direct`.
+ * Csak azt szabad elnyelnie, amit tenylegesen nem tudunk besorolni.
+ */
+const PAID_MEDIUMS = new Set([
+  'cpc', 'ppc', 'paid', 'paidsearch', 'paid_search', 'paid-search',
+  'display', 'cpm', 'banner', 'retargeting', 'remarketing',
+  // A GA4 kulon "Paid Social" csatornat vezet; az ot-ertekes modellben a
+  // KOLTES a hasznosabb tengely, ezert ezek `paid`-ek, nem `social`-ok.
+  'paid_social', 'paidsocial', 'paid-social',
+]);
+const SOCIAL_MEDIUMS = new Set([
+  'social', 'social-network', 'social_network', 'social-media', 'social_media', 'sm',
+]);
+const EMAIL_MEDIUMS = new Set(['email', 'e-mail', 'newsletter', 'mail']);
+const REFERRAL_MEDIUMS = new Set(['referral', 'affiliate', 'partner']);
+
+export function getSourceType(): 'paid'|'organic'|'social'|'email'|'referral'|'direct' {
   const d = getStoredData();
   if (!d) return 'direct';
   if (d.gclid || d.gbraid || d.wbraid) return 'paid';
   if (d.fbclid) return 'social';
-  if (d.utm_medium === 'cpc' || d.utm_medium === 'ppc') return 'paid';
-  if (d.utm_medium === 'organic') return 'organic';
-  if (d.utm_medium === 'social') return 'social';
-  if (d.utm_medium === 'referral') return 'referral';
+  const medium = (d.utm_medium || '').trim().toLowerCase();
+  if (PAID_MEDIUMS.has(medium)) return 'paid';
+  if (medium === 'organic') return 'organic';
+  if (SOCIAL_MEDIUMS.has(medium)) return 'social';
+  if (EMAIL_MEDIUMS.has(medium)) return 'email';
+  if (REFERRAL_MEDIUMS.has(medium)) return 'referral';
+  // Megcimkezett, de be nem sorolhato latogato. NEM `direct` (van kampany-jel),
+  // de a csatornajat nem talaljuk ki — ez a szandekos catch-all.
   if (d.utm_source) return 'referral';
   return 'direct';
 }
