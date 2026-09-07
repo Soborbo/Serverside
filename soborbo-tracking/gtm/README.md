@@ -82,3 +82,38 @@ node gtm/gen-container.mjs gtm/container.json
 The file is plain JSON — validate with `node -e "require('./gtm/container.json')"`.
 A vitest case (`tests/gtm-container.test.ts`) also asserts it parses and that every
 canonical GA4 event name is present.
+
+## Events that intentionally have no trigger
+
+`npm run check:gtm-contract` (`server/check-event-contract.mjs`) fails when code
+emits a dataLayer event that has no CUSTOM_EVENT trigger here. Some events are
+engagement-only **by design** — they must not become a GA4 Key Event and must not be
+importable into Ads — so having no trigger is the correct state, not drift.
+
+Declare those in `gtm/no-trigger-events.json` (optional; missing = no exemptions):
+
+```json
+{
+  "cta_click": "Engagement-only CTA; deliberately not a GA4 key event and not importable into Ads."
+}
+```
+
+The reason is **required and must be non-empty** — an exemption nobody had to justify
+is how a real drift gets waved through. An exemption waives only the trigger check:
+the event must still appear in `docs/CANONICAL-EVENTS.md`.
+
+The list is guarded against rotting into a lie:
+
+| situation | result |
+|---|---|
+| exempt event, but a trigger **does** exist | **error** — the claim is stale; re-decide, don't keep the note |
+| exempt event that no code path emits | warning — dead config |
+| malformed / non-object file | **error** — never degrades silently to "nothing is exempt" |
+
+Exemptions are printed on success too, so a waiver stays visible instead of becoming
+permanent by being forgotten. Behaviour is pinned by
+`tests/check-event-contract-script.test.mjs`.
+
+> Use a different path with `--gtm-exempt`. Without this mechanism a single
+> by-design event makes the whole check unrunnable in CI — which is strictly worse,
+> because then nothing at all is guarded.
