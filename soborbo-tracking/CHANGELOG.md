@@ -10,6 +10,42 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.8 (2026-09-08)
+
+### Hozzáadva — megosztott `event_id` a fetch-alapú submit-folyamatoknak
+
+A `trackLeadSubmit` és a `trackContactSubmit` eddig **mindig maga generálta** az
+`event_id`-t. Ez a klasszikus form-POST úton helyes: a lib generál, a
+`populateHiddenFields` beteszi a rejtett mezőbe, a backend onnan veszi, és a
+Pixel↔CAPI dedup áll.
+
+A **fetch/XHR-alapú** folyamatokban viszont a hívó gyakran MÁR generált egy id-t,
+elküldte a szervernek, és a böngésző-lábat csak a business-siker után süti el —
+ott a lib saját id-je a két lábat KÉT KÜLÖNBÖZŐ kulcsra állította volna, és a
+Meta minden konverziót **kétszer** könyvelt volna (CLAUDE.md §16).
+
+- `LeadSubmitParams.eventId?: string` — ha megadod, a böngésző-láb ezt használja.
+  Elhagyva a viselkedés bitre a régi (generál), tehát **visszafelé kompatibilis**.
+- `trackContactSubmit` mostantól `firstName`/`lastName`/`eventId`-t is átvesz.
+  A neveket eddig a típus tiltotta, pedig a `ConversionData` és a
+  `buildConversionPayload` **már ma is** kezelte őket — a szűkítés valódi
+  Enhanced-Conversions veszteség volt. A nevek a rejtett EC-csatornába mennek
+  (`setUserDataForEC`), a dataLayerbe **nem** (CLAUDE.md §15).
+
+Ez nem új minta: a `trackServerEvent` **ugyanezért** fogad el `eventId`-t. Ahol a
+folyamat elbírja, a P5 staging (`stageLeadSubmit` → `commitPendingConversion`) a
+gazdagabb út — az a navigációt is túléli, és kezeli a közben visszavont
+hozzájárulást.
+
+**Mérés:** 5 új eset a `tests/index.test.ts`-ben, 3/3 mutációs próba elbukott a
+javítás nélkül (lead-id · contact-id · név-átadás). 441 csomag-teszt + 1178
+worker-teszt zöld.
+
+**Honnan jött:** a Beautyflow fork-migrációja. A fork API-ja már ismerte a
+megosztott id-t; a kanonikus nem — a csere ezen akadt el.
+
+---
+
 ## 6.6.7 (2026-09-07)
 
 ### Javítva — a klikk-ID kizárólagosság a PERSISTENCE-lábon is (konverzió-vesztő rés)

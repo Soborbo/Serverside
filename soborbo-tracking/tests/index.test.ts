@@ -7,6 +7,7 @@ vi.mock('../lib/gateway', () => ({
   collectAttribution: vi.fn(() => ({})),
 }));
 
+import { getUserDataForEC } from '../lib/events';
 import {
   trackLeadSubmit, trackContactSubmit, trackServerEvent,
   trackPhoneConversion, trackCallbackConversion, trackEmailConversion, trackWhatsappConversion,
@@ -64,6 +65,56 @@ describe('trackContactSubmit — BROWSER LEG ONLY', () => {
     const r = trackContactSubmit({ email: 'a@b.com', phone: '0620123456' });
     expect(lastEvent('contact_form_submitted')!.event_id).toBe(r.eventId);
     expect(mockSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('megosztott event_id — a fetch-alapú folyamatok Pixel↔CAPI dedupja (CLAUDE.md §16)', () => {
+  // A klasszikus form-POST útján a lib generálja az id-t és a rejtett mező viszi.
+  // A fetch/XHR-alapú folyamatokban a hívó MÁR elküldte a szervernek a saját id-jét,
+  // és a böngésző-lábat csak a business-siker után süti el. Ha ilyenkor a lib
+  // ÚJ id-t generálna, a két láb különböző kulcson állna, és a Meta minden
+  // konverziót KÉTSZER könyvelne.
+  const SERVER_ID = 'srv-3f7a1c-shared';
+
+  it('trackLeadSubmit a MEGADOTT event_id-t használja — a dataLayerben is az szerepel', () => {
+    const r = trackLeadSubmit({ email: 'a@b.com', value: 5000, eventId: SERVER_ID });
+    expect(r.eventId).toBe(SERVER_ID);
+    expect(lastEvent('quote_calculator_submitted')!.event_id).toBe(SERVER_ID);
+  });
+
+  it('eventId NÉLKÜL továbbra is generál — a régi hívások viselkedése nem változik', () => {
+    const r = trackLeadSubmit({ email: 'a@b.com' });
+    expect(r.eventId).toBeTruthy();
+    expect(r.eventId).not.toBe(SERVER_ID);
+    expect(lastEvent('quote_calculator_submitted')!.event_id).toBe(r.eventId);
+  });
+
+  it('trackContactSubmit a MEGADOTT event_id-t használja', () => {
+    const r = trackContactSubmit({ email: 'a@b.com', phone: '0620123456', eventId: SERVER_ID });
+    expect(r.eventId).toBe(SERVER_ID);
+    expect(lastEvent('contact_form_submitted')!.event_id).toBe(SERVER_ID);
+  });
+
+  it('consent-blokk esetén IS a megadott id tér vissza — a rejtett mező és a szerver-láb nem szakad el', () => {
+    setCkyConsent({ analytics: false, marketing: false });
+    const r = trackLeadSubmit({ email: 'a@b.com', eventId: SERVER_ID });
+    expect(r.consentBlocked).toBe(true);
+    expect(r.eventId).toBe(SERVER_ID);
+  });
+
+  it('trackContactSubmit a név-mezőket az EC rejtett csatornájába teszi — a dataLayerbe NEM', () => {
+    trackContactSubmit({
+      email: 'Jane@Email.com', phone: '0620123456',
+      firstName: 'Jane', lastName: 'Doe', eventId: SERVER_ID,
+    });
+    const ud = getUserDataForEC()!;
+    expect(ud.first_name).toBe('Jane');
+    expect(ud.last_name).toBe('Doe');
+    // INV: PII SOHA nem mehet a dataLayerbe (CLAUDE.md §15).
+    const dl = JSON.stringify(getDataLayer());
+    expect(dl).not.toContain('Jane');
+    expect(dl).not.toContain('Doe');
+    expect(dl).not.toContain('Email.com');
   });
 });
 
