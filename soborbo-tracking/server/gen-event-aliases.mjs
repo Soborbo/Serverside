@@ -70,11 +70,28 @@ GENERATED from \`events.json\` by \`server/gen-event-aliases.mjs\` (alongside
 \`cutover_date\` (in \`event-aliases.json\`) to mark where the old names stop.
 
 ## Migration plan per live site
+
+**GTM FIRST — the client swap must not lead.** A live container's triggers match the
+dataLayer name with \`equals\`; the moment the client starts emitting canonical names,
+every tag behind a legacy trigger goes silent. Order:
+
 1. Note the site's current (legacy) event names from its live GTM / GA4.
-2. Deploy the updated \`gtm/container.json\` + \`lib/\` so the client emits canonical names.
-3. Set \`cutover_date\` to that deploy date; in reporting, union legacy+canonical via the
+2. **GTM: make the triggers accept BOTH names** (\`equals\` → \`matches RegEx\`
+   \`^(legacy|canonical)$\`) and publish. Nothing changes yet — the old client still
+   matches — but there is now no gap to fall into.
+3. Deploy the updated \`gtm/container.json\` + \`lib/\` so the client emits canonical names.
+4. Set \`cutover_date\` to that deploy date; in reporting, union legacy+canonical via the
    \`aliases\` map below (before the date the legacy names carry the data, after it the
    canonical names do).
+5. Later, once legacy traffic is gone, narrow the triggers back to the canonical name.
+
+> ⚠️ **Check for two emitters sharing one canonical name before you start.**
+> \`trackCalculatorComplete\` (milestone, no \`event_id\`) and \`pushLeadConversion\`
+> (conversion-grade) both emit \`quote_calculator_submitted\`; the canonical lib says to
+> wire **one** of them per site, but nothing enforces it. A site that calls both emits
+> the canonical name twice in one flow — the first without \`event_id\` — which produces a
+> duplicate, undedupable Meta Lead and a Google Ads conversion without \`orderId\`.
+> Worked example with the live measurement: \`docs/EVENT-CUTOVER-BEAUTYFLOW.md\`.
 
 ## Alias table
 

@@ -1,0 +1,174 @@
+# Beautyflow eseménynév-cutover — mérési csomag
+
+**Státusz: MÉRVE, nem végrehajtva.** Ez a dokumentum azt írja le, mi történne ma egy
+naiv cutovernél, és milyen sorrendben biztonságos. Minden szám az élő GTM-konténerből
+(`GTM-W8V3BVGD`, workspace 45) és az `origin/master` kódjából származik, 2026-09-08-án.
+
+A cutover a `tracking-kit` fork-migrációjának **előfeltétele**: a maradék három közös
+fájl (`events.ts`, `index.ts`, `gateway.ts`) mind a kanonikus eseményneveket hozza.
+
+---
+
+## 1. Miért nem lehet a maradékot szeletenként cserélni
+
+A korábbi terv három független szeletként kezelte a maradékot, és csak a `gateway.ts`-t
+tekintette blokkoltnak (mert az importálja az `event-contract.ts`-t). **A mérés ezt
+cáfolja:** az `events.ts` és az `index.ts` is a kanonikus neveket írja a dataLayerbe.
+
+| fájl | importál `event-contract`-ot | kanonikus nevet push-ol | szeletelhető? |
+|---|---|---|---|
+| `events.ts` | nem | **igen** (11 név) | ❌ |
+| `index.ts` | nem (csak re-exportál) | **igen** (5 név) | ❌ |
+| `gateway.ts` | **igen** | payload-nevek | ❌ |
+
+**A maradék tehát egy atomi cutover, nem három szelet.**
+
+## 2. A pontos névtérkép (mérve, függvényenként)
+
+| kit függvény | KIT dataLayer név | KANONIKUS dataLayer név |
+|---|---|---|
+| `trackPhoneClick` | `phone_click` | `phone_number_clicked` |
+| `trackEmailClick` | `email_click` | `email_address_clicked` |
+| `trackWhatsappClick` | `whatsapp_click` | `whatsapp_button_clicked` |
+| `trackCallbackClick` | `callback_click` | `callback_request_submitted` |
+| `pushContactConversion` | `contact_submit` | `contact_form_submitted` |
+| `pushLeadConversion` | `lead_submit` | **`quote_calculator_submitted`** |
+| `trackCalculatorComplete` | `calculator_complete` | **`quote_calculator_submitted`** |
+| `trackCalculatorStart` | `calculator_start` | `quote_calculator_opened` |
+| `trackCalculatorStep` | `calculator_step` | `quote_calculator_step_completed` |
+| `trackCalculatorOption` | `calculator_option` | `quote_calculator_option_selected` |
+| `initFormAbandonTracking` | `form_abandon` | `form_abandoned` |
+| `initScrollTracking` | `scroll_depth` | `scroll_depth` (**változatlan**) |
+
+12-ből 11 változik.
+
+## 3. 🔴 A csomag fő lelete: két esemény EGY névbe olvad
+
+`pushLeadConversion` és `trackCalculatorComplete` **ugyanazt** a kanonikus nevet
+push-olja (`quote_calculator_submitted`). A kanonikus mag ezt tudja, és a saját
+kommentjében ki is mondja:
+
+> „the conversion-grade emission (event_id + value + PII side-channel + gateway) comes
+> from trackLeadSubmit/trackServerEvent; this milestone shares the canonical name.
+> **Wire ONE of them as the actual quote conversion per site.**"
+
+**A Beautyflow mind a kettőt hívja, feltétel nélkül, közvetlenül egymás után**, mind a
+három konverziós folyamatban (`origin/master`):
+
+| fájl | sor | hívások |
+|---|---:|---|
+| `src/components/quiz/QuizApp.astro` | 533–536 | `trackCalculatorComplete('boranalizis_kviz')` → `trackLeadSubmit({…})` |
+| `src/pages/ingyenes-konzultacio.astro` | 847–851 | `trackCalculatorComplete(FORM_NAME)` → `trackLeadSubmit({…})` |
+| `src/pages/en/free-consultation.astro` | 847–851 | ugyanaz |
+
+Mindkettő `hasAnalyticsConsent()`-gated, mindkettő a `result.success` ágban van —
+tehát **együtt futnak, mindig**.
+
+### Mi történne naiv cutovernél
+
+A dataLayerbe **kétszer** kerülne `quote_calculator_submitted` ugyanabban a folyamatban:
+először a mérföldkő (**`event_id` NÉLKÜL**), aztán a konverzió (event_id + value).
+A névre kötött trigger mindkettőre tüzelne (`oncePerEvent` = eseményenként egyszer):
+
+- **Meta Pixel — Lead: kétszer.** Az első `eventID` nélkül → a CAPI-láb nem tudja
+  deduplikálni → **duplikált Lead a Metában.**
+- **GAds Conversion — Quote Request: kétszer**, az első `orderId` (`{{DLV - event_id}}`)
+  nélkül → duplikált, attribúció nélküli konverzió.
+- GA4 `quote_request`: kétszer.
+
+**Ezt a hibaosztályt ezen a konténeren egyszer már kijavították.** A 91-es tag
+(`GAds Conversion - Quote Request`) saját jegyzete: *„2026-07-17 audit-fix: 48
+(calculator_complete, event_id nélkül) → 76 (lead_submit) — a Quote-konverzió a
+tényleges lead-submiten tüzel, orderId-val."* A naiv cutover **visszahozná** azt,
+amit az az audit eltávolított.
+
+### Feloldás
+
+**Ajánlott (A): a mérföldkő-hívás elhagyása a három call site-on.** A kanonikus
+névtérben a „kalkulátor kész" ÉS a „quote elküldve" ugyanaz az esemény; a
+mérföldkő-push szigorúan kevesebb adatot hordoz, és a hívások amúgy is szomszédosak.
+Ez a mag saját utasítása („wire ONE of them").
+
+**(B) GTM-oldali szétválasztás** — ha a „kalkulátor kész" külön metrika kell: két
+trigger ugyanarra a névre, `{{DLV - event_id}}` jelenléte szerint (nem üres =
+konverzió, üres = mérföldkő). Több mozgó alkatrész, de megőrzi a mai GA4-bontást.
+
+**(C) mag-szintű döntés** — a mérföldkő kapjon saját kanonikus nevet. Ez az
+`events.json`/alias-tábla szerződését érinti, tehát flotta-hatású: **külön döntés**,
+nem ennek a cutovernek a része. → lásd §7.
+
+## 4. Az élő GTM-leltár (mit érint a névváltás)
+
+15 trigger, mind `customEvent` + `equals`. Ebből **11-et** érint a cutover:
+
+| trigger | mai név | új név | a rajta lógó tagek |
+|---:|---|---|---|
+| 78 | `phone_click` | `phone_number_clicked` | GA4 phone_click · Meta Pixel Contact · GAds Phone Click |
+| 113 | `email_click` | `email_address_clicked` | GA4 email_click · Meta Pixel Contact |
+| 114 | `whatsapp_click` | `whatsapp_button_clicked` | GA4 whatsapp_click · Meta Pixel Contact |
+| 30 | `callback_click` | `callback_request_submitted` | GA4 callback_request · Meta Pixel Lead · GAds Callback Request |
+| 112 | `contact_submit` | `contact_form_submitted` | GA4 contact_form · Meta Pixel Contact · GAds Contact Form |
+| 76 | `lead_submit` | `quote_calculator_submitted` | GA4 quote_request · Meta Pixel Lead · **GAds Quote Request** |
+| 48 | `calculator_complete` | ⚠️ ütközik a 76-tal — lásd §3 | GA4 calculator_complete |
+| 82 | `calculator_start` | `quote_calculator_opened` | GA4 calculator_start |
+| 93 | `calculator_step` | `quote_calculator_step_completed` | GA4 calculator_step |
+| 26 | `calculator_option` | `quote_calculator_option_selected` | GA4 calculator_option |
+| 87 | `form_abandon` | `form_abandoned` | GA4 form_abandonment |
+
+**Nem érinti a cutover:** 121 `scroll_depth` (a név változatlan), 81 `booking_click`,
+122 `newsletter_signup`, 123 `calculator_result_view` (site-specifikus push-ok, nem a
+kit `events.ts`-éből jönnek).
+
+## 5. Amit NEM kell elintézni — mérve
+
+- **A szerver-láb MÁR kanonikusan beszél.** A `src/pages/api/contact.ts` a
+  `quote_calculator_submitted` / `contact_form_submitted` neveket küldi a gateway-nek
+  (753. sor). A cutover tehát **csak a böngésző-lábat** érinti.
+- **A gateway alias-táblája nem szűk keresztmetszet.** A `phone_conversion`,
+  `contact_form_submit` stb. legacy neveket a szerver ma is kanonikusra normalizálja,
+  tehát a párhuzamos futás alatt egyik irány sem szakad el.
+- **A `lead_submit`, `calculator_start|step|option`, `form_abandon` hiánya az
+  alias-táblából NEM hiba:** ezek dataLayer-only nevek, sosem érkeznek az ingressre
+  (a böngésző-út csak `phone/email/whatsapp` klikket enged át, a form-konverziókat
+  a site backendje küldi kanonikus néven).
+- **A `trackLeadSubmit` szándékosan nem hívja a gateway-t** (a form-konverziók
+  server-ingress-only-k) — tehát a csere nem termel `GATEWAY_SERVER_ONLY_EVENT` zajt.
+
+## 6. A biztonságos sorrend
+
+A cutover **nem** kezdődhet a kód-cserével: a GTM-triggerek `equals`-szel néznek egy
+nevet, tehát a kliens-váltás pillanatában minden érintett tag elnémulna.
+
+1. **GTM — kettős elfogadás.** A 11 trigger `equals` → `matches RegEx`
+   `^(legacy|kanonikus)$` (pl. `^(phone_click|phone_number_clicked)$`). Publikálás.
+   *Ekkor még semmi nem változik: a kliens a legacy nevet küldi, a trigger elfogadja.*
+2. **Ellenőrzés Preview-ban** a régi kliensen: mind a 11 tag változatlanul tüzel.
+3. **§3 feloldása** (ajánlott: a mérföldkő-hívás elhagyása a 3 call site-on) — ugyanabban
+   a PR-ben, mint a fájlcsere.
+4. **Kliens — a három fájl cseréje** (`events.ts` + `index.ts` + `gateway.ts`), egy PR.
+   Ez a fork-migráció utolsó szelete; a `CLIENT_LIB_VERSION` jelentése is ekkor válik
+   igazzá.
+5. **Ellenőrzés élesben:** Meta Test Events (Lead pontosan egyszer, event_id-val),
+   GA4 DebugView, GAds konverzió orderId-val, és a ledger `finding_codes` üres marad.
+6. **`cutover_dates.beautyflow`** = a 4. lépés deploy-dátuma (`event-aliases.json`).
+7. **Takarítás** (külön, később): a triggerek RegEx-e visszaszűkíthető a kanonikus névre,
+   ha a legacy forgalom elfogyott.
+
+Minden lépés önmagában visszafordítható; az 1. lépés után a rendszer **mindkét** nevet
+elfogadja, tehát nincs olyan pillanat, amikor egy konverzió sehol nem landol.
+
+## 7. Nyitott mag-szintű kérdés (nem ennek a cutovernek a része)
+
+A kanonikus `events.ts`-ben két emitter osztozik egy néven, és a helyes használatot ma
+**csak egy komment** őrzi („wire ONE of them"). Semmi nem méri, ha egy site mind a
+kettőt hívja — a Beautyflow pontosan ezt teszi, és a hibát csak élesben, duplikált
+Lead-ként lehetne észrevenni.
+
+**Kérdés a következő körnek:** kapjon-e a mérföldkő saját kanonikus nevet, vagy legyen
+egy szerződés-teszt, ami elbukik, ha egy site mindkét emittert hívja? Ez a
+flotta-szerződést érinti (`events.json` + alias-tábla), ezért külön döntés.
+
+---
+
+*Mérve: 2026-09-08. Forrás: GTM `GTM-W8V3BVGD` workspace 45 (15 trigger, 27 tag),
+`Soborbo/Beautyflow_website@origin/master`, `soborbo-tracking/lib/` (kanonikus 6.6.7).*
