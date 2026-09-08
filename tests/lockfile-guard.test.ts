@@ -22,12 +22,12 @@ import { tmpdir } from 'node:os';
 
 const SCRIPT = resolve(__dirname, '..', 'scripts', 'check-lockfile-complete.mjs');
 
-function runGuard(lock: unknown): { status: number; stderr: string; stdout: string } {
+function runGuard(lock: unknown, ...args: string[]): { status: number; stderr: string; stdout: string } {
   const dir = mkdtempSync(join(tmpdir(), 'lockguard-'));
   const path = join(dir, 'package-lock.json');
   writeFileSync(path, JSON.stringify(lock));
   try {
-    const r = spawnSync(process.execPath, [SCRIPT, path], { encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [SCRIPT, path, ...args], { encoding: 'utf8' });
     return { status: r.status ?? 1, stderr: r.stderr ?? '', stdout: r.stdout ?? '' };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -109,5 +109,73 @@ describe('a toolchain Node-igénye deklarált', () => {
     // a wrangler/miniflare telepítésekor, és a CI ezt nem fogná meg — ott 24 fut.
     expect((root as { engines?: { node?: string } }).engines?.node).toBeTruthy();
     expect((pkg as { engines?: { node?: string } }).engines?.node).toBeTruthy();
+  });
+});
+
+/**
+ * A 2. SZINT fixture-je. Itt MINDEN nev feloldhato — az 1. szint zoldet mondana —,
+ * de a megtalalt bejegyzes verzioja NEM elegiti ki a range-et. Ez nem elmeleti
+ * eset: a Beautyflow lockjanak kezi foltozasakor pontosan ez allt elo
+ * (`@emnapi/core` pontos `wasi-threads@1.2.2`-t kert, a lockban 1.2.3 volt), es az
+ * `npm ci` bukott, mikozben az akkori or zoldet mutatott.
+ */
+const VERSION_MISMATCH = {
+  lockfileVersion: 3,
+  packages: {
+    '': { dependencies: { '@emnapi/core': '^1.11.0' } },
+    'node_modules/@emnapi/core': { version: '1.11.1', dependencies: { '@emnapi/wasi-threads': '1.2.2' } },
+    'node_modules/@emnapi/wasi-threads': { version: '1.2.3' }
+  }
+};
+
+describe('2. szint — verzió-egyezés (a név-feloldás nem elég)', () => {
+  it('a verzió-ütközést elkapja, pedig MINDEN név feloldható', () => {
+    const r = runGuard(VERSION_MISMATCH);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('VERZIÓ-ÜTKÖZÉS');
+    // A pontos pár is látszik, különben nem tudni, mit kell javítani.
+    expect(r.stderr).toContain('@emnapi/wasi-threads');
+    expect(r.stderr).toContain('1.2.3');
+  });
+
+  it('a kimenet MEGMONDJA, melyik szinten futott — egy néma visszaesés hazugság volna', () => {
+    const r = runGuard(COMPLETE);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/név \+ verzió|CSAK név/);
+  });
+
+  it('`--require-semver` mellett a semver hiánya HIBA (exit 2), nem csendes kihagyás', () => {
+    // Ezt az ágat NEM lehet cwd-trükkel mérni: a fejlesztői gépen a semver a
+    // felhasználó globális `node_modules`-ából is feloldódik, tehát egy üres temp
+    // könyvtár is „megtalálná". Ezért hermetikusan REJTJÜK EL a modult egy
+    // előtöltött loaderrel — így pontosan azt az állapotot mérjük, ami egy
+    // `npm ci` NÉLKÜLI CI-lépésben állna elő.
+    const dir = mkdtempSync(join(tmpdir(), 'lockguard-nosemver-'));
+    const path = join(dir, 'package-lock.json');
+    const hide = join(dir, 'hide-semver.cjs');
+    writeFileSync(path, JSON.stringify(COMPLETE));
+    writeFileSync(
+      hide,
+      "const M=require('node:module');const o=M._resolveFilename;" +
+        "M._resolveFilename=function(r,...a){if(r==='semver'){const e=new Error('hidden');" +
+        "e.code='MODULE_NOT_FOUND';throw e;}return o.call(this,r,...a);};"
+    );
+    try {
+      const r = spawnSync(process.execPath, ['-r', hide, SCRIPT, path, '--require-semver'], {
+        encoding: 'utf8'
+      });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('semver');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a semver elrejtése NÉLKÜL ugyanaz a hívás zöld — a fenti mérés tehát a flaget méri', () => {
+    // Kontroll-eset: e nélkül a fenti teszt akkor is „zöld" volna, ha a script
+    // mindig 2-vel lépne ki.
+    const r = runGuard(COMPLETE, '--require-semver');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('név + verzió');
   });
 });

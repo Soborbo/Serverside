@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "compliance": "node tests/compliance/run.mjs",
     "compliance:selftest": "node tests/compliance/selftest/run-selftest.mjs",
-    "check:lockfile": "node scripts/check-lockfile-complete.mjs package-lock.json && node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json",
+    "check:lockfile": "node scripts/check-lockfile-complete.mjs package-lock.json --require-semver && node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json --require-semver",
     "check:package-version": "node scripts/check-package-version.mjs",
     "check:ga4-params": "node scripts/check-ga4-reserved-params.mjs",
     "gen:dist-manifest": "node scripts/gen-dist-manifest.mjs",
