@@ -173,7 +173,7 @@ nevet, tehát a kliens-váltás pillanatában minden érintett tag elnémulna.
 2. **Ellenőrzés Preview-ban** a régi kliensen: mind a 11 tag változatlanul tüzel.
 3. **§3 feloldása** (ajánlott: a mérföldkő-hívás elhagyása a 3 call site-on) — ugyanabban
    a PR-ben, mint a fájlcsere.
-4. **Kliens — a három fájl cseréje** (`events.ts` + `index.ts` + `gateway.ts`), egy PR.
+4. **Kliens — a fájlcsere + a hívási helyek** (⚠️ bővebb, mint hittük — lásd §6.1) (`events.ts` + `index.ts` + `gateway.ts`), egy PR.
    Ez a fork-migráció utolsó szelete; a `CLIENT_LIB_VERSION` jelentése is ekkor válik
    igazzá.
 5. **Ellenőrzés élesben:** Meta Test Events (Lead pontosan egyszer, event_id-val),
@@ -184,6 +184,78 @@ nevet, tehát a kliens-váltás pillanatában minden érintett tag elnémulna.
 
 Minden lépés önmagában visszafordítható; az 1. lépés után a rendszer **mindkét** nevet
 elfogadja, tehát nincs olyan pillanat, amikor egy konverzió sehol nem landol.
+
+## 6.1 🔴 A kliens-PR NEM fájlcsere — a kit API-ja is eltért
+
+A cserét egy worktree-ben elvégeztem, és **a lib-oldal működik**: a hét fájl bemásolása
+után a kit `lib/`-je **15/15 fájlon bitre a kanonikus 6.6.7**. Két részlet, ami a
+tervben nem szerepelt:
+
+- **A csere négy ÚJ kanonikus fájlt is behúz:** `event-contract.ts` (a `gateway.ts`
+  importálja), illetve `conversion-commit.ts` · `submit.ts` · `consent-sbo.ts` (az
+  `index.ts` re-exportálja). Az utóbbi három a site számára **inert** — a
+  `stagePendingConversion` csak az új, opt-in `stageLeadSubmit`/`stageContactSubmit`
+  ágakban fut, amiket a site nem hív; az `initTracking` consent-handlerében lévő
+  `discardPendingConversions()` üres halmazon dolgozik.
+- **A `config.ts` `CLIENT_LIB_VERSION`-je 6.6.6 → 6.6.7.** Ez most válik igazzá: a
+  böngésző-láb libje ezzel teljes egészében kanonikus. A szerver-dispatch
+  (`src/lib/tracking/gateway-dispatch.ts`) továbbra is fork, ezért a
+  `BACKEND_LIB_VERSION = '6.6.4-beautyflow-fork'` jelölés érvényes marad.
+
+### Ami viszont eltörik — öt hívási hely, kettő konverzió-vesztő
+
+A kit forkja **kibővítette** a kanonikus API-t, és a site erre a bővítésre épít. A
+típusdeklarációkból mérve:
+
+| # | hívás | helyek | mi törik |
+|---|---|---|---|
+| 1 | `trackLeadSubmit({… eventName, eventId})` | 3 | a kanonikus `LeadSubmitParams`-ban **nincs `eventId` és `eventName`**; a kanonikus **mindig maga generál** id-t |
+| 2 | `trackContactSubmit({… firstName, lastName, eventName, eventId})` | 1 | a kanonikus csak `Pick<'email' \| 'phone'>`-t vesz át — **négy mező elesik** |
+| 3 | `trackServerEvent('booking_click', {eventId})` | 1 | a `booking_click` **nincs** a kanonikus `BROWSER_GATEWAY_EVENTS`-ben → a kliens-oldali őr **eldobja** |
+
+**Miért konverzió-vesztő az 1. és a 2.:** a site a szerver-lábbal **megosztott**
+`event_id`-t ad át (a `/api/contact` ugyanazzal az id-vel küldi a CAPI-t). Ha a
+böngésző-láb saját id-t generál, a **Meta Pixel↔CAPI dedup elszakad** — minden
+konzultációs lead kétszer kerül könyvelésre. Ez a CLAUDE.md §16 szabálya.
+A 2.-nál ráadásul a `firstName`/`lastName` is elesik → gyengébb advanced matching.
+
+**A 3. csendben öli meg a booking szerver-lábát:** a dataLayer `booking_click` push
+site-kód (marad), tehát a 81-es trigger és a rajta lógó GA4/Meta/GAds tagek
+változatlanok — de a `trackServerEvent` gateway-lába a kanonikus őrön fennakad.
+A hívásnak `begin_checkout`-ra kell váltania (az alias-tábla is ezt mondja).
+
+**Egy consent-szemantika is változik:** a fork a lead-push-t ANALYTICS consenthez
+kötötte (`if (analytics) pushLeadConversion(...)`), a kanonikus MARKETING-hez
+(`if (!hasMarketingConsent()) return`). Marketing-konverzióra a kanonikus a helyes,
+de ez viselkedésváltozás, nem átnevezés.
+
+### Mi a kanonikus szándék, és mi a három út
+
+A kanonikus mag erre a helyzetre a **P5 staging**-et adja: `stageLeadSubmit`
+(a böngésző generálja és leteszi az id-t) → submit a szervernek UGYANAZZAL az
+id-vel → sikerkor `commitPendingConversion(eventId)` tüzeli el a push-t. Van rá
+same-document változat is (`submitTrackedFormAsync`, P5.2). A fork ehelyett egy
+egyszerűbb mintát választott: kívülről kapott `event_id`.
+
+1. **(i) A három folyamat átállítása P5 stagingre.** Ez a kanonikus szándék, és
+   ráadásként megoldja a navigáció közbeni consent-visszavonást is. Cserébe a három
+   konverziós folyamat érdemi átírása, futó appon ellenőrizendő.
+2. **(ii) `submitTrackedFormAsync`** — a same-document fetch-útra szabott P5.2
+   wrapper; a Beautyflow mindhárom folyamata pontosan ilyen.
+3. **(iii) Mag-változtatás: opcionális `eventId` a `LeadSubmitParams`-ban.**
+   A legkisebb beavatkozás, és **nem idegen a magtól**: a `trackServerEvent`
+   *már ma is* elfogad `eventId`-t ugyanezért. Ez lenne a harmadik eset ebben a
+   körben, amikor a fork volt előrébb.
+
+**Ez döntést igényel** — ezért a kliens-PR NEM készült el. A lib-csere maga
+elvégezve és mérve; a hívási helyek átírása a döntés után egy menetben mehet.
+
+### Következmény a §6 sorrendre
+
+A GTM 1. lépése (workspace 46) **változatlanul érvényes és publikálható** — a
+`booking_click` triggert nem érinti, mert annak a dataLayer-neve site-kódból jön.
+A 4. lépés (kliens-PR) viszont bővül: a fenti API-döntés + a `booking_click` →
+`begin_checkout` váltás a **fájlcserével egy PR-ben**.
 
 ## 7. Nyitott mag-szintű kérdés (nem ennek a cutovernek a része)
 
