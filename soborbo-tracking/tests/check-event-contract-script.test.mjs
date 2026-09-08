@@ -77,12 +77,100 @@ function container(eventNames) {
 /** @param {...string} names */
 const docFor = (...names) => names.map((n) => `- \`${n}\` — documented.`).join('\n');
 
+/**
+ * Ugyanaz, de a feltétel TÍPUSÁVAL — egy cutover alatt a triggerek `matches
+ * RegEx`-re állnak, és az arg1 ilyenkor MINTA, nem név.
+ * @param {Array<{type: string, arg1: string}>} conds
+ */
+function containerTyped(conds) {
+  return {
+    containerVersion: {
+      trigger: conds.map((c, i) => ({
+        triggerId: String(200 + i),
+        type: 'CUSTOM_EVENT',
+        customEventFilter: [{
+          type: c.type,
+          parameter: [{ key: 'arg0', value: '{{_event}}' }, { key: 'arg1', value: c.arg1 }],
+        }],
+      })),
+      tag: conds.map((_, i) => ({ paused: false, firingTriggerId: [String(200 + i)] })),
+    },
+  };
+}
+
 beforeAll(() => {
   // Fail with the reason, not with a confusing exit code from a missing script.
   expect(existsSync(SCRIPT), `checker script not found at ${SCRIPT}`).toBe(true);
   root = mkdtempSync(join(tmpdir(), 'evt-contract-'));
 });
 afterAll(() => { rmSync(root, { recursive: true, force: true }); });
+
+describe('a trigger feltétele nem mindig név-egyezés (cutover: matches RegEx)', () => {
+  // Ez a hiányosság egy VALÓDI cutoveren bukott ki: a Beautyflow triggerei
+  // `^(legacy|kanonikus)$`-ra álltak, hogy a kliens-csere pillanatában ne legyen
+  // rés — a checker viszont az arg1-et NÉVNEK hitte, és két hamis állítást tett
+  // ugyanarról a helyes konténerről: „nincs trigger" + „halott trigger".
+  it('a kettős elfogadású RegEx-trigger MINDKÉT nevet fedi', () => {
+    const { code, out } = run({
+      src: { 'e.ts': "dataLayer.push({ event: 'phone_number_clicked' });\n" },
+      docs: docFor('phone_number_clicked'),
+      gtm: containerTyped([{ type: 'matchRegex', arg1: '^(phone_click|phone_number_clicked)$' }]),
+    });
+    expect(out).not.toContain('code → gtm');
+    expect(out).not.toContain('dead trigger');
+    expect(code).toBe(0);
+  });
+
+  it('a RegEx-trigger NEM fedi el a tényleg hiányzó nevet', () => {
+    const { code, out } = run({
+      src: { 'e.ts': "dataLayer.push({ event: 'valami_mas' });\n" },
+      docs: docFor('valami_mas'),
+      gtm: containerTyped([{ type: 'matchRegex', arg1: '^(phone_click|phone_number_clicked)$' }]),
+    });
+    expect(out).toContain('code → gtm');
+    expect(code).not.toBe(0);
+  });
+
+  it('a GTM-export nagybetűs típusát (MATCH_REGEX) is érti', () => {
+    const { code } = run({
+      src: { 'e.ts': "dataLayer.push({ event: 'begin_checkout' });\n" },
+      docs: docFor('begin_checkout'),
+      gtm: containerTyped([{ type: 'MATCH_REGEX', arg1: '^(booking_click|begin_checkout)$' }]),
+    });
+    expect(code).toBe(0);
+  });
+
+  it('a hibás RegEx HIBA, nem néma nem-egyezés', () => {
+    const { code, out } = run({
+      src: { 'e.ts': "dataLayer.push({ event: 'akarmi' });\n" },
+      docs: docFor('akarmi'),
+      gtm: containerTyped([{ type: 'matchRegex', arg1: '^(unclosed' }]),
+    });
+    expect(out).toContain('gtm trigger');
+    expect(out).toContain('invalid RegExp');
+    expect(code).not.toBe(0);
+  });
+
+  it('az ISMERETLEN feltétel-típus HIBA — nem találgatunk', () => {
+    const { code, out } = run({
+      src: { 'e.ts': "dataLayer.push({ event: 'akarmi' });\n" },
+      docs: docFor('akarmi'),
+      gtm: containerTyped([{ type: 'cssSelector', arg1: 'akarmi' }]),
+    });
+    expect(out).toContain('unsupported condition type');
+    expect(code).not.toBe(0);
+  });
+
+  it('a sima `equals` viselkedése bitre a régi', () => {
+    const { code, out } = run({
+      src: { 'e.ts': "dataLayer.push({ event: 'phone_click' });\n" },
+      docs: docFor('phone_click'),
+      gtm: containerTyped([{ type: 'equals', arg1: 'phone_click' }]),
+    });
+    expect(out).not.toContain('code → gtm');
+    expect(code).toBe(0);
+  });
+});
 
 describe('only real dataLayer pushes count as emitted events', () => {
   it('does NOT treat an ordinary `event:` property as a tracking event', () => {

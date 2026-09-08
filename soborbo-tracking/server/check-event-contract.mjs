@@ -177,19 +177,57 @@ async function loadExemptions(exemptPath) {
   return { exempt, errors };
 }
 
+/**
+ * Egy CUSTOM_EVENT trigger feltétele NEM feltétlenül név-egyezés.
+ *
+ * Amíg minden trigger `equals` volt, elég volt az `arg1`-et NÉVKÉNT eltenni. Egy
+ * eseménynév-cutover alatt viszont a triggerek átmenetileg `matches RegEx`-re
+ * állnak (`^(legacy|kanonikus)$`), hogy egyik névnél se legyen rés — és az
+ * `arg1` ilyenkor egy MINTA, nem név. A régi olvasat ezt névnek hitte, ezért a
+ * kanonikus nevekre „nincs trigger" hibát, a regexre pedig „halott trigger"
+ * figyelmeztetést adott: két hamis állítás ugyanarról a helyes konténerről.
+ *
+ * @param {string|undefined} type  a feltétel típusa (API: `matchRegex`, export: `MATCH_REGEX`)
+ * @param {string} arg1
+ * @returns {{label: string, test: (name: string) => boolean, error?: string}}
+ */
+function buildMatcher(type, arg1) {
+  const kind = String(type ?? 'equals').toLowerCase().replace(/[^a-z]/g, '');
+  switch (kind) {
+    case 'matchregex':
+      try {
+        const re = new RegExp(arg1);
+        return { label: `/${arg1}/`, test: (n) => re.test(n) };
+      } catch (e) {
+        return { label: arg1, test: () => false, error: `invalid RegExp ${JSON.stringify(arg1)}: ${e.message}` };
+      }
+    case 'contains':
+      return { label: `*${arg1}*`, test: (n) => n.includes(arg1) };
+    case 'startswith':
+      return { label: `${arg1}*`, test: (n) => n.startsWith(arg1) };
+    case 'endswith':
+      return { label: `*${arg1}`, test: (n) => n.endsWith(arg1) };
+    case 'equals':
+      return { label: arg1, test: (n) => n === arg1 };
+    default:
+      // Nem találgatunk: a hívó ebből HIBÁT csinál, nem néma egyezés-vizsgálatot.
+      return { label: arg1, test: (n) => n === arg1, error: `unsupported condition type '${type}' — treated as equals` };
+  }
+}
+
 async function gtmAnalysis(gtmPath) {
   const json = JSON.parse(await readFile(gtmPath, 'utf8'));
   const cv = json.containerVersion ?? json;
   const triggers = cv.trigger ?? [];
   const tags = cv.tag ?? [];
 
-  /** @type {Map<string, string>} triggerId -> event name */
+  /** @type {Map<string, {label: string, test: (name: string) => boolean, error?: string}>} triggerId -> matcher */
   const eventByTrigger = new Map();
   for (const t of triggers) {
     if (t.type !== 'CUSTOM_EVENT') continue;
     for (const f of t.customEventFilter ?? []) {
       const ps = Object.fromEntries((f.parameter ?? []).map((p) => [p.key, p.value]));
-      if (ps.arg0 === '{{_event}}' && ps.arg1) eventByTrigger.set(String(t.triggerId), ps.arg1);
+      if (ps.arg0 === '{{_event}}' && ps.arg1) eventByTrigger.set(String(t.triggerId), buildMatcher(f.type, ps.arg1));
     }
   }
 
@@ -211,14 +249,17 @@ async function main() {
   const docEvents = await eventsInDoc(args.events);
 
   const gtmExists = existsSync(args.gtm);
-  /** @type {Map<string, {triggerId: string, activeTagCount: number}[]>} */
+  /** @type {Map<string, {triggerId: string, activeTagCount: number, test: (name: string) => boolean}[]>} label -> triggers */
   const gtmEvents = new Map();
+  /** @type {string[]} */
+  const gtmMatcherErrors = [];
   if (gtmExists) {
     const { eventByTrigger, activeTagsByTrigger } = await gtmAnalysis(args.gtm);
-    for (const [trId, name] of eventByTrigger) {
-      if (!gtmEvents.has(name)) gtmEvents.set(name, []);
-      /** @type {{triggerId: string, activeTagCount: number}[]} */ (gtmEvents.get(name)).push({
-        triggerId: trId, activeTagCount: activeTagsByTrigger.get(trId) ?? 0,
+    for (const [trId, m] of eventByTrigger) {
+      if (m.error) gtmMatcherErrors.push(`[gtm trigger]  trigger ${trId}: ${m.error}`);
+      if (!gtmEvents.has(m.label)) gtmEvents.set(m.label, []);
+      /** @type {{triggerId: string, activeTagCount: number, test: (name: string) => boolean}[]} */ (gtmEvents.get(m.label)).push({
+        triggerId: trId, activeTagCount: activeTagsByTrigger.get(trId) ?? 0, test: m.test,
       });
     }
   } else {
@@ -260,29 +301,35 @@ async function main() {
   }
 
   if (gtmExists) {
+    errors.push(...gtmMatcherErrors);
+    /** @param {string} name */
+    const matchedBy = (name) =>
+      [...gtmEvents.values()].flat().some((t) => t.test(name));
+
     // 2. code → GTM trigger (waived for events declared deliberately GTM-free)
     for (const [event, sites] of codeEvents) {
-      if (gtmEvents.has(event) || exempt.has(event)) continue;
+      if (matchedBy(event) || exempt.has(event)) continue;
       errors.push(`[code → gtm]   '${event}' (${sites[0]}) has no CUSTOM_EVENT trigger in the GTM container`);
     }
     // 2b. A stale exemption is worse than none: it documents a decision that
     // reality has already overruled. Fail so someone re-decides.
     for (const event of exempt.keys()) {
-      if (gtmEvents.has(event)) {
+      if (matchedBy(event)) {
         errors.push(`[gtm-exempt]   '${event}' is declared GTM-free but a CUSTOM_EVENT trigger exists — the exemption is stale, remove it or remove the trigger`);
       }
     }
     // 3. GTM trigger → at least one active tag
-    for (const [event, triggers] of gtmEvents) {
+    for (const [label, triggers] of gtmEvents) {
       const totalActive = triggers.reduce((s, t) => s + t.activeTagCount, 0);
       if (totalActive === 0) {
-        errors.push(`[gtm orphan]   trigger for '${event}' (id ${triggers.map((t) => t.triggerId).join(',')}) fires no active tags`);
+        errors.push(`[gtm orphan]   trigger for '${label}' (id ${triggers.map((t) => t.triggerId).join(',')}) fires no active tags`);
       }
     }
     // 4. GTM trigger with no code emitter (warning only)
-    for (const event of gtmEvents.keys()) {
-      if (!codeEvents.has(event)) {
-        warnings.push(`[gtm → code]   GTM has a '${event}' trigger but no code path emits it (dead trigger?)`);
+    for (const [label, triggers] of gtmEvents) {
+      const emitted = [...codeEvents.keys()].some((event) => triggers.some((t) => t.test(event)));
+      if (!emitted) {
+        warnings.push(`[gtm → code]   GTM has a '${label}' trigger but no code path emits it (dead trigger?)`);
       }
     }
   }
