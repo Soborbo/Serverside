@@ -311,8 +311,25 @@ kimenete most **bitre** megegyezik a kézi állapottal.
 - **Takarítás** (nem sürgős): a triggerek RegEx-e visszaszűkíthető a kanonikus névre,
   ha a legacy forgalom elfogyott; a `calculator_complete` trigger és a rajta lógó
   `GA4 Event - calculator_complete` tag törölhető.
-- **`cutover_dates.beautyflow`** = `2026-09-08` beírása az `event-aliases.json`-be
-  (a generátor `events.json`-ből állítja elő — ott a helye).
+- ⛔ **`cutover_dates.beautyflow` MARAD `null` — a dátum beírása HIBA lenne.**
+  A `cutover_date` definíciója: az a nap, amikor a kliens kanonikus neveket kezdett
+  emittálni **ÉS a legacy nevek le is álltak**. Az első fele teljesült, a második
+  **nem**: a GTM-tagek mind **bedrótozott** GA4 `eventName`-et használnak
+  (`generate_lead`, `phone_click`, `booking_click`, `calculator_*`,
+  `form_abandonment`), tehát a GA4-be **ugyanazok a legacy nevek** mennek, mint eddig.
+  Dátumot írni most azt üzenné a riportnak, hogy hagyja abba a legacy nevek
+  unionálását — és a **metrika nullára esne**.
+  **A dataLayer-cutover NEM a riport-cutover.** Utóbbihoz a GA4-tagek eseménynevét is
+  migrálni kell, és az önálló döntés (a GA4-riportok folytonossága a tét). Az indok
+  a generátor `CUTOVER_DATES` konstansánál is ott áll, mert a döntést ott hoznák meg.
+
+- 🟢 **A flotta többi site-ja nincs veszélyben (mérve).** A §3 ütközése akkor él, ha
+  egy site MINDKÉT emittert hívja. A `trackCalculatorComplete` **egyetlen** flotta-repó
+  site-kódjában sem szerepel — csak a vendorolt libekben, tesztekben és doksikban.
+  (Az eszközt is megmértem: a kódkeresés indexeli az `.astro` fájlokat, és a
+  `trackLeadSubmit` ugyanazokban a fájlokban meg is jelenik, tehát a nulla találat
+  valódi nulla, nem indexelési vakfolt.) A csapda tehát **a következő migrálóra vár**,
+  nem élő hiba.
 - **§7 mag-szintű kérdés** változatlanul nyitva: kapjon-e a mérföldkő saját kanonikus
   nevet, vagy legyen szerződés-teszt a két emitter együttes hívására. A Beautyflow
   esete megoldva, a MINTA nincs elzárva a flotta többi site-ja elől.
