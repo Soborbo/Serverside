@@ -43,6 +43,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 2. SZINT, az `npm ci` UTAN: a verzió-egyezés. Az 1. szint (fent) a NÉV
+      # feloldását méri, és ZÖLDET mond olyan lockra is, ahol a megtalált
+      # bejegyzés verziója nem elégíti ki a range-et — pontosan ez állt elő a
+      # Beautyflow lockjának kézi foltozásakor, és ott az `npm ci` bukott.
+      # A `--require-semver` miatt ez a lépés nem eshet vissza csendben 1. szintre.
+      - name: Lockfile version match (2. szint)
+        run: node scripts/check-lockfile-complete.mjs package-lock.json --require-semver
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -122,6 +130,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # 2. SZINT, az `npm ci` UTAN: a verzió-egyezés. Az 1. szint (fent) a NÉV
+      # feloldását méri, és ZÖLDET mond olyan lockra is, ahol a megtalált
+      # bejegyzés verziója nem elégíti ki a range-et — pontosan ez állt elő a
+      # Beautyflow lockjának kézi foltozásakor, és ott az `npm ci` bukott.
+      # A `--require-semver` miatt ez a lépés nem eshet vissza csendben 1. szintre.
+      - name: Lockfile version match (2. szint)
+        run: node ../scripts/check-lockfile-complete.mjs package-lock.json --require-semver
 
       - name: Typecheck
         run: npm run typecheck
