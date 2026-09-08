@@ -48,8 +48,15 @@ jobs:
       # bejegyzés verziója nem elégíti ki a range-et — pontosan ez állt elő a
       # Beautyflow lockjának kézi foltozásakor, és ott az `npm ci` bukott.
       # A `--require-semver` miatt ez a lépés nem eshet vissza csendben 1. szintre.
-      - name: Lockfile version match (2. szint)
-        run: node scripts/check-lockfile-complete.mjs package-lock.json --require-semver
+      # MINDKET lockfile itt megy at a 2. szinten, nem a csomag-jobban: a `semver`
+      # a TELEPITETT fabol jon, es azt csak ez a job hozza letre (a csomag-job
+      # `npm ci`-je a sajat, semver NELKULI fajat telepiti). Az elso probalkozasom
+      # ott futtatta — a lepes helyesen exit 2-vel bukott, nem esett vissza
+      # csendben 1. szintre. Ez a wiring javitasa, nem a szabaly lazitasa.
+      - name: Lockfile version match (2. szint, mindket lock)
+        run: |
+          node scripts/check-lockfile-complete.mjs package-lock.json --require-semver
+          node scripts/check-lockfile-complete.mjs soborbo-tracking/package-lock.json --require-semver
 
       - name: Typecheck
         run: npm run typecheck
@@ -130,14 +137,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      # 2. SZINT, az `npm ci` UTAN: a verzió-egyezés. Az 1. szint (fent) a NÉV
-      # feloldását méri, és ZÖLDET mond olyan lockra is, ahol a megtalált
-      # bejegyzés verziója nem elégíti ki a range-et — pontosan ez állt elő a
-      # Beautyflow lockjának kézi foltozásakor, és ott az `npm ci` bukott.
-      # A `--require-semver` miatt ez a lépés nem eshet vissza csendben 1. szintre.
-      - name: Lockfile version match (2. szint)
-        run: node ../scripts/check-lockfile-complete.mjs package-lock.json --require-semver
 
       - name: Typecheck
         run: npm run typecheck
