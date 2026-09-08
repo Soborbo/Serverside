@@ -24,6 +24,7 @@
 
 import { hasMarketingConsent, hasAnalyticsConsent } from './consent';
 import { trackingConfig, type Market } from './config';
+import { GOOGLE_CLICK_KEYS, resolveGoogleClickId, applyGoogleClickId } from './google-click-id';
 
 const TRACKING_KEY = 'sb_tracking';
 const FIRST_TOUCH_KEY = 'sb_first_touch';
@@ -334,12 +335,24 @@ export function persistTrackingParams(): void {
   const fbclidAt = fresh.fbclid && (!stored?.fbclid || stored.fbclid !== fresh.fbclid)
     ? Date.now()
     : stored?.fbclidAt;
-  lsSet(TRACKING_KEY, JSON.stringify({
+  // A per-kulcs merge (`...stored, ...fresh`) KET kattintas Google-ID-jet hagyna
+  // egyutt a blobban: a friss `gbraid` melle a korabbi `gclid`-et. A Google
+  // offline/EC feltoltes az ilyen sort ELUTASITJA — a konverzio nem torzul,
+  // hanem ELVESZ. A dontest a primitiv hozza (URL > tarolo), a testvereket
+  // pedig az `applyGoogleClickId` takaritja ki.
+  const merged = {
     ...stored, ...fresh,
     fbclidAt,
     timestamp: Date.now(),
     landingPage: stored?.landingPage || window.location.pathname,
-  } satisfies TrackingData));
+  } satisfies TrackingData;
+  const clickIdsOf = (o: Partial<TrackingData> | null | undefined) => ({
+    gclid: o?.gclid, gbraid: o?.gbraid, wbraid: o?.wbraid,
+  });
+  applyGoogleClickId(merged, resolveGoogleClickId({
+    url: clickIdsOf(fresh), stored: clickIdsOf(stored),
+  }));
+  lsSet(TRACKING_KEY, JSON.stringify(merged));
   capturedParams = null;
 }
 
@@ -427,12 +440,34 @@ export function getStoredData(): TrackingData | null {
   try {
     const d: TrackingData = JSON.parse(raw);
     if (Date.now() - d.timestamp > EXPIRY_DAYS * 86_400_000) { lsRm(TRACKING_KEY); return null; }
-    return d;
+    return healLegacyGoogleClickIds(d);
   } catch { lsRm(TRACKING_KEY); return null; }
 }
 
+/**
+ * Egyszeri on-gyogyitas a HIBAS merge koranak blobjaira: ezekben egyszerre tobb
+ * Google klikk-ID ul, MAS-MAS kattintasbol. Nem tudjuk, melyik a frissebb — a
+ * `gclid`-et tartjuk (a domináns, nem-iOS alak), a testvereit eldobjuk, es a
+ * blobot EGYSZER visszairjuk. Ep blobot (0 vagy 1 ID) nem erint es nem ir.
+ */
+function healLegacyGoogleClickIds(d: TrackingData): TrackingData {
+  const present = GOOGLE_CLICK_KEYS.filter((k) => d[k]);
+  if (present.length < 2) return d;
+  const keep = present.includes('gclid') ? 'gclid' : present[0];
+  applyGoogleClickId(d as unknown as Record<string, unknown>, { key: keep, value: String(d[keep]), source: 'stored' });
+  try { lsSet(TRACKING_KEY, JSON.stringify(d)); } catch { /* a gyogyitas sosem dobhat */ }
+  return d;
+}
+
 export function getGclid(): string | null {
-  return new URLSearchParams(window.location.search).get('gclid') || getStoredData()?.gclid || null;
+  const u = new URLSearchParams(window.location.search);
+  const fromUrl = u.get('gclid');
+  if (fromUrl) return fromUrl;
+  // Ha az AKTUALIS URL MAS Google klikk-ID-t hoz (gbraid/wbraid — iOS-forgalom),
+  // a tarolt gclid egy KORABBI kattintase: nem szabad ehhez a konverziohoz adni.
+  // Ez a fuggveny az `index.ts`-bol egyenesen a konverzios payloadba megy.
+  if (GOOGLE_CLICK_KEYS.some((k) => u.get(k))) return null;
+  return getStoredData()?.gclid || null;
 }
 export function getFbclid(): string | null {
   return new URLSearchParams(window.location.search).get('fbclid') || getStoredData()?.fbclid || null;
@@ -440,9 +475,8 @@ export function getFbclid(): string | null {
 
 export function getAllTrackingData(): Partial<TrackingData> {
   const s = getStoredData(); const u = new URLSearchParams(window.location.search);
-  return {
-    gclid: u.get('gclid') || s?.gclid, gbraid: u.get('gbraid') || s?.gbraid,
-    wbraid: u.get('wbraid') || s?.wbraid, fbclid: u.get('fbclid') || s?.fbclid,
+  const out: Partial<TrackingData> = {
+    fbclid: u.get('fbclid') || s?.fbclid,
     utm_source: u.get('utm_source') || s?.utm_source, utm_medium: u.get('utm_medium') || s?.utm_medium,
     utm_campaign: u.get('utm_campaign') || s?.utm_campaign, utm_content: u.get('utm_content') || s?.utm_content,
     utm_term: u.get('utm_term') || s?.utm_term,
@@ -451,6 +485,14 @@ export function getAllTrackingData(): Partial<TrackingData> {
     utm_creative_format: u.get('utm_creative_format') || s?.utm_creative_format,
     utm_marketing_tactic: u.get('utm_marketing_tactic') || s?.utm_marketing_tactic,
   };
+  // A Google klikk-ID-t NEM kulcsonkent merge-eljuk: ugy a friss URL-beli
+  // `gbraid` melle a tarolt `gclid` is bekerulne, es a hidden mezokbe KET
+  // kattintas azonositoja menne egyszerre.
+  applyGoogleClickId(out as Record<string, unknown>, resolveGoogleClickId({
+    url: { gclid: u.get('gclid'), gbraid: u.get('gbraid'), wbraid: u.get('wbraid') },
+    stored: { gclid: s?.gclid, gbraid: s?.gbraid, wbraid: s?.wbraid },
+  }));
+  return out;
 }
 
 /**
