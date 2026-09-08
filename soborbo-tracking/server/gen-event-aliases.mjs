@@ -33,7 +33,16 @@ for (const e of EVENTS) {
 // Ezt a mapet ITT tartsd karban (a JSON generált — oda kézzel írni tilos).
 const CUTOVER_DATES = {
   painless: null, //           GA4-ben ma is él: quote_calculator_conversion + bespoke nevek
-  beautyflow: null, //         GA4-ben ma is él: booking_click/phone_click/calculator_* legacy készlet
+  // 2026-09-08: a dataLayer-cutover MEGTÖRTÉNT (a kliens kizárólag kanonikus neveket
+  // emittál, élő bundle-ben igazolva), a dátum MÉGIS null MARAD. A `cutover_date`
+  // definíciója szerint a LEGACY NEVEKNEK is le kell állniuk — a Beautyflow GTM-tagjei
+  // viszont MIND bedrótozott GA4 `eventName`-et használnak (`generate_lead`,
+  // `phone_click`, `booking_click`, `calculator_*`, `form_abandonment`), tehát a GA4-be
+  // ugyanazok a legacy nevek mennek, mint eddig. Dátumot írni ide most azt jelentené,
+  // hogy a riport ABBAHAGYJA a legacy nevek unionálását — és a metrika NULLÁRA esne.
+  // A dataLayer-cutover NEM a riport-cutover: utóbbihoz a GA4-tagek eseménynevét is
+  // migrálni kell. Részletek: docs/EVENT-CUTOVER-BEAUTYFLOW.md §8.
+  beautyflow: null,
   lomtalan: '2026-07-14', //   első ledger-kézbesítés; GA4-ben csak kanonikus nevek tüzelnek
   trapezlemezes: null, //      szerver-láb kanonikus (2026-08-11), de a GA4 bespoke neveken mér
   olcsokontenerhaz: '2026-07-31', // az új Astro-site élesedése; GA4 teljesen kanonikus
