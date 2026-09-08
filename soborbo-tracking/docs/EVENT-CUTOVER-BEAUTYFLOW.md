@@ -134,12 +134,40 @@ kit `events.ts`-éből jönnek).
 - **A `trackLeadSubmit` szándékosan nem hívja a gateway-t** (a form-konverziók
   server-ingress-only-k) — tehát a csere nem termel `GATEWAY_SERVER_ONLY_EVENT` zajt.
 
+## 5.1 A GA4-riportok NEM neveződnek át — mérve
+
+Mind a 15 `gaawe` (GA4 Event) tag **bedrótozott** `eventName`-et használ, egyik sem
+küldi tovább a `{{_event}}`-et:
+
+| GA4 tag | GA4 eseménynév | trigger |
+|---|---|---|
+| callback_request · quote_request · contact_form | `generate_lead` | 30 · 76 · 112 |
+| phone_click · email_click · whatsapp_click | `phone_click` · `email_click` · `whatsapp_click` | 78 · 113 · 114 |
+| calculator_start · _step · _option | `calculator_start` · `calculator_step` · `calculator_option` | 82 · 93 · 26 |
+| form_abandonment · scroll_depth | `form_abandonment` · `scroll_depth` | 87 · 121 |
+
+**Következmény:** a cutover tisztán dataLayer-név-csere. A GA4-eseménynevek, a Meta
+standard eseménynevek és a Google Ads conversion label-ek **változatlanok**, tehát a
+riport-folytonosság megmarad. Egyetlen kivétel a §3 feloldásából adódik: a
+`GA4 Event - calculator_complete` tag elnémul (lásd §5.2).
+
+## 5.2 Amit a §3 (A) feloldása riportban jelent
+
+A mérföldkő-hívás elhagyása után a `calculator_complete` **nem kerül többé a
+dataLayerbe**, tehát a 48-as trigger és a rajta lógó `GA4 Event - calculator_complete`
+tag néma lesz. Ez tudatos: a kanonikus névtérben a „kalkulátor kész" és a „quote
+elküldve" ugyanaz a felhasználói akció, és ma **két** GA4-eseményt küldünk rá.
+A takarítás lépésben a trigger és a tag törölhető.
+
+Ha a külön metrika mégis kell, az a §3 (B) útja — `{{DLV - event_id}}` jelenléte
+szerint két trigger ugyanarra a névre.
+
 ## 6. A biztonságos sorrend
 
 A cutover **nem** kezdődhet a kód-cserével: a GTM-triggerek `equals`-szel néznek egy
 nevet, tehát a kliens-váltás pillanatában minden érintett tag elnémulna.
 
-1. **GTM — kettős elfogadás.** A 11 trigger `equals` → `matches RegEx`
+1. **GTM — kettős elfogadás.** ✅ **ELőKÉSZÍTVE, publikálásra vár** — `GTM-W8V3BVGD` **workspace 46** („Esemenynev-cutover 1. lepes”): 10 trigger `equals` → `matches RegEx`, + a 48-as kap egy magyarázó jegyzetet (szándékosan marad legacy-n). Tag és változó nem módosult. A 11 trigger `equals` → `matches RegEx`
    `^(legacy|kanonikus)$` (pl. `^(phone_click|phone_number_clicked)$`). Publikálás.
    *Ekkor még semmi nem változik: a kliens a legacy nevet küldi, a trigger elfogadja.*
 2. **Ellenőrzés Preview-ban** a régi kliensen: mind a 11 tag változatlanul tüzel.
