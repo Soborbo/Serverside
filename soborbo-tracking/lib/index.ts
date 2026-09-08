@@ -172,6 +172,24 @@ export interface LeadSubmitParams {
   value?: number;
   currency?: string;
   contentName?: string;
+  /**
+   * A SZERVER-lábbal MEGOSZTOTT event_id. Ha megadod, a böngésző-láb EZT
+   * használja generálás helyett — ez a Pixel↔CAPI dedup kulcsa (CLAUDE.md §16).
+   *
+   * MIKOR KELL. A `populateHiddenFields`-es klasszikus form-POST útján a lib
+   * generálja az id-t, és a rejtett mező viszi a backendnek — ott nincs dolgod
+   * ezzel a mezővel. A fetch/XHR-alapú folyamatokban viszont a hívó gyakran MÁR
+   * generált egy id-t, elküldte a szervernek, és a böngésző-lábat csak a
+   * business-siker után tüzeli el: ott ezt kell átadni, különben a két láb két
+   * KÜLÖNBÖZŐ id-t használ, és a Meta minden konverziót KÉTSZER könyvel.
+   *
+   * A `trackServerEvent` ugyanezért fogad el `eventId`-t.
+   *
+   * ALTERNATÍVA: a P5 staging (`stageLeadSubmit` → `commitPendingConversion`)
+   * ugyanezt oldja meg, ráadásul túléli a navigációt és kezeli a közben
+   * visszavont hozzájárulást. Ha a folyamatod oda illik, az a gazdagabb út.
+   */
+  eventId?: string;
 }
 
 export interface LeadSubmitResult {
@@ -219,7 +237,7 @@ function dispatchToGateway(
  * (`populateHiddenFields`). See server/backend/gateway-dispatch.ts.
  */
 export function trackLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
-  const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = params.eventId || generateEventId();
   if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
 
   const currency = params.currency || trackingConfig.currency;
@@ -280,15 +298,23 @@ export function stageContactSubmit(
 /**
  * Contact form submit → BROWSER LEG ONLY. `contact_form_submitted` is
  * server-ingress-only — same contract as trackLeadSubmit: the backend sends the
- * gateway leg with the event_id from the hidden field.
+ * gateway leg with the event_id from the hidden field (vagy a `params.eventId`-vel,
+ * ha a folyamat fetch-alapú).
+ *
+ * A név-mezők a Google Ads Enhanced Conversions rejtett csatornájába mennek
+ * (`setUserDataForEC`), NEM a dataLayerbe — ugyanaz a szabály, mint a leadnél.
  */
 export function trackContactSubmit(
-  params: Pick<LeadSubmitParams, 'email' | 'phone'>,
+  params: Pick<LeadSubmitParams, 'email' | 'phone' | 'firstName' | 'lastName' | 'eventId'>,
 ): LeadSubmitResult {
-  const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = params.eventId || generateEventId();
   if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
 
-  pushContactConversion({ email: params.email, phone: params.phone, eventId, gclid: gclid || undefined });
+  pushContactConversion({
+    email: params.email, phone: params.phone,
+    firstName: params.firstName, lastName: params.lastName,
+    eventId, gclid: gclid || undefined,
+  });
   return { success: true, consentBlocked: false, eventId, gclid, fbclid };
 }
 
