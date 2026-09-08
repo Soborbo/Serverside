@@ -10,6 +10,44 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.6.7 (2026-09-07)
+
+### Javítva — a klikk-ID kizárólagosság a PERSISTENCE-lábon is (konverzió-vesztő rés)
+
+A szabály (`lib/google-click-id.ts`) eddig **csak a `gateway.ts`** last-touch
+attribúcióján élt. A `persistence.ts` 90 napos `sb_tracking` blobja nem ismerte —
+és ez nem elméleti rés: a `getGclid()` az `index.ts`-ből **egyenesen a konverziós
+payloadba** megy (`sendToWorker`, hidden mezők).
+
+**A hibás forgatókönyv.** A látogató korábban `gclid`-es kattintással jött, az ID a
+90 napos blobban ül. Most `?gbraid=…`-dal érkezik (iOS-forgalom). A `getGclid()`
+visszaadta a **tárolt gclid-et**, a `getAllTrackingData()` pedig a friss `gbraid`
+mellé is odatette — vagyis a konverzió **két különböző kattintás** azonosítójából
+állt össze. A Google offline / Enhanced Conversions feltöltés az ilyen sort
+**elutasítja**: a konverzió nem torzul, hanem **elvész**, méghozzá némán.
+
+Négy helyen javítva, mind a meglévő primitívre delegálva (nem új implementáció):
+
+| hely | mi volt | mi lett |
+|---|---|---|
+| `persistTrackingParams` | `{...stored, ...fresh}` per-kulcs merge | a merge után `applyGoogleClickId` takarítja a testvéreket |
+| `getStoredData` | a hibás korszak párosát változatlanul adta vissza | egyszeri **öngyógyítás** olvasáskor, egyszeri visszaírással |
+| `getGclid` | `URL gclid \|\| tárolt gclid` | más Google-ID az URL-ben → `null` (a tárolt egy KORÁBBI kattintásé) |
+| `getAllTrackingData` | kulcsonkénti merge | a Google-ID-t a primitív dönti el |
+
+### Hogyan derült ki
+
+A Beautyflow `tracking-kit` fork-migrációja hozta ki: ott a szabály **mindkét
+lábon** élt, és a kanonikus `persistence.ts` behúzása 6 esetet pirosított. Vagyis
+ezen a ponton a **fork volt előrébb** — ezért ment a javítás felfelé, a magba,
+ahogy korábban a checker `EVENT_PUSH_RE`-je is.
+
+Új teszt: `tests/google-click-id-persistence.test.ts` (10 eset). A javítás előtt
+**6 bukó / 4 zöld**, és a 4 zöld pontosan a konfliktusmentes eset — a fájl a
+kizárólagosságot méri, nem általában a tárolást.
+
+---
+
 ## 6.6.6 (2026-09-06)
 
 ### Javítva — a first touch elvesztette a kulcsszót és a kreatívot
