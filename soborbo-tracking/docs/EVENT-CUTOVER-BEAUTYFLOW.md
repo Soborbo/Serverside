@@ -1,6 +1,6 @@
 # Beautyflow eseménynév-cutover — mérési csomag
 
-**Státusz: MÉRVE, nem végrehajtva.** Ez a dokumentum azt írja le, mi történne ma egy
+**Státusz: MÉRVE ÉS VÉGREHAJTVA (2026-09-08) — lásd §8.** Ez a dokumentum azt írja le, mi történne ma egy
 naiv cutovernél, és milyen sorrendben biztonságos. Minden szám az élő GTM-konténerből
 (`GTM-W8V3BVGD`, workspace 45) és az `origin/master` kódjából származik, 2026-09-08-án.
 
@@ -267,6 +267,55 @@ Lead-ként lehetne észrevenni.
 **Kérdés a következő körnek:** kapjon-e a mérföldkő saját kanonikus nevet, vagy legyen
 egy szerződés-teszt, ami elbukik, ha egy site mindkét emittert hívja? Ez a
 flotta-szerződést érinti (`events.json` + alias-tábla), ezért külön döntés.
+
+## 8. ✅ VÉGREHAJTVA — 2026-09-08 (a §6 sorrend szerint)
+
+A csomag megírása után a cutover **végigment**. A lépések és a mérésük:
+
+| # | lépés | eredmény |
+|---|---|---|
+| 1 | GTM kettős elfogadás | workspace 46 → **43. verzió publikálva** |
+| 2 | ellenőrzés | az élő `gtm.js` **mindkét** névkészletet tartalmazza |
+| 3 | §3 feloldás (A) + fájlcsere | Beautyflow **#78** mergelve |
+| 4 | mag-előfeltételek | Serverside **#116** (6.6.8) + **#117** (checker) mergelve |
+| 5 | élő igazolás | a kiszolgált bundle **csak kanonikus** neveket emittál |
+| 6 | generátor-javítás | Beautyflow **#79** mergelve |
+
+**A publikálás előtti kapu.** Nem a szemem volt a bizonyíték: mind a 11 regexet
+gépileg futtattam a legacy ÉS a kanonikus névre (22/22 illeszkedik), plusz egy
+kereszt-találat-próbát a többi élő eseménynévre (`scroll_depth`,
+`newsletter_signup`, `calculator_result_view`, `cta_click`, `calculator_complete`,
+`gtm.*`) — egyik regex sem fogta el egyiket sem. Külön ellenőrizve, hogy a 76-os
+trigger NEM fogja el a `calculator_complete`-et.
+
+**Amit a mag felől kellett hozzátenni (#116, 6.6.8).** A csere nem volt drop-in: a
+kanonikus `trackLeadSubmit`/`trackContactSubmit` **mindig maga generálta** az
+`event_id`-t, a site viszont a szerver-lábbal megosztott id-t ad át. Enélkül a
+Pixel↔CAPI dedup elszakadt volna (CLAUDE.md §16). A `LeadSubmitParams.eventId?`
+ezt oldja meg; a `trackContactSubmit` ráadásul a **név-mezőket** is átveszi —
+azokat eddig a *típus* tiltotta, pedig a payload már kezelte őket.
+
+**Amit a saját szerszámunk kifogott (#117).** A `check:events` 22 hibával megállt a
+kliens-PR-en, **mind hamis**: a checker az `arg1`-et névként olvasta, a feltétel
+típusát figyelmen kívül hagyva — a cutover alatt viszont az `arg1` MINTA. Két hamis
+állítás ugyanarról a HELYES konténerről. Az illesztő-modell ezt zárta le.
+
+**A saját csapdám (#79).** A `gtm/container.json`-t kézzel írtam át — pedig
+**generált fájl**, és a következő `generate:gtm` visszaírta volna legacy `EQUALS`-re
+(megmérve). Ugyanaz a hiba, amit ebben a dokumentumban §6-ban magam írtam elő
+elkerülendőnek a generált migrációs doksinál. A szabály a generátorba került, és a
+kimenete most **bitre** megegyezik a kézi állapottal.
+
+### Ami nyitva marad
+
+- **Takarítás** (nem sürgős): a triggerek RegEx-e visszaszűkíthető a kanonikus névre,
+  ha a legacy forgalom elfogyott; a `calculator_complete` trigger és a rajta lógó
+  `GA4 Event - calculator_complete` tag törölhető.
+- **`cutover_dates.beautyflow`** = `2026-09-08` beírása az `event-aliases.json`-be
+  (a generátor `events.json`-ből állítja elő — ott a helye).
+- **§7 mag-szintű kérdés** változatlanul nyitva: kapjon-e a mérföldkő saját kanonikus
+  nevet, vagy legyen szerződés-teszt a két emitter együttes hívására. A Beautyflow
+  esete megoldva, a MINTA nincs elzárva a flotta többi site-ja elől.
 
 ---
 
