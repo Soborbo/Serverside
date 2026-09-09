@@ -1,0 +1,10 @@
+{
+  "_comment": "Kanonikus nevek, amiket TOBB emitter is pusholhat — es amik kozul egy site-nak PONTOSAN EGYET szabad hivnia. A `check-event-contract.mjs` 6. szabalya ezt kenyszeriti ki a SITE forrasan. Alak: <kanonikus event> -> { reason, groups: { <csoportnev>: [fuggvenynevek] } }. Ket KULONBOZO csoportbol hivni = hiba.",
+  "quote_calculator_submitted": {
+    "reason": "A `trackCalculatorComplete` MERFOLDKO (nincs event_id, nincs ertek, nincs PII-oldalcsatorna), a masik csoport viszont KONVERZIO-ERTEKU (event_id + value + gateway). Mindketto UGYANAZT a kanonikus nevet pusholja, tehat ha egy site mindkettot hivja, a GTM-trigger KETSZER tuzel — az elso event_id NELKUL. Kovetkezmeny: dedupalhatatlan Meta Lead (CLAUDE.md 16.) es orderId nelkuli Google Ads konverzio. Ez a hibaosztaly 2026-07-17-en mar egyszer megtortent a painless konteneren, majd 2026-09-08-an a Beautyflow-n masodszor is — mindketszer kezzel talaltuk meg.",
+    "groups": {
+      "milestone": ["trackCalculatorComplete"],
+      "conversion": ["trackLeadSubmit", "trackServerEvent", "pushLeadConversion", "commitConversion"]
+    }
+  }
+}
