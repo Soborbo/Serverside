@@ -5,7 +5,10 @@
     "module": "leadgen",
     "ga4_key_event": true,
     "meta": "Lead",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "server_ingress_only": true,
     "provenance": true,
     "flow": null,
@@ -19,7 +22,10 @@
     "module": "leadgen",
     "ga4_key_event": true,
     "meta": "Lead",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "server_ingress_only": true,
     "provenance": true,
     "flow": null,
@@ -33,7 +39,10 @@
     "module": "leadgen",
     "ga4_key_event": true,
     "meta": "Contact",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "server_ingress_only": true,
     "provenance": true,
     "flow": null,
@@ -47,7 +56,10 @@
     "module": "leadgen",
     "ga4_key_event": true,
     "meta": "Contact",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "provenance": true,
     "flow": null,
     "legacy_ga4": "phone_conversion",
@@ -60,7 +72,10 @@
     "module": "leadgen",
     "ga4_key_event": true,
     "meta": "Contact",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "provenance": true,
     "flow": null,
     "legacy_ga4": "email_conversion",
@@ -73,7 +88,10 @@
     "module": "leadgen",
     "ga4_key_event": true,
     "meta": "Contact",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "provenance": true,
     "flow": null,
     "legacy_ga4": "whatsapp_conversion",
@@ -86,7 +104,9 @@
     "module": "ecommerce",
     "ga4_key_event": false,
     "meta": "ViewContent",
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -99,7 +119,9 @@
     "module": "ecommerce",
     "ga4_key_event": false,
     "meta": "AddToCart",
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -112,7 +134,10 @@
     "module": "ecommerce",
     "ga4_key_event": false,
     "meta": "InitiateCheckout",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": "booking_click",
@@ -125,7 +150,10 @@
     "module": "ecommerce",
     "ga4_key_event": true,
     "meta": "Lead",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "server_ingress_only": true,
     "provenance": false,
     "flow": "A",
@@ -139,7 +167,9 @@
     "module": "ecommerce",
     "ga4_key_event": false,
     "meta": "AddPaymentInfo",
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": "B",
     "legacy_ga4": null,
@@ -152,7 +182,10 @@
     "module": "ecommerce",
     "ga4_key_event": true,
     "meta": "Purchase",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "server_ingress_only": true,
     "provenance": false,
     "flow": "B",
@@ -166,7 +199,9 @@
     "module": "leadgen",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -179,7 +214,9 @@
     "module": "leadgen",
     "ga4_key_event": false,
     "meta": "ViewContent",
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": "quote_calculator_first_view",
@@ -192,7 +229,9 @@
     "module": "leadgen",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -205,7 +244,9 @@
     "module": "leadgen",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -218,7 +259,9 @@
     "module": "leadgen",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -231,7 +274,9 @@
     "module": "core",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["browser"],
+    "channels": [
+      "browser"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -244,7 +289,10 @@
     "module": "core",
     "ga4_key_event": false,
     "meta": "ViewContent",
-    "channels": ["browser", "server"],
+    "channels": [
+      "browser",
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -257,7 +305,9 @@
     "module": "crm",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -270,7 +320,9 @@
     "module": "crm",
     "ga4_key_event": true,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -283,7 +335,9 @@
     "module": "crm",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -296,7 +350,9 @@
     "module": "crm",
     "ga4_key_event": true,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -309,7 +365,9 @@
     "module": "crm",
     "ga4_key_event": true,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -322,7 +380,9 @@
     "module": "crm",
     "ga4_key_event": true,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
@@ -335,11 +395,58 @@
     "module": "crm",
     "ga4_key_event": false,
     "meta": null,
-    "channels": ["server"],
+    "channels": [
+      "server"
+    ],
     "provenance": false,
     "flow": null,
     "legacy_ga4": null,
     "legacy_datalayer": null,
     "description": "CRM offline: lead diszkvalifikalva"
+  },
+  {
+    "name": "payment_received",
+    "kind": "offline",
+    "module": "crm",
+    "ga4_key_event": true,
+    "meta": null,
+    "channels": [
+      "server"
+    ],
+    "provenance": false,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "CRM offline (P10): TENYLEGESEN befolyt penz. Egy leadhez TOBB is tartozhat (eloleg + reszletek), ezert a hivo occurrence_id-t KELD kuldjon — kulonben ket reszfizetes egy konverziova olvadna. NEM azonos a revenue_confirmed-del: az a megnyert ajanlat erteke."
+  },
+  {
+    "name": "revenue_retracted",
+    "kind": "offline",
+    "module": "crm",
+    "ga4_key_event": false,
+    "meta": null,
+    "channels": [
+      "server"
+    ],
+    "provenance": false,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "CRM offline (P10): storno / teljes jovairas — a mar feltoltott konverzio VISSZAVONASA. MA NEM KEZBESITHETO (a Data Manager adjustment wire-formatuma nincs igazolva); a gateway nevesitett 501-gyel utasitja el, hogy a CRM outbox megorizze a sort."
+  },
+  {
+    "name": "revenue_restated",
+    "kind": "offline",
+    "module": "crm",
+    "ga4_key_event": false,
+    "meta": null,
+    "channels": [
+      "server"
+    ],
+    "provenance": false,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "CRM offline (P10): reszleges jovairas / felszorzas — a mar feltoltott konverzio ERTEKENEK helyesbitese. MA NEM KEZBESITHETO, ugyanazert, mint a revenue_retracted."
   }
 ]

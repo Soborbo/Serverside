@@ -233,8 +233,59 @@ const LEAD_STATUS_EVENT_MAP: Record<string, string> = {
   booking_confirmed: 'booking_confirmed',
   job_completed: 'job_completed',
   revenue_confirmed: 'revenue_confirmed',
-  lead_disqualified: 'lead_disqualified'
+  lead_disqualified: 'lead_disqualified',
+  // ── P10 (a user döntése, 2026-09-09) ──────────────────────────────────────
+  // A TÉNYLEGESEN befolyt pénz. NEM azonos a `revenue_confirmed`-del: az azt
+  // jelenti, hogy „a leadet megnyertnek jelölték és valaki beírt egy végösszeget",
+  // ez pedig azt, hogy „ennyi pénz megérkezett". Egy leadhez TÖBB ilyen tartozhat
+  // (előleg + részletek) — lásd REPEATABLE_LEAD_STATUSES.
+  payment_received: 'payment_received',
+  // Korrekciók: storno / jóváírás / won→lost. A wire-formátumuk MÉG NINCS
+  // igazolva (lásd ADJUSTMENT_LEAD_STATUSES), ezért a route ELUTASÍTJA őket —
+  // de a szótárban BENNE vannak, hogy a CRM 400 helyett nevesített, kódos
+  // választ kapjon, és a hiány ne látszódjon „ismeretlen státusznak".
+  revenue_retracted: 'revenue_retracted',
+  revenue_restated: 'revenue_restated'
 };
+
+/**
+ * Státuszok, amikből egy leadhez TÖBB is tartozhat.
+ *
+ * MIÉRT KELL EZ A LISTA. A `lead-status.ts` az `orderId`-t a
+ * `sha256(lead_id + '_' + status)`-ból képzi. Ez az EGYSZERI státuszokra helyes
+ * (idempotens retry), egy ismételhetőre viszont VÉGZETES: két részfizetés
+ * ugyanazt az `orderId`-t kapná, és a Google a másodikat ugyanannak a
+ * konverziónak látná — a második fizetés NÉMÁN elveszne. Ezért ezekre a
+ * státuszokra a hívónak `occurrence_id`-t KELL küldenie, és annak hiánya
+ * hangos 400, nem csendes összevonás.
+ */
+export const REPEATABLE_LEAD_STATUSES: ReadonlySet<string> = new Set(['payment_received']);
+
+/**
+ * Státuszok, amik egy MÁR FELTÖLTÖTT konverziót helyesbítenek (retract/restate).
+ *
+ * MIÉRT NEM DISPATCH-ELJÜK MA. A Data Manager `events.ingest` HIVATALOS
+ * referenciája (developers.google.com/data-manager/api/reference/rest/v1/events/ingest,
+ * lekérdezve 2026-09-09) az Event-objektumon EGYETLEN adjustment/retract/restate
+ * mezőt sem dokumentál, és a „Send events" devguide sem ír a helyesbítésről.
+ * Közösségi forrás szerint a képesség létezik — de a wire-formátumot NEM
+ * találjuk ki: ugyanezt a hibát épp most találtuk meg a GTM Enhanced
+ * Conversions-nél, ahol egy kitalált mezőnevet a szolgáltató némán eldobott.
+ *
+ * A KÖZTES VISELKEDÉS SZÁNDÉKOSAN HANGOS ELUTASÍTÁS. A kézenfekvő rossz
+ * megoldás az lenne, hogy a retract is a normál upload-úton megy: az egy
+ * POZITÍV konverziót töltene fel egy visszavonásra, vagyis a hibát a
+ * kétszeresére növelné.
+ *
+ * ⚠️ Amikor a formátum igazolható: az adjustment a Google szerint NEM
+ * idempotens — kétszer küldve kétszer alkalmazódik. A gateway retry-je (DLQ +
+ * cron) ezért CSAK a `markDoNotReplay` mögött futhat, különben egy tranziens
+ * 5xx duplán vonná vissza ugyanazt a konverziót.
+ */
+export const ADJUSTMENT_LEAD_STATUSES: ReadonlySet<string> = new Set([
+  'revenue_retracted',
+  'revenue_restated'
+]);
 
 export function mapLeadStatusToEventName(status: string): string | null {
   return LEAD_STATUS_EVENT_MAP[status] ?? null;

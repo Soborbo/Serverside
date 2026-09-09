@@ -20,6 +20,8 @@ import {
   isOfflineUploadBlocked,
   mapLeadStatusToEventName,
   VALID_LEAD_STATUSES,
+  REPEATABLE_LEAD_STATUSES,
+  ADJUSTMENT_LEAD_STATUSES,
   getLatestConsentForLead,
   getConsentState,
   markDoNotReplay,
@@ -80,6 +82,49 @@ interface LeadStatusBody {
   gclid?: string;
   gbraid?: string;
   wbraid?: string;
+  /**
+   * P10 — az ISMÉTELHETŐ státuszok (ma: `payment_received`) egy-egy előfordulásának
+   * stabil azonosítója a hívó rendszerében (pl. a CRM `payments` sorának id-ja).
+   *
+   * MIÉRT KÖTELEZŐ OTT. Az `orderId` a `(lead_id, status)` hash-e — ez az egyszeri
+   * státuszokra helyes (a retry ugyanazt küldi, a Google dedupál), de két
+   * részfizetésre VÉGZETES: azonos `orderId` → a Google ugyanannak a konverziónak
+   * látja őket → a második fizetés némán elveszik. Az `occurrence_id` teszi őket
+   * megkülönböztethetővé ÚGY, hogy a retry továbbra is idempotens marad.
+   */
+  occurrence_id?: string;
+  /**
+   * P10 §5.4 — a lead megnyerésének időpontja. Ha a fizetés ennél LÉNYEGESEN
+   * később érkezik, a fizetés dátuma már kifuthat a Google offline-ablakából, és
+   * a konverzió elveszne. Ilyenkor a `won_at` a jobb időbélyeg — a MÁR ISMERT,
+   * helyes értékkel. Hiánya nem hiba: akkor a fizetés ideje marad.
+   */
+  won_at?: string;
+}
+
+/**
+ * P10 §5.4 — meddig fogadjuk el a fizetés saját dátumát konverzió-időpontnak.
+ *
+ * A Google offline feltöltésnek ablaka van a kattintástól számítva; egy hónapokkal
+ * későbbi fizetés már nem köthető a kattintáshoz. A `won_at`-hoz mérünk, mert a
+ * kattintás idejét a gateway nem ismeri — a megnyerés viszont mindig a kattintás
+ * UTÁN van, tehát ez KONZERVATÍV becslés: ha a `won_at`-tól számítva még belefér,
+ * a kattintástól számítva is belefért.
+ */
+export const OFFLINE_WINDOW_DAYS = 90;
+
+/**
+ * Melyik időpont legyen a konverzió ideje. A user döntése (2026-09-09):
+ * ablakon belül a fizetés ideje, azon túl a `won_at` — mert egy elveszett
+ * konverzió rosszabb, mint egy pontatlan időbélyeg.
+ */
+export function resolveConversionTimeIso(occurredAtIso: string, wonAtIso?: string): string {
+  if (!wonAtIso) return occurredAtIso;
+  const occurred = Date.parse(occurredAtIso);
+  const won = Date.parse(wonAtIso);
+  if (!Number.isFinite(occurred) || !Number.isFinite(won)) return occurredAtIso;
+  const days = (occurred - won) / 86_400_000;
+  return days > OFFLINE_WINDOW_DAYS ? wonAtIso : occurredAtIso;
 }
 
 export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null {
@@ -112,6 +157,21 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
   // ad_allowed: ha jelen van, csak boolean lehet (a CRM autoritatív consentje).
   if (p.ad_allowed !== undefined && typeof p.ad_allowed !== 'boolean') return null;
 
+  // occurrence_id: opaque, PII-mentes token — ugyanaz a szűk charset, mint a
+  // lead_id-nál, hogy ne lehessen e-mailt/telefont belecsempészni.
+  if (
+    p.occurrence_id !== undefined &&
+    (typeof p.occurrence_id !== 'string' ||
+      p.occurrence_id.length < 1 ||
+      p.occurrence_id.length > 64 ||
+      !/^[a-zA-Z0-9_-]+$/.test(p.occurrence_id))
+  ) {
+    return null;
+  }
+  if (p.won_at !== undefined) {
+    if (typeof p.won_at !== 'string' || Number.isNaN(Date.parse(p.won_at))) return null;
+  }
+
   // user_data_hashed: objektum, de NEM tömb (a mező-tartalmi hash-validáció a
   // handlerben, mapPrehashedUserData-val — az fail-loud hibás mezőnévvel).
   if (
@@ -141,6 +201,8 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
     user_data: p.user_data as PlainUserData | undefined,
     user_data_hashed: p.user_data_hashed as Record<string, unknown> | undefined,
     ad_allowed: p.ad_allowed as boolean | undefined,
+    occurrence_id: p.occurrence_id as string | undefined,
+    won_at: typeof p.won_at === 'string' ? new Date(p.won_at).toISOString() : undefined,
     gclid: clickId(p.gclid),
     gbraid: clickId(p.gbraid),
     wbraid: clickId(p.wbraid)
@@ -231,6 +293,91 @@ export async function handleLeadStatus(
     );
   }
 
+  // ── P10 · a helyesbítő státuszok MÉG NEM kézbesíthetők ───────────────────
+  // A Data Manager `events.ingest` hivatalos referenciája (lekérdezve 2026-09-09)
+  // az Event-objektumon EGYETLEN adjustment/retract/restate mezőt sem dokumentál.
+  // A kézenfekvő rossz megoldás az lenne, hogy a helyesbítés a normál upload-úton
+  // megy: az egy POZITÍV konverziót töltene fel egy VISSZAVONÁSRA, vagyis a hibát
+  // a kétszeresére növelné. Ezért hangos, nevesített elutasítás — a CRM outbox
+  // ebből tudja, hogy őrizze meg a sort, és NE könyvelje kézbesítettnek.
+  if (ADJUSTMENT_LEAD_STATUSES.has(body.status)) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.LEAD_STATUS_ADJUSTMENT_UNSUPPORTED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.LEAD_STATUS_ADJUSTMENT_UNSUPPORTED],
+      hostname,
+      site_id: siteConfig.site_id,
+      lead_status: body.status,
+      duration_ms: Date.now() - startedAt
+    });
+    // 501: a kérés ÉRVÉNYES, csak a képesség hiányzik nálunk. 400 azt üzenné,
+    // hogy a CRM küldött rosszat, és a hibát a rossz helyen keresnék.
+    return json(
+      {
+        error: 'adjustment_not_supported',
+        error_code: TrackingErrorCode.LEAD_STATUS_ADJUSTMENT_UNSUPPORTED,
+        retryable: false
+      },
+      501
+    );
+  }
+
+  // ── P10 · ismételhető státusz → `occurrence_id` KÖTELEZŐ ──────────────────
+  // Enélkül két részfizetés ugyanazt az `orderId`-t kapná (az a (lead_id, status)
+  // hash-e), és a Google a másodikat ugyanannak a konverziónak látná: a pénz
+  // némán elveszne. A hangos 400 az egyetlen helyes válasz — a csendes összevonás
+  // pont az a hibaosztály, ami ellen az egész ledger épült.
+  if (REPEATABLE_LEAD_STATUSES.has(body.status) && !body.occurrence_id) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.LEAD_STATUS_OCCURRENCE_ID_REQUIRED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.LEAD_STATUS_OCCURRENCE_ID_REQUIRED],
+      hostname,
+      site_id: siteConfig.site_id,
+      lead_status: body.status,
+      duration_ms: Date.now() - startedAt
+    });
+    return json(
+      {
+        error: 'occurrence_id_required',
+        error_code: TrackingErrorCode.LEAD_STATUS_OCCURRENCE_ID_REQUIRED,
+        repeatable_statuses: [...REPEATABLE_LEAD_STATUSES]
+      },
+      400
+    );
+  }
+
+  // ── P10 · dupla-számolás elleni config-őr ─────────────────────────────────
+  // A `revenue_confirmed` a MEGNYERT ajánlat értéke, a `payment_received` a
+  // TÉNYLEGESEN befolyt pénz. A user döntése szerint a kettő két KÜLÖN
+  // konverzió-akció. Ha egy site configja ugyanarra az akcióra képezi őket,
+  // ugyanaz a bevétel kétszer számít — és ezt semmi más nem jelezné: a riport
+  // csak azt mutatná, hogy jól teljesítünk.
+  {
+    const actions = siteConfig.gads?.conversion_actions;
+    const revenueAction = actions?.revenue_confirmed;
+    const paymentAction = actions?.payment_received;
+    if (revenueAction && paymentAction && revenueAction === paymentAction) {
+      logStructured({
+        level: 'error',
+        error_code: TrackingErrorCode.LEAD_STATUS_DOUBLE_COUNT_CONFIG,
+        message: ERROR_DESCRIPTIONS[TrackingErrorCode.LEAD_STATUS_DOUBLE_COUNT_CONFIG],
+        hostname,
+        site_id: siteConfig.site_id,
+        lead_status: body.status,
+        duration_ms: Date.now() - startedAt
+      });
+      return json(
+        {
+          error: 'double_count_config',
+          error_code: TrackingErrorCode.LEAD_STATUS_DOUBLE_COUNT_CONFIG,
+          retryable: false
+        },
+        500
+      );
+    }
+  }
+
   // ── F3-D · Prehashed PII contract ────────────────────────────────────────
   // A CRM lifecycle-outbox a Google-normalizált hash-eket küldi (`user_data_hashed`),
   // hogy a gateway NE hash-eljen újra. Fail-loud: hibás hash / kettős identity-forrás
@@ -271,7 +418,12 @@ export async function handleLeadStatus(
   }
 
   const occurredAtIso = body.occurred_at ?? new Date().toISOString();
-  const eventTimeSec = Math.floor(Date.parse(occurredAtIso) / 1000);
+  // P10 §5.4: ablakon belül a fizetés ideje, azon túl a `won_at` — egy elveszett
+  // konverzió rosszabb, mint egy pontatlan időbélyeg. A ledger továbbra is a
+  // VALÓDI `occurred_at`-et őrzi (lásd lentebb): a helyesbítés a platformnak
+  // szól, nem a saját könyvelésünknek.
+  const conversionTimeIso = resolveConversionTimeIso(occurredAtIso, body.won_at);
+  const eventTimeSec = Math.floor(Date.parse(conversionTimeIso) / 1000);
 
   // GDPR-kapu, precedencia szerint (2026-07-17 consent-audit):
   //  1. A Worker SAJÁT consent-receiptje, ha EXPLICIT capture-kori jelet hordoz
@@ -326,7 +478,15 @@ export async function handleLeadStatus(
   // ez megy a Google Ads offline uploadnak event_id-ként (transactionId).
   // A naiv `${lead_id}_${status}`.slice(0,64) hosszú lead_id-knál csonkolt és
   // ütközhetett (két különböző lead → egy orderId → a platform összevonja őket).
-  const orderId = (await sha256Hex(`${body.lead_id}_${body.status}`)).slice(0, 32);
+  // Ismételhető státusznál az `occurrence_id` is bekerül a hash-be: két
+  // részfizetés így KÜLÖN konverzió, a retry viszont továbbra is ugyanazt az
+  // orderId-t adja, tehát idempotens marad. Az egyszeri státuszok képlete
+  // VÁLTOZATLAN — különben minden korábban feltöltött konverzió orderId-je
+  // elmozdulna, és a Google újaknak látná őket.
+  const orderIdSeed = REPEATABLE_LEAD_STATUSES.has(body.status)
+    ? `${body.lead_id}_${body.status}_${body.occurrence_id}`
+    : `${body.lead_id}_${body.status}`;
+  const orderId = (await sha256Hex(orderIdSeed)).slice(0, 32);
 
   let uploadedToGads = false;
   let gadsErrorCode: string | undefined;
