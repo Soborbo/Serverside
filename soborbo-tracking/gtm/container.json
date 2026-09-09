@@ -50,6 +50,27 @@
             "type": "TEMPLATE",
             "key": "tagId",
             "value": "{{Const - GA4 Measurement ID}}"
+          },
+          {
+            "type": "LIST",
+            "key": "configSettingsTable",
+            "list": [
+              {
+                "type": "MAP",
+                "map": [
+                  {
+                    "type": "TEMPLATE",
+                    "key": "parameter",
+                    "value": "user_data"
+                  },
+                  {
+                    "type": "TEMPLATE",
+                    "key": "parameterValue",
+                    "value": "{{CJS - User Provided Data}}"
+                  }
+                ]
+              }
+            ]
           }
         ],
         "fingerprint": "0",
@@ -1252,16 +1273,6 @@
             "type": "BOOLEAN",
             "key": "rdp",
             "value": false
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableUserProvidedData",
-            "value": true
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "userProvidedData",
-            "value": "{{CJS - User Provided Data}}"
           }
         ],
         "fingerprint": "0",

@@ -469,9 +469,9 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.GTM_CONVERSION_LABEL_MISMATCH]:
     'The live Google Ads conversion label differs from the expected one — conversions land on the wrong action',
   [TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING]:
-    'Enhanced Conversions is not enabled on a Google Ads conversion tag (INV-009)',
+    'No Enhanced-Conversions user data anywhere in the container — the Google tag carries no user_data row (INV-009)',
   [TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING]:
-    'The Enhanced-Conversions user-data variable is missing or not wired to the conversion tag',
+    'Enhanced-Conversions user data is wired, but it points at a variable the container does not have',
   [TrackingErrorCode.GTM_CONSENT_SETTINGS_MISSING]:
     'A consent-bound tag carries no consent settings — it may fire before or without consent',
   [TrackingErrorCode.GTM_DUPLICATE_CONVERSION_TAG]:

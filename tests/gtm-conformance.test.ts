@@ -61,6 +61,45 @@ function adsTag(over: Partial<GtmTag> = {}, params: Record<string, unknown> = {}
   };
 }
 
+/**
+ * Google tag (`googtag`) a MAI Enhanced-Conversions alakkal: a `user_data` sor
+ * a Configuration/Event settings táblában ül, NEM a konverziós tagen.
+ */
+function googleTag(tableKey: 'configSettingsTable' | 'eventSettingsTable', userDataValue: string): GtmTag {
+  return {
+    tagId: '20',
+    name: 'Google Tag',
+    type: 'googtag',
+    firingTriggerId: ['2147479553'],
+    consentSettings: { consentStatus: 'NEEDED' },
+    parameter: [
+      { type: 'TEMPLATE', key: 'tagId', value: 'G-XXXXXXXXXX' },
+      {
+        type: 'LIST',
+        key: tableKey,
+        list: [
+          {
+            type: 'MAP',
+            map: [
+              { type: 'TEMPLATE', key: 'parameter', value: 'user_data' },
+              { type: 'TEMPLATE', key: 'parameterValue', value: userDataValue }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+}
+
+/** Konverziós tag a legacy (GTM által ma már eldobott) EC-mezők NÉLKÜL. */
+function adsTagWithoutLegacyEc(): GtmTag {
+  const tag = adsTag();
+  tag.parameter = tag.parameter!.filter(
+    (p) => p.key !== 'enableUserProvidedData' && p.key !== 'userProvidedData'
+  );
+  return tag;
+}
+
 function baseContainer(over: Partial<LiveContainer> = {}): LiveContainer {
   return {
     publicId: 'GTM-ABCDEFG',
@@ -223,6 +262,49 @@ describe('ENHANCED CONVERSIONS (INV-009)', () => {
     tag.parameter = tag.parameter!.filter((p) => p.key !== 'enableUserProvidedData');
     const f = run(baseContainer({ tag: [tag] }), { ...EXPECTED, requireEnhancedConversions: false });
     expect(f.map((x) => x.code)).not.toContain(TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING);
+  });
+
+  // ── A MAI alak ────────────────────────────────────────────────────────
+  //
+  // MIÉRT VAN ITT EZ A NÉGY TESZT. 2026-09-09-ig ez az őr KIZÁRÓLAG az `awct`
+  // tag `enableUserProvidedData` mezőjét nézte — egy mezőt, amit a GTM az
+  // importnál NÉMÁN eldob (mérve: kilenc írásmód, mind eldobva, mindegyikre
+  // HTTP 200). Vagyis a repóból GENERÁLT exporton zöld volt, egy VALÓDI élő
+  // konténer exportján viszont mindig piros, olyan javaslattal, amit a GTM
+  // felületén nem lehet végrehajtani. Ezek a tesztek azt rögzítik, hogy a ma
+  // ténylegesen működő alakot — `user_data` a Google tag settings-tábláiban —
+  // az őr ELFOGADJA.
+
+  it('a MAI alak (googtag → configSettingsTable → user_data) elfogadott', () => {
+    const live = baseContainer({
+      tag: [adsTagWithoutLegacyEc(), googleTag('configSettingsTable', '{{CJS - User Provided Data}}')]
+    });
+    expect(codes(live)).not.toContain(TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING);
+    expect(codes(live)).not.toContain(TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING);
+  });
+
+  it('az `eventSettingsTable`-ös alak is elfogadott', () => {
+    const live = baseContainer({
+      tag: [adsTagWithoutLegacyEc(), googleTag('eventSettingsTable', '{{CJS - User Provided Data}}')]
+    });
+    expect(codes(live)).not.toContain(TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING);
+  });
+
+  it('googtag user_data NEM LÉTEZŐ változóra → TRK-850-008', () => {
+    const live = baseContainer({
+      tag: [adsTagWithoutLegacyEc(), googleTag('configSettingsTable', '{{CJS - Nincs ilyen}}')]
+    });
+    expect(codes(live)).toContain(TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING);
+  });
+
+  it('EGYIK út sincs bekötve → TRK-850-007, és a javaslat a Google tagre mutat, NEM az awct-re', () => {
+    const live = baseContainer({ tag: [adsTagWithoutLegacyEc()] });
+    const finding = run(live).find((f) => f.code === TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING);
+    expect(finding).toBeDefined();
+    // A régi javaslat („kapcsold be az enableUserProvidedData-t") VÉGREHAJTHATATLAN
+    // volt: a GTM felületén nincs ilyen kapcsoló, az API pedig eldobja a mezőt.
+    expect(finding!.remediation).toContain('googtag');
+    expect(finding!.remediation).not.toMatch(/Kapcsold be az enableUserProvidedData/);
   });
 });
 
