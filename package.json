@@ -22,6 +22,7 @@
     "check:dist-manifest": "node scripts/gen-dist-manifest.mjs --check",
     "check:vendored": "node scripts/check-vendored-copy.mjs",
     "check:backend-contract": "node scripts/check-backend-contract.mjs soborbo-tracking/server/backend/gateway-dispatch.ts --cmp=sbo --site=kanonikus",
+    "check:fleet-contract": "node scripts/check-fleet-contract.mjs",
     "gen:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs",
     "check:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs --check && node --experimental-transform-types --no-warnings scripts/check-error-code-emission.mjs",
     "check:engine-events": "node server/check-event-contract.mjs",

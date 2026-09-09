@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "A flotta szerver-labai — a `check-backend-contract.mjs --fleet` bemenete.",
+    "",
+    "MIERT ITT, ES MIERT NEM A SZKRIPTBEN: a lista ADAT, nem logika. Egy uj site",
+    "felvetele igy nem a szabalyokat kockaztatja, es a diff olvashato marad.",
+    "",
+    "`path` a szerver-lab gateway-dispatch.ts-e az adott repo default againak",
+    "gyokerehez kepest. A `sbo` mezot SZANDEKOSAN NEM iratjuk ide: azt a repo",
+    "git-fajabol MERJUK (van-e `consent-sbo-state.ts`), mert egy kezzel karbantartott",
+    "igen/nem oszlop pontosan ugy sodrodna el, mint a verzio-cimke."
+  ],
+  "sites": [
+    { "site": "painless", "repo": "Soborbo/painlessremovals", "path": "src/lib/soborbo-tracking/server/backend/gateway-dispatch.ts" },
+    { "site": "olcso", "repo": "Soborbo/olcsokontenerhaz", "path": "src/lib/tracking/gateway-dispatch.ts" },
+    { "site": "beautyflow", "repo": "Soborbo/Beautyflow_website", "path": "src/lib/tracking/gateway-dispatch.ts" },
+    { "site": "trapez", "repo": "Soborbo/trapezlemezes-webshop", "path": "src/lib/tracking/gateway-dispatch.ts" },
+    { "site": "lomtalan", "repo": "Soborbo/lomtalan.hu", "path": "src/lib/tracking/gateway-dispatch.ts" },
+    { "site": "agykontroll", "repo": "Soborbo/agykontrollanglia", "path": "src/lib/gateway-dispatch.ts" }
+  ]
+}
