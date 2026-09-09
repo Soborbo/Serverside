@@ -52,4 +52,13 @@ export const OFFLINE_EVENTS: ReadonlySet<string> = new Set([
   'job_completed',
   'revenue_confirmed',
   'lead_disqualified',
+  // P10 (2026-09-09): a TÉNYLEGESEN befolyt pénz, és a két helyesbítő státusz.
+  // A `payment_received` egy leadhez TÖBBSZÖR is érkezhet (előleg + részletek) —
+  // a hívónak `occurrence_id`-t kell küldenie, különben a gateway 400-at ad.
+  // A két `revenue_*` státuszt a gateway MA nevesített 501-gyel utasítja el (a
+  // Data Manager adjustment wire-formátuma nincs igazolva), de a szótárban BENNE
+  // vannak, hogy a CRM ne „ismeretlen státusz" 400-at kapjon.
+  'payment_received',
+  'revenue_retracted',
+  'revenue_restated',
 ]);

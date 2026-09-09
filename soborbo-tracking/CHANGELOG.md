@@ -10,6 +10,19 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.7.1 (2026-09-09)
+
+### Javítva — az `OFFLINE_EVENTS` szinkronban a kanonikus `events.json`-nel
+
+A P10 három új offline eventet vezetett be (`payment_received`,
+`revenue_retracted`, `revenue_restated`). A kit `lib/event-contract.ts`
+`OFFLINE_EVENTS` konstansa ezeket nem ismerte, és a kit saját szerződés-tesztje
+(`tests/event-contract.test.ts`) ezt CI-ban azonnal ki is mutatta — pontosan úgy,
+ahogy kell.
+
+(Ez a bejegyzés a rebase során 6.6.9-ről 6.7.1-re számozódott át: a 6.7.0 —
+a CMP-kör — előbb ért a mainre.)
+
 ## 6.7.0 (2026-09-09)
 
 ### Hozzáadva — a közzéteendő süti-tábla mint KÓD, kétirányú őrrel
