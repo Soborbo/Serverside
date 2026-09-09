@@ -74,10 +74,13 @@ const { values: args } = parseArgs({
     events: { type: 'string', default: './docs/CANONICAL-EVENTS.md' },
     gtm: { type: 'string', default: './gtm/container.json' },
     'gtm-exempt': { type: 'string', default: './gtm/no-trigger-events.json' },
+    'site-src': { type: 'string' },
+    'no-site-src': { type: 'boolean', default: false },
   },
 });
 
 const CANONICAL_EVENTS_PATH = fileURLToPath(new URL('../../src/events.json', import.meta.url));
+const EXCLUSIVE_EMITTERS_PATH = fileURLToPath(new URL('./exclusive-emitters.json', import.meta.url));
 
 const SRC_EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.astro'];
 // Actual dataLayer pushes only: `push({ event: 'X' ... })` / `dataLayer.push({ … })`.
@@ -105,6 +108,89 @@ async function walk(dir, exts) {
     else if (exts.includes(extname(name))) out.push(path);
   }
   return out;
+}
+
+/**
+ * 6. KOLCSONOSEN KIZARO EMITTEREK — a SITE forrasan.
+ *
+ * A kanonikus mag tobb fuggvenye pusholhatja UGYANAZT az event-nevet: az egyik
+ * merfoldko (nincs `event_id`), a masik konverzio-erteku. Site-onkent PONTOSAN
+ * EGYET szabad hivni. Eddig ezt csak egy KOMMENT mondta a magban — a Beautyflow
+ * pedig mindkettot hivta, harom folyamatban, feltetel nelkul. Egy naiv cutover
+ * ott ketszer tuzelte volna a triggert, az elsot `event_id` nelkul: dedupalhatatlan
+ * Meta Lead + `orderId` nelkuli Ads-konverzio.
+ *
+ * MIERT A SITE FORRASAT NEZI, ES NEM A `--src`-t. A site a checkert a VENDOROLT
+ * kit konyvtarabol futtatja (`npm --prefix tracking-kit run check:events`), tehat a
+ * `--src` a KIT libjere mutat — ott a ket fuggveny csak DEFINIALVA van. A hivas a
+ * site sajat `src/`-eben tortenik, egy szinttel feljebb. Ezert az alapertelmezes
+ * `../src`, es ezert nem kell hozza semmilyen site-oldali opt-in: egy olyan or,
+ * amit minden repoban kulon be kell kapcsolni, a gyakorlatban sehol sem fut.
+ *
+ * A vendorolt kit-masolatokat (`tracking-kit/`, `soborbo-tracking/`) es a definialo
+ * fajlokat kihagyjuk: a mag SAJAT belso hivasa (pl. `trackLeadSubmit` ->
+ * `pushLeadConversion`) nem site-dontes.
+ */
+const VENDORED_KIT_DIRS = new Set(['tracking-kit', 'soborbo-tracking', 'dist', 'build']);
+
+async function walkSite(dir) {
+  /** @type {string[]} */
+  const out = [];
+  if (!existsSync(dir)) return out;
+  for (const name of await readdir(dir)) {
+    if (name === 'node_modules' || name.startsWith('.') || VENDORED_KIT_DIRS.has(name)) continue;
+    const path = join(dir, name);
+    const st = await stat(path);
+    if (st.isDirectory()) out.push(...(await walkSite(path)));
+    else if (SRC_EXTENSIONS.includes(extname(name))) out.push(path);
+  }
+  return out;
+}
+
+/**
+ * @param {string[]} siteDirs
+ * @param {Record<string, { reason: string, groups: Record<string, string[]> }>} decls
+ * @returns {Promise<string[]>} hibauzenetek
+ */
+async function exclusiveEmitterErrors(siteDirs, decls) {
+  /** @type {string[]} */
+  const errors = [];
+  /** @type {{ path: string, text: string }[]} */
+  const files = [];
+  for (const dir of siteDirs) {
+    for (const f of await walkSite(dir)) files.push({ path: f, text: await readFile(f, 'utf8') });
+  }
+  if (files.length === 0) return errors;
+
+  for (const [event, decl] of Object.entries(decls)) {
+    if (event.startsWith('_')) continue;
+    /** @type {Map<string, string[]>} csoport -> hivasi helyek */
+    const hits = new Map();
+    for (const [group, fns] of Object.entries(decl.groups ?? {})) {
+      for (const fn of fns) {
+        // Hivas, nem definicio/import: `fn(` — es kihagyjuk azt a fajlt, ami maga
+        // deklaralja (a mag egy masolata a site-on belul).
+        const callRe = new RegExp(`\\b${fn}\\s*\\(`);
+        const defRe = new RegExp(`function\\s+${fn}\\b`);
+        for (const f of files) {
+          if (defRe.test(f.text) || !callRe.test(f.text)) continue;
+          const line = f.text.slice(0, f.text.search(callRe)).split('\n').length;
+          if (!hits.has(group)) hits.set(group, []);
+          /** @type {string[]} */ (hits.get(group)).push(`${f.path}:${line} (${fn})`);
+        }
+      }
+    }
+    if (hits.size > 1) {
+      const detail = [...hits.entries()]
+        .map(([group, sites]) => `${group}: ${sites.join(', ')}`)
+        .join(' | ');
+      errors.push(
+        `[emitter-clash] '${event}' — a site KET emitter-csoportot is hiv, pedig egyet szabadna. ` +
+        `${detail}. ${decl.reason}`
+      );
+    }
+  }
+  return errors;
 }
 
 async function eventsInCode(srcDirs) {
@@ -271,6 +357,29 @@ async function main() {
   const errors = [...exemptErrors];
   const warnings = [];
 
+  // 6. Kolcsonosen kizaro emitterek a SITE forrasan (lasd a helper doc-kommentjet).
+  //    Alapertelmezes `../src`: a site a checkert a vendorolt kit konyvtarabol
+  //    futtatja, tehat a sajat forrasa egy szinttel feljebb van. Ha ott nincs
+  //    ilyen konyvtar (pl. a kanonikus repo CI-jaban), a szabaly egyszeruen nem
+  //    talal fajlt — de a scannelt utat AKKOR IS kiirjuk, hogy a "nem futott"
+  //    allapot ne legyen osszekeverheto a "lefutott es tiszta"-val.
+  /** @type {string[]} */
+  let siteDirs = [];
+  if (!args['no-site-src']) {
+    siteDirs = (args['site-src'] ?? '../src').split(',').map((d) => d.trim()).filter(Boolean);
+  }
+  let exclusiveScanned = 0;
+  if (siteDirs.length > 0) {
+    try {
+      const decls = JSON.parse(await readFile(EXCLUSIVE_EMITTERS_PATH, 'utf8'));
+      for (const dir of siteDirs) if (existsSync(dir)) exclusiveScanned++;
+      errors.push(...(await exclusiveEmitterErrors(siteDirs, decls)));
+    } catch (e) {
+      // A hianyzo/romlott deklaracio NEM csendes felmentes: az or maga romlott el.
+      errors.push(`[emitter-clash] cannot read/parse server/exclusive-emitters.json: ${e.message}`);
+    }
+  }
+
   // The exemption list must not rot into a lie: every declared event has to be
   // one a code path actually emits.
   for (const event of exempt.keys()) {
@@ -339,6 +448,15 @@ async function main() {
   if (errors.length === 0) {
     const gtmPart = gtmExists ? `, ${gtmEvents.size} GTM triggers` : '';
     console.log(`✓ Event contract OK — ${codeEvents.size} browser events in code, ${docEvents.size} doc names${gtmPart}`);
+    // A 6. szabaly hatokore LATHATO: egy or, amirol nem tudni, hogy egyaltalan
+    // nezett-e valamit, pontosan olyan hasznos, mint amelyik nem fut.
+    if (siteDirs.length === 0) {
+      console.log('  · emitter-clash (6.): KIKAPCSOLVA (--no-site-src)');
+    } else if (exclusiveScanned === 0) {
+      console.log(`  · emitter-clash (6.): nincs site-forras a(z) ${siteDirs.join(', ')} uton — nem futott`);
+    } else {
+      console.log(`  · emitter-clash (6.): ${siteDirs.join(', ')} atnezve, nincs utkozes`);
+    }
     // Print exemptions on success too — a waiver nobody ever sees is a waiver
     // nobody ever revisits.
     for (const [event, reason] of exempt) {

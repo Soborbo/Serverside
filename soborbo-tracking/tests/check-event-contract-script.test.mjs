@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 
 /**
  * Harness for server/check-event-contract.mjs — the BROWSER contract guard
@@ -29,7 +29,7 @@ let root;
 
 /**
  * Writes one fixture repo and runs the checker against it.
- * @param {{ src?: Record<string,string>, docs?: string, gtm?: unknown, exempt?: string }} files
+ * @param {{ src?: Record<string,string>, docs?: string, gtm?: unknown, exempt?: string, siteSrc?: Record<string,string> }} files
  */
 function run(files) {
   const dir = mkdtempSync(join(root, 'fx-'));
@@ -40,6 +40,19 @@ function run(files) {
   writeFileSync(join(dir, 'events.md'), files.docs ?? '', 'utf8');
 
   const args = [SCRIPT, '--src', './lib', '--events', './events.md'];
+  // 6. szabaly: alapbol KI, hogy a meglevo fixture-ok ne szurjanak be veletlen
+  // site-forrast; a sajat tesztjei explicit `siteSrc`-vel kapcsoljak be.
+  if (files.siteSrc) {
+    mkdirSync(join(dir, 'site'), { recursive: true });
+    for (const [name, body] of Object.entries(files.siteSrc)) {
+      const target = join(dir, 'site', name);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, body, 'utf8');
+    }
+    args.push('--site-src', './site');
+  } else {
+    args.push('--no-site-src');
+  }
   if (files.gtm !== undefined) {
     writeFileSync(join(dir, 'gtm.json'), JSON.stringify(files.gtm), 'utf8');
     args.push('--gtm', './gtm.json');
@@ -316,5 +329,95 @@ describe('deliberately GTM-free events', () => {
       gtm: container(['ok_event']),
     });
     expect(code).toBe(0);
+  });
+});
+
+describe('6. szabály — kölcsönösen kizáró emitterek a SITE forrásán', () => {
+  // A HIBAOSZTÁLY, amit ez őriz. A kanonikus magban KÉT függvény pusholja a
+  // `quote_calculator_submitted`-et: a `trackCalculatorComplete` mérföldkőként
+  // (event_id NÉLKÜL), a `trackLeadSubmit`/`trackServerEvent` konverzió-értékűen.
+  // Site-onként pontosan EGYET szabad hívni — de ezt eddig csak egy KOMMENT
+  // mondta a magban. A Beautyflow mind a kettőt hívta, három folyamatban; a
+  // GTM-trigger kétszer tüzelt volna, az első `event_id` nélkül → dedupálhatatlan
+  // Meta Lead + `orderId` nélküli Ads-konverzió. Kézzel találtuk meg, kétszer.
+  //
+  // ÉLŐ IGAZOLÁS: ez a szabály a Beautyflow `84ee617^` (a cutover ELŐTTI) fájljain
+  // futtatva mind a 3 mérföldkő- és mind a 6 konverzió-hívást megnevezi; a mai
+  // masteren tiszta.
+
+  const LIB = { 'e.ts': "dataLayer.push({ event: 'quote_calculator_submitted' });\n" };
+  const DOCS = docFor('quote_calculator_submitted');
+
+  it('MINDKÉT csoportot hívó site → hiba, és megnevezi a hívási helyeket', () => {
+    const { code, out } = run({
+      src: LIB, docs: DOCS,
+      siteSrc: {
+        'Quiz.astro': 'trackCalculatorComplete("kviz");\n',
+        'Form.astro': 'trackLeadSubmit({ email });\n',
+      },
+    });
+    expect(code).not.toBe(0);
+    expect(out).toContain('[emitter-clash]');
+    expect(out).toContain('Quiz.astro');
+    expect(out).toContain('Form.astro');
+  });
+
+  it('CSAK a konverzió-értékű emittert hívó site → tiszta', () => {
+    const { code, out } = run({
+      src: LIB, docs: DOCS,
+      siteSrc: { 'Form.astro': 'trackLeadSubmit({ email });\n' },
+    });
+    expect(out).not.toContain('[emitter-clash]');
+    expect(code).toBe(0);
+  });
+
+  it('CSAK a mérföldkövet hívó site → tiszta (a választás a site-é)', () => {
+    const { code, out } = run({
+      src: LIB, docs: DOCS,
+      siteSrc: { 'Quiz.astro': 'trackCalculatorComplete("kviz");\n' },
+    });
+    expect(out).not.toContain('[emitter-clash]');
+    expect(code).toBe(0);
+  });
+
+  it('a VENDOROLT kit-másolat nem számít site-hívásnak', () => {
+    // A site `src/`-ében ott lehet a kit egy másolata (`tracking-kit/`,
+    // `soborbo-tracking/`), amiben MINDKÉT függvény szerepel — definícióként és
+    // a mag saját belső hívásaként. Ha ezt site-döntésnek vennénk, minden
+    // vendorolt site örökre pirosan állna: hamis riasztás, ami az őrt öli meg.
+    const { code, out } = run({
+      src: LIB, docs: DOCS,
+      siteSrc: {
+        // A masolat MAS csoportbol hiv, mint a site — ha a vendorolt konyvtarat
+        // nem zarnank ki, PONT ez lenne a hamis utkozes. (A fajl nem definialja a
+        // fuggvenyt, tehat a definicio-kihagyas sem menti meg: ezt a tesztet
+        // KIZAROLAG a konyvtar-kizaras tartja zolden — mutacioval merve.)
+        'soborbo-tracking/index.ts': 'trackCalculatorComplete("kviz");\n',
+        'Form.astro': 'trackLeadSubmit({ email });\n',
+      },
+    });
+    expect(out).not.toContain('[emitter-clash]');
+    expect(code).toBe(0);
+  });
+
+  it('a DEFINIÁLÓ fájl hívása sem számít (a fork a site `src/`-ében él)', () => {
+    const { code, out } = run({
+      src: LIB, docs: DOCS,
+      siteSrc: {
+        'lib/tracking/events.ts':
+          'export function trackCalculatorComplete(n){ push({}); }\nexport function pushLeadConversion(d){}\n',
+        'Form.astro': 'trackLeadSubmit({ email });\n',
+      },
+    });
+    expect(out).not.toContain('[emitter-clash]');
+    expect(code).toBe(0);
+  });
+
+  it('a szabály HATÓKÖRE látszik a sikeres kimeneten is', () => {
+    // Egy őr, amiről nem derül ki, hogy nézett-e egyáltalán valamit, pontosan
+    // annyit ér, mint amelyik nem fut.
+    const { out } = run({ src: LIB, docs: DOCS, siteSrc: { 'Form.astro': 'trackLeadSubmit({});\n' } });
+    expect(out).toContain('emitter-clash (6.)');
+    expect(out).toContain('atnezve');
   });
 });
