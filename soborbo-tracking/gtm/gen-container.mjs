@@ -154,8 +154,26 @@ tag('Conversion Linker', 'gclidw', [
 
 // Google tag (googtag) — first-party GA4 measurement (Google Tag Gateway).
 // Replaces the legacy GA4 Configuration tag (gaawc) per §5.6.
+//
+// The `user_data` row in `configSettingsTable` is what powers Google Ads
+// Enhanced Conversions. MEASURED 2026-09-09 against the live GTM API: the
+// `awct` (Google Ads Conversion Tracking) template accepts NONE of the EC
+// user-data keys any more — nine candidates were sent in a throwaway probe
+// workspace and the API silently dropped all nine while returning 200. The
+// user-provided data now belongs on the Google tag; the Ads destination is
+// linked to it, and the separate `awct` conversion tag inherits it.
+//
+// PREREQUISITE on import, and it is invisible from here: the AW- conversion ID
+// must be a linked destination of this Google tag (tagmanager.google.com →
+// Google tags → <tag> → destinations). Without that link the user data reaches
+// GA4 but never Google Ads. `scripts/check-live-gtm.mjs` cannot see the link
+// either — verify it in GTM Preview: after a form submit the Google tag's
+// request must carry hashed user data.
 tag('Google Tag', 'googtag', [
   tmpl('tagId', GA4_ID),
+  { type: 'LIST', key: 'configSettingsTable', list: [
+    { type: 'MAP', map: [tmpl('parameter', 'user_data'), tmpl('parameterValue', V_UPD)] },
+  ] },
 ], [ALL_PAGES], { consentSettings: consent('analytics_storage') });
 
 // ── GA4 event tag factory ────────────────────────────────────────────
@@ -240,7 +258,12 @@ tag('Meta Pixel - Contact', 'html', [
   bool('supportDocumentWrite', false),
 ], [T_CONTACT, T_PHONE, T_EMAIL, T_WHATSAPP], { consentSettings: consent('ad_storage', 'ad_user_data') });
 
-// ── Google Ads Conversion (with Enhanced Conversions side-channel) ───
+// ── Google Ads Conversion ────────────────────────────────────────────
+// DO NOT re-add `enableUserProvidedData` / `userProvidedData` here. Until
+// 2026-09-09 this generator emitted both, and they looked right in the JSON —
+// but GTM discards them on import (measured: nine spellings, all dropped, HTTP
+// 200 each time). The export therefore claimed an Enhanced Conversions setup
+// that no container ever had. The user data lives on the Google tag above.
 tag('Google Ads - Conversion', 'awct', [
   tmpl('conversionId', ADS_ID),
   tmpl('conversionLabel', ADS_LABEL),
@@ -249,8 +272,6 @@ tag('Google Ads - Conversion', 'awct', [
   tmpl('currencyCode', V_CURRENCY),
   bool('enableConversionLinker', true),
   bool('rdp', false),
-  bool('enableUserProvidedData', true),
-  tmpl('userProvidedData', V_UPD),
 ], [T_QUOTE, T_CALLBACK, T_PHONE], {
   consentSettings: consent('ad_storage', 'ad_user_data'),
 });

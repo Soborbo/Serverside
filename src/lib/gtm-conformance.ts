@@ -146,6 +146,36 @@ function paramBool(obj: { parameter?: GtmParameter[] } | undefined, key: string)
   return p.value === 'true' || (p.value as unknown) === true;
 }
 
+/**
+ * Egy GTM „settings table" (pl. a Google tag `configSettingsTable` /
+ * `eventSettingsTable`) egyik sorának értéke.
+ *
+ * Alak: `parameter: [{ key: '<tableKey>', list: [{ map: [ {key:'parameter',value:'user_data'},
+ * {key:'parameterValue',value:'{{...}}'} ] }] }]`. A GTM API kisbetűs, az
+ * export-fájl NAGYBETŰS `type` mezőt ad — a `type`-ot ezért nem nézzük, csak a
+ * `key`-t, ami mindkét alakban ugyanaz.
+ */
+function settingsTableValue(
+  tag: GtmTag | undefined,
+  tableKey: string,
+  parameterName: string
+): string | undefined {
+  const table = tag?.parameter?.find((p) => p.key === tableKey);
+  for (const row of (table?.list ?? []) as { map?: GtmParameter[] }[]) {
+    const entries = row?.map ?? [];
+    const name = entries.find((e) => e.key === 'parameter')?.value;
+    if (name === parameterName) return entries.find((e) => e.key === 'parameterValue')?.value;
+  }
+  return undefined;
+}
+
+/** `{{Valtozo neve}}` → `Valtozo neve`, ha a konténerben LÉTEZIK ilyen változó. */
+function boundVariableName(value: string | undefined, live: LiveContainer): string | undefined {
+  const varName = value?.match(/^\{\{(.+)\}\}$/)?.[1];
+  if (!varName) return undefined;
+  return live.variable?.some((v) => v.name === varName) ? varName : undefined;
+}
+
 /** A CUSTOM_EVENT trigger által figyelt event-név. */
 export function triggerEventName(t: GtmTrigger): string | undefined {
   const f = t.customEventFilter?.[0];
@@ -275,6 +305,70 @@ export function analyzeGtmConformance(input: AnalyzeInput): ConformanceFinding[]
     }
   }
 
+  // ── Enhanced Conversions (INV-009) ──────────────────────────────────
+  //
+  // MIÉRT NEM AZ `awct` TAGEN NÉZZÜK. 2026-09-09-én megmértem a GTM API-n
+  // (eldobható probe-workspace, painless konténer): az `awct` sablon az EC
+  // user-data kulcsok EGYIKÉT SEM fogadja el. Kilenc jelöltet küldtem —
+  // `enableUserProvidedData`, `userProvidedData`, `enableEnhancedConversionsCheckbox`,
+  // `enableEnhancedConversions`, `enhancedConversionsSettings`, `userDataVariable`,
+  // `userProvidedDataSource`, `userData`, `enableUserProvidedDataCheckbox` —, az API
+  // 200-at adott, és MIND a kilencet NÉMÁN eldobta.
+  //
+  // Ez az őr eddig pontosan az `enableUserProvidedData`-t kérte az `awct` tagen.
+  // Vagyis: a repóból GENERÁLT exporton ZÖLD volt (a JSON-ban ott a mező), egy
+  // VALÓDI, élő konténer exportján viszont mindig pirosat adott volna, olyan
+  // javaslattal (»kapcsold be az enableUserProvidedData-t«), amit a GTM felületén
+  // nem lehet végrehajtani. A műszer mért, csak nem azt, amit hitt.
+  //
+  // A ma működő út (Google saját doksija: „set up enhanced conversions for web
+  // using Google Tag Manager"): a user-provided data a GOOGLE TAGEN ül, a
+  // `configSettingsTable`/`eventSettingsTable` `user_data` sorában. A Google Ads
+  // destination ehhez a Google taghez linkelt, és a külön `awct` konverziós tag
+  // onnan örökli. A legacy `awct`-alakot továbbra is elfogadjuk: régi
+  // konténerekben ott maradhat egy még a sablonváltás előtt beállított érték.
+  if (expected.googleAdsConversionId && expected.requireEnhancedConversions) {
+    const googleTags = tags.filter((t) => t.type === 'googtag');
+
+    const candidates: { where: string; value: string | undefined }[] = [];
+    for (const gt of googleTags) {
+      candidates.push({
+        where: `googtag "${gt.name}" configSettingsTable`,
+        value: settingsTableValue(gt, 'configSettingsTable', 'user_data')
+      });
+      candidates.push({
+        where: `googtag "${gt.name}" eventSettingsTable`,
+        value: settingsTableValue(gt, 'eventSettingsTable', 'user_data')
+      });
+    }
+    for (const at of adsTags) {
+      if (paramBool(at, 'enableUserProvidedData') !== true) continue;
+      candidates.push({
+        where: `awct "${at.name}" userProvidedData (legacy)`,
+        value: paramValue(at, 'userProvidedData')
+      });
+    }
+
+    const present = candidates.filter((c) => c.value !== undefined);
+
+    if (present.length === 0) {
+      add(TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING, {
+        expected: 'googtag → configSettingsTable → user_data',
+        remediation:
+          'INV-009: minden Google Ads-es site EC-kompatibilis. A Google tagen (googtag) vedd fel a ' +
+          '`user_data` sort a Configuration settings táblába, és kösd rá a user-data változóra. ' +
+          'NE az awct konverziós tagen próbáld — a sablon ott némán eldobja a mezőt (mérve 2026-09-09).'
+      });
+    } else if (!present.some((c) => boundVariableName(c.value, live))) {
+      add(TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING, {
+        actual: present.map((c) => `${c.where}=${c.value ?? '(üres)'}`).join(' | '),
+        remediation:
+          'Az EC be van kötve, de a user-data érték nem egy LÉTEZŐ konténer-változóra mutat — ' +
+          'a match nem javul. Ellenőrizd a változó nevét.'
+      });
+    }
+  }
+
   for (const tag of adsTags) {
     const base = { objectId: tag.tagId, objectName: tag.name };
 
@@ -303,26 +397,6 @@ export function analyzeGtmConformance(input: AnalyzeInput): ConformanceFinding[]
         actual: label,
         remediation: 'A konverziók MÁS akcióra könyvelődnek. Javítsd a conversionLabel-t.'
       });
-    }
-
-    if (expected.requireEnhancedConversions) {
-      if (paramBool(tag, 'enableUserProvidedData') !== true) {
-        add(TrackingErrorCode.GTM_ENHANCED_CONVERSIONS_MISSING, {
-          ...base,
-          remediation: 'INV-009: minden Google Ads-es site EC-kompatibilis. Kapcsold be az enableUserProvidedData-t.'
-        });
-      } else {
-        const upd = paramValue(tag, 'userProvidedData');
-        const varName = upd?.match(/^\{\{(.+)\}\}$/)?.[1];
-        const exists = varName ? live.variable?.some((v) => v.name === varName) : false;
-        if (!upd || !exists) {
-          add(TrackingErrorCode.GTM_EC_USER_DATA_VARIABLE_MISSING, {
-            ...base,
-            actual: upd ?? '(nincs)',
-            remediation: 'Az EC be van kapcsolva, de a user-data változó hiányzik vagy nincs bekötve — a match nem javul.'
-          });
-        }
-      }
     }
 
     if (!tag.consentSettings || tag.consentSettings.consentStatus !== 'NEEDED') {
