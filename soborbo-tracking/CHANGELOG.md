@@ -10,6 +10,35 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.7.0 (2026-09-09)
+
+### Hozzáadva — a közzéteendő süti-tábla mint KÓD, kétirányú őrrel
+
+`consent-texts/cookie-inventory.json` + `components/CookiePolicy.astro`. A
+GDPR Art 13(1)(e) / PECR reg. 6 szerinti süti-tájékoztató eddig site-onként,
+kézzel készült volna — a 2026-08-25-i jogi átvilágítás szerint hat site
+banner-linkje a cookieyes.com termékoldalára vitt, egy site adatvédelmi oldala
+pedig 404 volt.
+
+A tábla mostantól EGY kanonikus forrásból renderel, és a
+`tests/cookie-inventory-parity.test.ts` KÉTIRÁNYBAN méri a `lib/persistence.ts`
+valódi purge-kódjához:
+
+- **kód → tábla:** amit a visszavonás töröl, azt le is kell írni;
+- **tábla → kód:** amit a tájékoztató töröltnek ígér, azt a kódnak törölnie kell.
+
+Egy bejegyzés lehet „nem töröljük" (`purged_on_withdrawal: false`), de akkor a
+`why_not_purged` kötelező — egy nem törölt süti lehet védhető, kimondatlan nem.
+
+### Hozzáadva — `components/CookieYesEqualButtons.astro`
+
+Az „Elutasítom" gomb egyenrangúsítása a CookieYes bannerén. A mért defekt:
+gomb-TERÜLET arány 0.45–0.54, három site-on 3.86:1 kontraszt (WCAG AA alatt).
+Ez a NAIH-TV2 hibaosztály. A CookieYes API csak SZÍNT tud állítani, területet
+nem — ezért site-oldali CSS-override, szándékosan `!important`-tal (a CookieYes
+a saját stílusait futásidőben, magasabb specificitással injektálja; a „szép"
+override itt némán hatástalan lenne).
+
 ## 6.6.8 (2026-09-08)
 
 ### Hozzáadva — megosztott `event_id` a fetch-alapú submit-folyamatoknak
