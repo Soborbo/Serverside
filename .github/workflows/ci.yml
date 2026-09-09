@@ -76,6 +76,20 @@ jobs:
       - name: Canonical event schema (events.json)
         run: npm run check:engine-events
 
+      # A SZERVER-LAB SZERZODESE. Ez a fajl onalloan masolodik a site-okra, es
+      # 2026-09-08-an KET siteon is nemán serult (olcso: `v1` parser a bongeszo
+      # `v2`-je mellett; Beautyflow: egyaltalan nem ismert sbo-utat). Egyik meglevo
+      # or sem fogta: a `check-package-version` csak a kanonikus harom helyet nezi,
+      # a `check-vendored-copy` pedig HASH-alapu, tehat egy vallalt forkon minden
+      # fajl "drifted" -- kapukent hasznalhatatlan.
+      #
+      # Itt a KANONIKUS fajl onellenorzese fut: a referencia-implementacio nem
+      # csuszhat el a sajat szerzodesetol. A site-masolatokra ugyanez a szkript
+      # `--site-root`-tal futtathato (lasd a fejlecet) -- a terjesztes a kovetkezo
+      # lepes, nem ezé a workflow-e.
+      - name: Szerver-lab szerzodes (kanonikus onellenorzes)
+        run: npm run check:backend-contract
+
       # P0.5 truth-freeze: a doksi a JELENLEGI modellt irja le, nem a celallapotot.
       # Kulon lepes, hogy a bukas oka (melyik cafolt utasitas / hianyzo horgony) lathato
       # legyen a CI-osszefoglaloban, ne egy vitest-stack alatt.
