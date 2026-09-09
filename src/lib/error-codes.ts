@@ -79,6 +79,24 @@ export enum TrackingErrorCode {
   // gateway-oldalon pedig semmi nyoma nem maradt, hogy egy konverzió elveszett.
   UNSUPPORTED_LEAD_STATUS_MAPPING = 'TRK-400-022',
 
+  // P10 — a TÖBBSZÖR előforduló lifecycle-státuszok (ma: `payment_received`)
+  // `occurrence_id` nélkül érkeztek. Az `orderId` a (lead_id, status) hash-e,
+  // tehát két részfizetés UGYANAZT kapná, és a másodikat a Google ugyanannak a
+  // konverziónak látná — a pénz NÉMÁN elveszne. Hangos 400, nem összevonás.
+  LEAD_STATUS_OCCURRENCE_ID_REQUIRED = 'TRK-400-023',
+
+  // P10 — konverzió-helyesbítés (retract/restate) érkezett, de a Data Manager
+  // adjustment wire-formátuma MÉG NINCS igazolva a hivatalos referenciából.
+  // A kérést elutasítjuk, MERT a normál upload-úton továbbengedve egy POZITÍV
+  // konverziót töltenénk fel egy visszavonásra — a hibát a kétszeresére növelve.
+  LEAD_STATUS_ADJUSTMENT_UNSUPPORTED = 'TRK-400-024',
+
+  // P10 — a site configja UGYANARRA a Google Ads conversion actionre képezi a
+  // `revenue_confirmed`-et ÉS a `payment_received`-et. Az egyik a megnyert
+  // ajánlat értéke, a másik a ténylegesen befolyt pénz: egy akción összeadva
+  // ugyanaz a bevétel kétszer számítana.
+  LEAD_STATUS_DOUBLE_COUNT_CONFIG = 'TRK-400-025',
+
   NO_SITE_CONFIG = 'TRK-500-001',
   MISSING_PIXEL_ID = 'TRK-500-002',
   MISSING_META_TOKEN = 'TRK-500-003',
@@ -395,6 +413,12 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'user_data and user_data_hashed are mutually exclusive — send exactly one (which normalizer ran is ambiguous otherwise)',
   [TrackingErrorCode.INVALID_PREHASHED_USER_DATA]:
     'user_data_hashed contains a field that is not a 64-char lowercase hex SHA-256',
+  [TrackingErrorCode.LEAD_STATUS_OCCURRENCE_ID_REQUIRED]:
+    'A repeatable lifecycle status arrived without occurrence_id — two occurrences would collapse into one conversion',
+  [TrackingErrorCode.LEAD_STATUS_ADJUSTMENT_UNSUPPORTED]:
+    'Conversion adjustment (retract/restate) is not dispatchable yet — the Data Manager wire format is unverified',
+  [TrackingErrorCode.LEAD_STATUS_DOUBLE_COUNT_CONFIG]:
+    'revenue_confirmed and payment_received map to the SAME Google Ads conversion action — the same revenue would count twice',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'No KV config exists for the request hostname',
   [TrackingErrorCode.MISSING_PIXEL_ID]: 'Site config has no Meta pixel_id',
   [TrackingErrorCode.MISSING_META_TOKEN]: 'Site config has no Meta access_token',
@@ -757,6 +781,11 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]: 'warning',
   [TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA]: 'info',
   [TrackingErrorCode.INVALID_PREHASHED_USER_DATA]: 'info',
+  [TrackingErrorCode.LEAD_STATUS_OCCURRENCE_ID_REQUIRED]: 'warning',
+  [TrackingErrorCode.LEAD_STATUS_ADJUSTMENT_UNSUPPORTED]: 'warning',
+  // Konfigurációs hiba a PÉNZ-úton: a bevétel duplán számítana, és ezt semmi
+  // más nem jelezné — a riport csak „jól teljesítünk"-öt mutatna.
+  [TrackingErrorCode.LEAD_STATUS_DOUBLE_COUNT_CONFIG]: 'critical',
   // Kritikus: a tokenless böngésző-ág egyetlen visszamaradt kockázata a
   // konverzió-spam. Ha megtörténik, azonnal tudni akarunk róla (SMS is megy).
   [TrackingErrorCode.CONVERSION_SPIKE]: 'critical',
@@ -836,6 +865,9 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.HIGH_VALUE_EVENT_BROWSER_REJECTED]: 'TERMINAL',
   [TrackingErrorCode.PREHASHED_AND_RAW_USER_DATA]: 'TERMINAL',
   [TrackingErrorCode.INVALID_PREHASHED_USER_DATA]: 'TERMINAL',
+  [TrackingErrorCode.LEAD_STATUS_OCCURRENCE_ID_REQUIRED]: 'TERMINAL',
+  [TrackingErrorCode.LEAD_STATUS_ADJUSTMENT_UNSUPPORTED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.LEAD_STATUS_DOUBLE_COUNT_CONFIG]: 'OPERATOR_ACTION',
   [TrackingErrorCode.ADMIN_UNAUTHORIZED]: 'OPERATOR_ACTION',
   // A megszakadt kérés-stream ≠ túl nagy body: a kliens újraküldheti.
   [TrackingErrorCode.REQUEST_BODY_READ_FAILED]: 'RETRYABLE',

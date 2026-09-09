@@ -95,33 +95,121 @@ lifecycle-hook ne (csak) a lead-státuszra üljön.
 
 ---
 
-## 5. Nyitott ÜZLETI döntések — ezek nem kódkérdések
+## 5. ÜZLETI DÖNTÉSEK — a user, 2026-09-09 (a kérdések LEZÁRVA)
 
-1. **Mi számít konverziónak site-onként?** A megnyert ajánlat (korai, zajos, jól
-   optimalizál) vagy a befolyt pénz (késői, pontos, kevesebb jel)? A kettő **együtt**
-   is mehet, két külön konverzió-akcióként.
-2. **Részfizetés.** Egy `partial` számla küldjön-e jelet, és mekkorát? (Előleg gyakori.)
-3. **Visszavonás modellje.** `credit_note` / storno / won→lost esetén: korrekció
-   (Google conversion adjustment), vagy tudatos „nem küldünk semmit"?
-4. **Visszamenőlegesség.** A Google offline feltöltésnek ablaka van; egy hónapokkal
-   későbbi fizetés lehet, hogy már nem köthető a kattintáshoz. Ilyenkor a `wonAt`
-   marad a jobb időpont — de akkor az érték a helyesbített legyen?
+Ez a szakasz korábban négy NYITOTT kérdést tartalmazott, és azzal zárult, hogy
+„amíg ezek nincsenek eldöntve, a jelenlegi viselkedés MARAD". A négy döntés
+megszületett; a szakasz mostantól a döntéseket rögzíti, az indoklásukkal.
 
-**Amíg ezek nincsenek eldöntve, a jelenlegi viselkedés MARAD** — de mostantól
-kimondva, nem feltételezve.
+### D1 — Mi számít konverziónak? **Mindkettő, két KÜLÖN akcióként.**
+
+A megnyert ajánlat (`wonAt`) marad az optimalizálásra használt, korai és sűrű
+jel; a **ténylegesen befolyt pénz** külön, másodlagos konverzió-akcióként megy.
+A bidding a sűrű jelre tanul, a riport a pontosra.
+
+Ez nem új infrastruktúrát jelent: a Google Ads fiókban MA IS két akció áll —
+`Lead qualified (server)` (`QUALIFIED_LEAD`, primary) és `Revenue confirmed
+(server)` (`PURCHASE`, nem primary). A döntés ezt a szétválasztást mondja ki, és
+köti be mellé a fizetést.
+
+> ⚠️ **Dupla-számolás veszély, és ezért van rá őr.** A `revenue_confirmed` a
+> MEGNYERT ajánlat értéke, a `payment_received` a BEFOLYT pénz. Ha egy site
+> configja ugyanarra a Google Ads conversion actionre képezi a kettőt, ugyanaz a
+> bevétel kétszer számít — és ezt semmi más nem jelezné: a riport csak azt
+> mutatná, hogy jól teljesítünk. A gateway ezért `TRK-400-025`-tel, 500-zal
+> elutasítja az ilyen konfigurációt.
+
+### D2 — Részfizetés: **igen, a ténylegesen befolyt részösszeggel.**
+
+Minden fizetési esemény külön jelet küld a SAJÁT összegével; a platform
+összegzi. Ez tükrözi a valóságot, és nem igényel utólagos korrekciót — cserébe
+egy leadhez több konverzió-sor tartozik.
+
+> 🔴 **Ez tett láthatóvá egy addig lappangó hibát.** A gateway az `orderId`-t a
+> `sha256(lead_id + '_' + status)`-ból képezi. Az EGYSZERI státuszokra ez helyes
+> (a retry ugyanazt küldi, a Google dedupál) — de két részfizetés így UGYANAZT az
+> `orderId`-t kapná, a Google a másodikat ugyanannak a konverziónak látná, és a
+> pénz **némán elveszne**. Sem hibakód, sem ledger-sor nem jelezné.
+>
+> Ezért az ismételhető státuszokhoz (`REPEATABLE_LEAD_STATUSES`) a hívónak
+> **`occurrence_id`-t KELL küldenie** (a CRM `payments` sorának id-ja), és annak
+> hiánya hangos `TRK-400-023` / 400 — nem csendes összevonás. Az `orderId` magja
+> ilyenkor `lead_id_status_occurrence`, tehát a retry továbbra is idempotens.
+> Az egyszeri státuszok képlete SZÁNDÉKOSAN változatlan: ha elmozdulna, minden
+> korábban feltöltött konverzió `orderId`-je megváltozna, és a Google újaknak
+> látná őket.
+
+### D3 — Visszavonás: **Google conversion adjustment (RETRACT / RESTATE).**
+
+Storno / teljes jóváírás → RETRACT; részleges jóváírás / felszorzás → RESTATE az
+új értékkel. Az adjustment ÚJ ledger-sor, nem írja felül a régit — a CLAUDE.md
+§11 háromállapotúsága (`accepted`/`skipped`/`rejected`) érintetlen marad.
+
+> ⛔ **MA NEM KÉZBESÍTHETŐ, és ez tudatos.** A Data Manager `events.ingest`
+> hivatalos referenciája (developers.google.com, lekérdezve 2026-09-09) az
+> Event-objektumon EGYETLEN adjustment/retract/restate mezőt sem dokumentál, és a
+> „Send events" devguide sem ír a helyesbítésről. Közösségi forrás szerint a
+> képesség létezik — de a wire-formátumot **nem találjuk ki**: pontosan ezt a
+> hibát találtuk meg ugyanezen a napon a GTM Enhanced Conversionsnél, ahol egy
+> kitalált mezőnevet a szolgáltató némán eldobott.
+>
+> A gateway ezért `revenue_retracted` / `revenue_restated` státuszra **501-et ad
+> `TRK-400-024`-gyel**, `retryable: false`-szal. A kézenfekvő rossz megoldás az
+> lenne, hogy a helyesbítés a normál upload-úton megy: az egy **pozitív**
+> konverziót töltene fel egy visszavonásra, vagyis a hibát a kétszeresére növelné.
+>
+> **Amit a bekötéshez tudni kell, ha a formátum igazolható lesz:** az adjustment
+> az eredetit `conversion action id + timestamp + order id` hármassal hivatkozza,
+> és **NEM idempotens** — kétszer küldve kétszer alkalmazódik. A gateway retry-je
+> (DLQ + cron) ezért CSAK `markDoNotReplay` mögött futhat, különben egy tranziens
+> 5xx duplán vonná vissza ugyanazt a konverziót.
+
+### D4 — Visszamenőlegesség: **ablakon belül a fizetés ideje, azon túl a `wonAt`.**
+
+Ha a fizetés belefér a Google offline-ablakába, az a konverzió ideje. Ha kifut, a
+`wonAt`-tal küldjük — de a **már ismert, helyes értékkel**. Egy elveszett
+konverzió rosszabb, mint egy pontatlan időbélyeg.
+
+A gateway a `won_at`-hoz mér, nem a kattintáshoz: a kattintás idejét nem ismeri,
+a megnyerés viszont mindig a kattintás UTÁN van, tehát ez **konzervatív** becslés
+— ha a `won_at`-tól számítva belefér, a kattintástól számítva is belefért. Az
+ablak `OFFLINE_WINDOW_DAYS = 90`.
+
+**A ledger a VALÓDI `occurred_at`-et őrzi** — a helyesbítés a platformnak szól,
+nem a saját könyvelésünknek.
 
 ---
 
-## 6. Amit a döntés után építeni kell (vázlat)
+## 6. Ami ebből MEGÉPÜLT, és ami hátra van
 
-- a lifecycle-hook forrása bővül: lead-státusz **mellett** fizetési esemény;
-- új `lifecycleEventId`-séma, hogy a fizetés ne ütközzön a won-eseménnyel;
-- a gateway-oldalon korrekciós út (a Google Data Manager támogat adjustmentet, ma
-  nincs bekötve);
-- a ledger `deliveries` háromállapotúságát (`accepted`/`skipped`/`rejected`) a
-  korrekció nem boríthatja — a CLAUDE.md §11 szabálya érvényben marad.
+**Megépült (gateway):**
+
+- `payment_received` kanonikus offline event (`src/events.json`), `occurrence_id`
+  kötelezettséggel és ütközésmentes `orderId`-vel;
+- a D4 időpont-szabály (`resolveConversionTimeIso`, `won_at` mező);
+- a D1 dupla-számolás elleni config-őr;
+- a D3 hangos, nevesített elutasítás — `revenue_retracted` / `revenue_restated`
+  mint ÉRVÉNYES státusz, hogy a CRM ne „ismeretlen státusz" 400-at kapjon;
+- mindezt 19 teszt fedi, **öt külön mutációval** igazolva (az orderId-mag, az
+  `occurrence_id`-őr, az adjustment-elutasítás, a dupla-számolás őr és az
+  időpont-szabály kikapcsolása egyenként bukást okoz).
+
+**Hátra van:**
+
+1. **CRM-oldal:** a fizetési esemény kiváltsa a lifecycle-hookot
+   (`payment_received` + `occurrence_id` = a `payments` sor id-ja + `won_at`).
+   Ma a hook forrása kizárólag a lead-státusz.
+2. **KV-config site-onként:** `gads.conversion_actions.payment_received` egy
+   **ÚJ** Google Ads conversion actionre (nem a `revenue_confirmed`-ére — lásd az
+   őrt). Amíg nincs, a feltöltés `configuration_blocked` DLQ-ba megy: helyreállítható,
+   nem elveszett.
+3. **A `revenue_confirmed` sorsa:** amint egy site-on élnek a fizetési események,
+   a `revenue_confirmed` ugyanarra a bevételre ad egy MÁSODIK, korábbi jelet. A
+   döntés szerint a kettő két külön akció, tehát nem ütköznek — de a riportban ki
+   kell mondani, melyik a bevétel-igazság. Ez site-onkénti kapcsolás, nem kód.
+4. **Adjustment-bekötés**, ha a wire-formátum igazolható (lásd D3).
 
 ---
 
-*Írta: Claude Opus 5 · 2026-09-08 · minden szám és állítás a megadott fájl:sor
-hivatkozásokkal reprodukálható.*
+*Írta: Claude Opus 5 · 2026-09-08, a döntésekkel kiegészítve 2026-09-09 · minden
+szám és állítás a megadott fájl:sor hivatkozásokkal reprodukálható.*

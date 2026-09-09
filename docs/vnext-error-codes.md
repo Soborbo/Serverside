@@ -8,13 +8,13 @@
 > vele" tudás van, amit generálni nem lehet. Ez a tábla a TELJESSÉGET garantálja —
 > azt, hogy egyetlen kód se maradjon dokumentálatlanul.
 
-**Kódok száma:** 150
+**Kódok száma:** 153
 
 | Retryability | Kódok | Jelentés |
 |---|---|---|
 | `RETRYABLE` | 47 | átmeneti — egy későbbi próbálkozás sikerülhet |
-| `OPERATOR_ACTION` | 45 | emberi beavatkozás kell |
-| `TERMINAL` | 24 | végleges — ugyanez a payload sosem megy át |
+| `OPERATOR_ACTION` | 47 | emberi beavatkozás kell |
+| `TERMINAL` | 25 | végleges — ugyanez a payload sosem megy át |
 | `CONFIG_BLOCKED` | 21 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
 | `POLICY_SKIP` | 9 | szándékos kihagyás vagy informatív jel — nincs mit újrapróbálni |
 | `UNKNOWN` | 4 | az eredmény ismeretlen — nem „valószínűleg jó" |
@@ -51,6 +51,9 @@
 | `TRK-400-020` | `ADMIN_UNAUTHORIZED` | ingress | warning | `OPERATOR_ACTION` | `routes/admin.ts`, `routes/business-counts.ts` | Something went wrong on our side. Your request was not affected. | Admin API request failed authentication or was rate-limited | — |
 | `TRK-400-021` | `REQUEST_BODY_READ_FAILED` | ingress | info | `RETRYABLE` | `routes/conversion.ts` | Something went wrong on our side. Your request was not affected. | Request body stream aborted mid-read (client disconnect / network fault) — distinct from the size cap | `gads-offline-error-granularity.test.ts` |
 | `TRK-400-022` | `UNSUPPORTED_LEAD_STATUS_MAPPING` | ingress | warning | `OPERATOR_ACTION` | `routes/lead-status.ts` | Something went wrong on our side. Your request was not affected. | Lead status has no canonical event mapping — the caller sent a status this build does not know | `gads-offline-error-granularity.test.ts`, `lead-status-unknown-mapping.test.ts` |
+| `TRK-400-023` | `LEAD_STATUS_OCCURRENCE_ID_REQUIRED` | ingress | warning | `TERMINAL` | `routes/lead-status.ts` | Something went wrong on our side. Your request was not affected. | A repeatable lifecycle status arrived without occurrence_id — two occurrences would collapse into one conversion | `p10-revenue-lifecycle.test.ts` |
+| `TRK-400-024` | `LEAD_STATUS_ADJUSTMENT_UNSUPPORTED` | ingress | warning | `OPERATOR_ACTION` | `routes/lead-status.ts` | Something went wrong on our side. Your request was not affected. | Conversion adjustment (retract/restate) is not dispatchable yet — the Data Manager wire format is unverified | `p10-revenue-lifecycle.test.ts` |
+| `TRK-400-025` | `LEAD_STATUS_DOUBLE_COUNT_CONFIG` | ingress | critical | `OPERATOR_ACTION` | `routes/lead-status.ts` | Something went wrong on our side. Your request was not affected. | revenue_confirmed and payment_received map to the SAME Google Ads conversion action — the same revenue would count twice | `p10-revenue-lifecycle.test.ts` |
 | `TRK-500-001` | `NO_SITE_CONFIG` | site-config | warning | `CONFIG_BLOCKED` | `routes/consent.ts`, `routes/conversion.ts` +1 | Something went wrong on our side. Your request was not affected. | No KV config exists for the request hostname | `conversion-route.test.ts` |
 | `TRK-500-002` | `MISSING_PIXEL_ID` | site-config | warning | `CONFIG_BLOCKED` | *leváltva* | Something went wrong on our side. Your request was not affected. | Site config has no Meta pixel_id | *leváltva* |
 | `TRK-500-003` | `MISSING_META_TOKEN` | site-config | warning | `CONFIG_BLOCKED` | *leváltva* | Something went wrong on our side. Your request was not affected. | Site config has no Meta access_token | *leváltva* |
