@@ -1,0 +1,156 @@
+{
+  "_comment": "A KOZZETEENDO suti-/tarolo-tabla kanonikus forrasa (GDPR Art 13(1)(e), PECR reg. 6, NAIH). MIERT ITT: a jogi kotelezettseg az, hogy amit KIIRUNK, azt le is irjuk, es amit a visszavonaskor IGERUNK torolni, azt torolju is. Ezt a ket allitast a `tests/cookie-inventory-parity.test.ts` KETIRANYBAN meri a `lib/persistence.ts` VALODI purge-kodjahoz kepest — a tabla igy nem tud elcsuszni a kodtol. Kezzel irt suti-tabla mindig elcsuszik; ez a fajl a kod parja.",
+  "version": "2026-09-a",
+  "_fields": {
+    "name": "A suti/kulcs neve. `match: prefix` eseten nev-elotag (a per-property utotag miatt).",
+    "storage": "cookie | localStorage | sessionStorage",
+    "category": "necessary | analytics | marketing",
+    "issuer": "first_party | a harmadik fel neve",
+    "lifetime": "Ember altal olvashato elettartam (a kozzeteendo tablaba igy kerul).",
+    "transfer": "Harmadik orszagba tortenő tovabbitas (null = nincs).",
+    "purged_on_withdrawal": "true = a visszavonas torli. false ESETEN a `why_not_purged` KOTELEZO es nem lehet ures — egy nem torolt suti lehet vedheto, de NEM lehet kimondatlan."
+  },
+  "entries": [
+    {
+      "name": "sbo_consent",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "necessary",
+      "issuer": "first_party",
+      "lifetime": "180 nap",
+      "transfer": null,
+      "purged_on_withdrawal": false,
+      "why_not_purged": "Ez MAGA a hozzajarulasi dontes bizonyiteka (GDPR Art 7(1)). A torlese epp a visszavonas tenyet vinne el, es a bannert azonnal ujra feldobna — vagyis a latogato dontese nem ervenyesulne.",
+      "purpose": {
+        "hu": "A sutikre vonatkozo dontesed tarolasa (kategorianként), hogy ne kerdezzuk ujra minden oldalbetolteskor, es hogy a dontes bizonyithato legyen.",
+        "en": "Stores your cookie choice per category so we do not ask again on every page load, and so the choice is provable."
+      }
+    },
+    {
+      "name": "sb_session",
+      "match": "exact",
+      "storage": "sessionStorage",
+      "category": "analytics",
+      "issuer": "first_party",
+      "lifetime": "a bongeszo-lap bezarasaig",
+      "transfer": null,
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Munkamenet-azonosito, hogy az egy latogatashoz tartozo esemenyek osszetartozzanak a merésben.",
+        "en": "Session identifier so that events from one visit belong together in measurement."
+      }
+    },
+    {
+      "name": "_ga",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "analytics",
+      "issuer": "Google Ireland Ltd. / Google LLC",
+      "lifetime": "2 ev",
+      "transfer": "USA (Google LLC), EU-U.S. Data Privacy Framework / SCC",
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Google Analytics 4 latogato-azonosito: megkulonbozteti az egyes latogatokat a forgalmi statisztikaban.",
+        "en": "Google Analytics 4 visitor identifier: distinguishes visitors in traffic statistics."
+      }
+    },
+    {
+      "name": "_ga_",
+      "match": "prefix",
+      "storage": "cookie",
+      "category": "analytics",
+      "issuer": "Google Ireland Ltd. / Google LLC",
+      "lifetime": "2 ev",
+      "transfer": "USA (Google LLC), EU-U.S. Data Privacy Framework / SCC",
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Google Analytics 4 munkamenet-allapot az adott merési adatfolyamhoz (`_ga_<STREAM>`).",
+        "en": "Google Analytics 4 session state for the given measurement stream (`_ga_<STREAM>`)."
+      }
+    },
+    {
+      "name": "sb_tracking",
+      "match": "exact",
+      "storage": "localStorage",
+      "category": "marketing",
+      "issuer": "first_party",
+      "lifetime": "24 ora",
+      "transfer": null,
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "A hirdetesi attribuciohoz szukseges adatok atmeneti tarolasa (pl. kattintas-azonosito), hogy a kesobb leadott urlap a helyes hirdeteshez kotodjon.",
+        "en": "Temporary storage of advertising attribution data (e.g. click identifier) so a later form submission is tied to the correct ad."
+      }
+    },
+    {
+      "name": "sb_first_touch",
+      "match": "exact",
+      "storage": "localStorage",
+      "category": "marketing",
+      "issuer": "first_party",
+      "lifetime": "24 ora",
+      "transfer": null,
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Az elso latogatas forrasa (kampany, kulcsszo), hogy a konverzio ne csak az utolso kattintashoz szamitson.",
+        "en": "The source of the first visit (campaign, keyword) so a conversion is not credited to the last click only."
+      }
+    },
+    {
+      "name": "__sb_attribution",
+      "match": "exact",
+      "storage": "localStorage",
+      "category": "marketing",
+      "issuer": "first_party",
+      "lifetime": "24 ora",
+      "transfer": null,
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Az attribucios rekord (elso es utolso erintes egyben), a hirdetesi merés pontossagahoz.",
+        "en": "The attribution record (first and last touch together) for advertising measurement accuracy."
+      }
+    },
+    {
+      "name": "_fbp",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "marketing",
+      "issuer": "Meta Platforms Ireland Ltd.",
+      "lifetime": "90 nap",
+      "transfer": "USA (Meta Platforms Inc.), SCC",
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Meta (Facebook/Instagram) bongeszo-azonosito a hirdetesek merésehez es a duplikalt konverziok kiszureséhez.",
+        "en": "Meta (Facebook/Instagram) browser identifier for ad measurement and de-duplication of conversions."
+      }
+    },
+    {
+      "name": "_fbc",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "marketing",
+      "issuer": "Meta Platforms Ireland Ltd.",
+      "lifetime": "90 nap",
+      "transfer": "USA (Meta Platforms Inc.), SCC",
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "A Meta-hirdetesre tortent kattintas azonositoja, hogy a kesobbi konverzio ahhoz a hirdeteshez kotodjon.",
+        "en": "Identifier of the click on a Meta ad, so a later conversion is tied to that ad."
+      }
+    },
+    {
+      "name": "_gcl_",
+      "match": "prefix",
+      "storage": "cookie",
+      "category": "marketing",
+      "issuer": "Google Ireland Ltd. / Google LLC",
+      "lifetime": "90 nap",
+      "transfer": "USA (Google LLC), EU-U.S. Data Privacy Framework / SCC",
+      "purged_on_withdrawal": true,
+      "purpose": {
+        "hu": "Google Ads konverzio-osszekapcsolo (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`): a hirdetesre tortent kattintast koti ossze a kesobbi konverzioval.",
+        "en": "Google Ads conversion linker (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`): links the ad click to a later conversion."
+      }
+    }
+  ]
+}

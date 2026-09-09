@@ -1,0 +1,96 @@
+---
+/**
+ * <CookieYesEqualButtons /> — az „Elutasítom" gomb egyenrangúvá tétele a
+ * CookieYes bannerén, site-oldali CSS-sel.
+ *
+ * A MÉRT DEFEKT (compliance-harness, flotta 2026-08-17 / painless 2026-08-25):
+ * hat magyar site-on az elutasítás NEM egyenrangú az elfogadással. A mért
+ * arányok: gomb-TERÜLET 0.45–0.54 (elutasítás/elfogadás), és három site-on a
+ * kontraszt is romlik (3.86 vs 5.44 — a 4.5:1 WCAG AA alatt). Ez a NAIH-TV2
+ * határozat hibaosztálya: ha az elutasítás nehezebb, a hozzájárulás nem
+ * önkéntes, tehát érvénytelen (GDPR Art 4(11) + Art 7(4)).
+ *
+ * MIÉRT ITT, ÉS NEM A COOKIEYES FELÜLETÉN. Megmérve: a CookieYes API/MCP a
+ * `update_banner_colours`-szal CSAK SZÍNT tud állítani — a gomb TERÜLETÉT nem.
+ * A terület-javítás vagy a CookieYes dashboard gomb-stílusa, vagy site-oldali
+ * CSS-override. Ez utóbbi az, ami verziókövethető és mérhető.
+ *
+ * MIÉRT `!important`. A CookieYes a saját stílusait futásidőben, a bannerrel
+ * együtt injektálja, magasabb specificitással és később, mint a site CSS-e.
+ * Egy „szép", specificitás-alapú override itt csendben hatástalan lenne — a
+ * néma hatástalanság pedig rosszabb, mint a csúnya, de működő szabály.
+ *
+ * HASZNÁLAT: a Layout `<head>`-jébe, a `<Tracking />` UTÁN. CSAK CookieYes-t
+ * használó site-on van értelme; sbo-provider alatt nincs `.cky-*` elem, tehát
+ * a szabályok egyszerűen nem illeszkednek semmire (nulla mellékhatás).
+ *
+ * ELLENŐRZÉS a flip előtt: `tests/compliance/run.mjs` — a gomb-terület aránynak
+ * ≥0.9-nek, a kontrasztnak ≥4.5:1-nek kell lennie.
+ */
+interface Props {
+  /**
+   * Az elutasítás/testreszabás gomb szövegszíne. Alapértelmezés: `#1a1a1a`,
+   * ami fehér (#fff) alapon 16.1:1 — bőven a WCAG AA 4.5:1 felett. Ha a
+   * banner háttere sötét, ezt a site-nak felül KELL írnia, különben a
+   * kontraszt-javítás visszájára fordul.
+   */
+  textColor?: string;
+  /** Az elutasítás/testreszabás gomb keretszíne (láthatóság kontraszt nélkül is). */
+  borderColor?: string;
+}
+
+const { textColor = '#1a1a1a', borderColor = 'currentColor' } = Astro.props;
+---
+
+<style is:global define:vars={{ ckyText: textColor, ckyBorder: borderColor }}>
+  /* A három banner-gomb EGYFORMA dobozt kap: azonos alapterület, azonos
+     tipográfia. A `flex: 1 1 0` a lényeg — enélkül a gombok a szövegük
+     hosszához igazodnak, és a rövidebb „Elutasítom" mindig kisebb marad. */
+  .cky-notice-btn-wrapper {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 0.5rem !important;
+    align-items: stretch !important;
+  }
+
+  .cky-notice-btn-wrapper .cky-btn {
+    flex: 1 1 0 !important;
+    min-width: 8.5rem !important;
+    min-height: 2.75rem !important; /* 44px — WCAG 2.5.8 érintési célméret */
+    padding: 0.625rem 1rem !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    text-align: center !important;
+    border-radius: 0.375rem !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Az elutasítás és a testreszabás olvashatósága. A háttér SZÁNDÉKOSAN marad
+     a CookieYes-é: az egyenrangúság nem azt jelenti, hogy a két gomb azonos
+     legyen, hanem hogy egyformán könnyű legyen rájuk kattintani és elolvasni
+     őket. Az azonos hátterű, azonos színű gombpár félrekattintást szülne. */
+  .cky-notice-btn-wrapper .cky-btn-reject,
+  .cky-notice-btn-wrapper .cky-btn-customize {
+    color: var(--ckyText) !important;
+    border: 1px solid var(--ckyBorder) !important;
+    opacity: 1 !important; /* néhány témában halványítva érkezik */
+    text-decoration: none !important;
+  }
+
+  /* Fókusz-jelölés: enélkül billentyűzettel nem látszik, hol állunk — és a
+     visszautasítás billentyűzettel is elérhető kell legyen. */
+  .cky-notice-btn-wrapper .cky-btn:focus-visible {
+    outline: 2px solid var(--ckyText) !important;
+    outline-offset: 2px !important;
+  }
+
+  /* Keskeny kijelzőn a gombok egymás ALÁ kerülnek, teljes szélességgel — így az
+     arány triviálisan 1.0, és nincs „kilóg a képernyőről" elutasítás-gomb. */
+  @media (max-width: 30rem) {
+    .cky-notice-btn-wrapper .cky-btn {
+      flex: 1 1 100% !important;
+      min-width: 0 !important;
+    }
+  }
+</style>
