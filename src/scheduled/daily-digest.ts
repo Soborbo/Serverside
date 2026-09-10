@@ -1,5 +1,5 @@
 import type { Env } from '../env';
-import { sendAdminEmail } from '../lib/notify';
+import { sendAdminEmail, escapeHtml } from '../lib/notify';
 import { countSiteConfigs, listConfiguredSiteIds, listMonitoredSiteConfigs, paginateSiteConfigKeys } from '../lib/config';
 import {
   fetchDatasetEmq,
@@ -448,20 +448,33 @@ export async function collectEmqStatus(env: Env): Promise<EmqSiteStatus[]> {
   return statuses;
 }
 
+/**
+ * HTML-ESCAPE a digest sorain.
+ *
+ * Az `event_name` a Meta Dataset Quality API-jából jön (lib/emq.ts): a Meta MINDEN
+ * event-nevet visszaad, amit a datasetjén látott. A pixel-azonosító publikus, és a
+ * böngésző-Pixel tetszőleges custom event-nevet elfogad — vagyis ide idegen is tud
+ * markupot juttatni, ami az OPERÁTOR megbízhatónak hitt napi e-mailjében renderelne.
+ * A `reconciliation.ts` már escape-el; a digest volt az egyetlen, ami nem.
+ */
+function esc(v: unknown): string {
+  return escapeHtml(String(v));
+}
+
 function renderEmqLine(s: EmqSiteStatus): string {
   if (s.source === 'emq' && s.emqEvents) {
     const scores = s.emqEvents
-      .map((e) => `${e.event_name} ${e.score.toFixed(1)}`)
+      .map((e) => `${esc(e.event_name)} ${e.score.toFixed(1)}`)
       .join(', ');
-    return `${s.site}: ${scores}`;
+    return `${esc(s.site)}: ${scores}`;
   }
   if (s.source === 'proxy' && s.coverage) {
     const keys = s.coverage.keys
-      .map((k: KeyCoverage) => `${k.key} ${k.pct24h}%`)
+      .map((k: KeyCoverage) => `${esc(k.key)} ${k.pct24h}%`)
       .join(' / ');
-    return `${s.site}: proxy coverage 24h (${s.coverage.events24h} events) — ${keys}`;
+    return `${esc(s.site)}: proxy coverage 24h (${s.coverage.events24h} events) — ${keys}`;
   }
-  return `${s.site}: n/a (EMQ API + ledger proxy unavailable)`;
+  return `${esc(s.site)}: n/a (EMQ API + ledger proxy unavailable)`;
 }
 
 export async function handleDailyDigest(env: Env): Promise<void> {
@@ -542,9 +555,9 @@ export async function handleDailyDigest(env: Env): Promise<void> {
                 ? `Expected platform leg FAILED: ${smoke.failures
                     .map(
                       (f) =>
-                        `${f.site}/${f.platform} → ${f.reason}${
-                          f.error_code ? ` (${f.error_code})` : ''
-                        } [expected by ${f.expectation}]`
+                        `${esc(f.site)}/${esc(f.platform)} → ${esc(f.reason)}${
+                          f.error_code ? ` (${esc(f.error_code)})` : ''
+                        } [expected by ${esc(f.expectation)}]`
                     )
                     .join(', ')}.`
                 : ''
@@ -563,7 +576,7 @@ export async function handleDailyDigest(env: Env): Promise<void> {
     ${
       emqAlerts.length > 0
         ? `<p><strong>⚠️ Match-quality alert: ${emqAlerts
-            .map((s) => `${s.site} (${s.alerts.join('; ')})`)
+            .map((s) => `${esc(s.site)} (${esc(s.alerts.join('; '))})`)
             .join(' | ')} — a delivery-green pipeline with falling EMQ usually means broken fbc/fbp or em/ph forwarding.</strong></p>`
         : ''
     }

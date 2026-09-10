@@ -177,9 +177,15 @@ async function clientLibVersions(
 ): Promise<Map<string, string[]> | null> {
   return safeQuery(env, 'client_lib_versions_7d', async () => {
     const rows = await env.LEDGER!.prepare(
+      // `received_at`, NEM `created_at`: a `consent_receipts` táblának SOSEM volt
+      // `created_at` oszlopa (0001_ledger.sql; a 0004/0005/0006 migrációk sem
+      // adtak hozzá ilyet). A hibás oszlopnévvel a D1 minden hívásnál dobott, a
+      // `safeQuery` `null`-ra esett, és az `assessPackageVersion` MINDEN site-ra,
+      // MINDEN futásnál UNKNOWN-t adott — vagyis az F9 kliens-drift dimenzió soha
+      // egyetlen napig sem működött, miközben a hibaüzenet D1-kiesést sugallt.
       `SELECT site_id, COALESCE(client_lib_version, '(none)') AS version, COUNT(*) AS cnt
          FROM consent_receipts
-        WHERE created_at >= ?1
+        WHERE received_at >= ?1
         GROUP BY site_id, version`
     )
       .bind(sinceIso)

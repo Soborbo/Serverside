@@ -248,8 +248,68 @@ function walkFiles(dir, acc = [], depth = 0) {
  * @returns {{site: string, file: string, version: string|null, sbo_expected: boolean,
  *   rows: Array<object>, failed: number, skipped: number}}
  */
+/**
+ * KOMMENT-MENTESÍTÉS a szabály-illesztés ELŐTT.
+ *
+ * A szabályok forrás-mintákra épülnek, a minta pedig egy KOMMENTBEN is illeszkedik.
+ * Mérve: a kanonikus `gateway-dispatch.ts`-ben a lejárat-ellenőrzést
+ * `// DISABLED: if (now - decidedAtSec > SBO_CONSENT_MAX_AGE_S) …`-re cserélve az
+ * őr ZÖLD maradt, és mind a négy `map.advertisement` → `map.marketing /* was
+ * map.advertisement *\/` csere is átment — vagyis ez az őr pontosan azt a
+ * 2026-07-i flotta-hibaosztályt engedte volna át, amiért készült.
+ *
+ * A meglévő mutációs teszt ezt nem fogta meg: az a tokeneket TÖRLI, nem
+ * kommentbe teszi — tehát gyengébb tulajdonságot igazolt, mint amit az őr állít.
+ *
+ * A stringek MEGMARADNAK: egy szabály sem illeszkedik string-literálra, viszont
+ * egy `'//'` vagy `'/*'` tartalmú string kiütné a naiv strippert, ezért a
+ * string- és template-literálokat egészben átugorjuk.
+ */
+export function stripCommentsForRules(src) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < src.length) {
+        if (src[i] === '\\') {
+          out += src[i] + (src[i + 1] ?? '');
+          i += 2;
+          continue;
+        }
+        out += src[i];
+        if (src[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 export function checkBackendContract(file, src, site = null, sboExpected = true) {
-  const version = /export const BACKEND_LIB_VERSION\s*=\s*'([^']+)'/.exec(src)?.[1] ?? null;
+  // A szabályok a KÓD-ra kérdeznek, nem a kommentekre — lásd stripCommentsForRules.
+  const code = stripCommentsForRules(src);
+  const version = /export const BACKEND_LIB_VERSION\s*=\s*'([^']+)'/.exec(code)?.[1] ?? null;
   const rows = RULES.map((r) => {
     const applies = r.group !== 'sbo' || sboExpected;
     return {
@@ -262,7 +322,7 @@ export function checkBackendContract(file, src, site = null, sboExpected = true)
       // A kihagyott szabályt is MEGMÉRJÜK, csak nem buktatunk vele. Így a riport
       // megmutatja, ha egy CookieYes-site szerver-lába mégis sbo-képes lett —
       // az ugyanis a jelzés, hogy a flip elkezdődött valahol.
-      ok: Boolean(r.test(src))
+      ok: Boolean(r.test(code))
     };
   });
   const live = rows.filter((r) => r.applies);

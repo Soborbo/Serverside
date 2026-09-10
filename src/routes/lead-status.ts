@@ -555,25 +555,39 @@ export async function handleLeadStatus(
       // idején tiltott konverziót. Best-effort: ha a jelölés elbukik, a skip
       // ettől a kérésen belül még áll, csak a replay-védelem gyengül (logolva).
       await markDoNotReplay(env, siteConfig.site_id, eventName, orderId);
-      // 'skipped|consent_withdrawn' ledger-sor — a szándékos kihagyás NEM némaság
-      // (CLAUDE.md 11.). CSAK a consent_log-ágon írjuk (provider='sbo' site-ok):
-      // a receipt/crm/fallback ágak mai, sor-nélküli viselkedése változatlan.
-      ctx.waitUntil(
-        recordDeliveries(env, {
-          event_id: orderId,
-          lead_id: body.lead_id,
-          site_id: siteConfig.site_id,
-          event_name: eventName,
-          origin: 'offline',
-          records: [
-            normalizeDelivery('gads', {
-              status: 'fulfilled',
-              value: { success: true, skipped: true, skip_reason: 'consent_withdrawn' }
-            })
-          ]
-        })
-      );
     }
+    // 'skipped' ledger-sor MINDEN consent-ágra — a szándékos kihagyás NEM némaság
+    // (CLAUDE.md 11.).
+    //
+    // Eddig CSAK a consent_log-ág (provider='sbo', ma NULLA éles site) írt sort,
+    // tehát a receipt/crm/fallback kihagyások NYOMTALANOK voltak: se delivery-sor,
+    // se hibakód, se riasztás — csak egy `lead_status` sor `uploaded_to_gads=0`-val,
+    // amit se a napi digest, se a reconciliation nem olvas. ÉLŐ MÉRÉS (2026-09-09,
+    // D1 ledger): a beautyflow 37 `revenue_confirmed` státuszából 28 pontosan így
+    // tűnt el — 21 receipt nélkül, 7 DENIED receipttel —, miközben a CRM outbox
+    // mind a 37-et `accepted`-nek könyvelte. Ez az a néma pénz-lábas kiesés, ami
+    // ellen az egész háromállapotú `deliveries` szerződés készült.
+    //
+    // A skip OKA megkülönböztetett: a `consent_withdrawn` a consent_log AKTUÁLIS
+    // állapotából jövő visszavonás, a `consent_denied` a capture-kori receipt /
+    // CRM-jel / fail-closed tiltás. A kettő eltérő teendő, ezért nem mosható össze.
+    const consentSkipReason =
+      consentSource === 'consent_log' ? ('consent_withdrawn' as const) : ('consent_denied' as const);
+    ctx.waitUntil(
+      recordDeliveries(env, {
+        event_id: orderId,
+        lead_id: body.lead_id,
+        site_id: siteConfig.site_id,
+        event_name: eventName,
+        origin: 'offline',
+        records: [
+          normalizeDelivery('gads', {
+            status: 'fulfilled',
+            value: { success: true, skipped: true, skip_reason: consentSkipReason }
+          })
+        ]
+      })
+    );
   } else if (siteConfig.gads?.customer_id) {
     // Model 2: the server is Google-Ads-offline-only (Enhanced Conversions for
     // Leads), delivered via the Data Manager API. The email hash MUST use the
@@ -610,10 +624,34 @@ export async function handleLeadStatus(
     // (azt a külső ág kezeli), ezért itt a skip vagy konfigurációs blokk, vagy
     // hibásan azonosító nélküli lifecycle payload. Egyik sem kaphat csendes 200-at.
     if (result.skipped === true) {
+      // A KONFIGURÁCIÓS BLOKK CSAK ELVÁRT OFFLINE LÁBRA BLOKK. A
+      // `expected_platforms.offline` eddig KIZÁRÓLAG a `customer_id` NÉLKÜLI ágon
+      // számított (lentebb); ha a configban volt customer_id, de nem volt
+      // `conversion_actions` bejegyzés, MINDEN lifecycle-post 7 napos
+      // `blocked_configuration` DLQ-rekordot írt + óránként újrapróbálta + 202-t
+      // adott — olyan site-okon is, ahol az offline láb nincs is bekötve és nem is
+      // elvárt. Élő KV (2026-09-09): olcsokontenerhaz, skinlab, szelloztetes
+      // pontosan ilyen (customer_id a recon/health miatt, conversion_actions nélkül).
+      //
+      // A fan-out ugyanezt a megkülönböztetést már évek óta így csinálja
+      // (`isExpectedPlatform` → `not_expected` skip, se DLQ, se riasztás) — az
+      // offline láb most követi ugyanazt a szabályt.
+      const offlineExpected = isExpectedOfflinePlatform(siteConfig, 'gads');
       configurationBlocked =
-        result.error_code !== TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS;
+        result.error_code !== TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS && offlineExpected;
       invalidIdentifiers =
         result.error_code === TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS;
+      if (!offlineExpected && result.error_code !== TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS) {
+        logStructured({
+          level: 'info',
+          message:
+            'Offline gads skipped — not an expected offline platform for this site (no DLQ record, no alert)',
+          site_id: siteConfig.site_id,
+          hostname,
+          event_name: eventName,
+          skip_error_code: result.error_code
+        });
+      }
 
       // Konfigurációs blokk (hiányzó conversion action, validate-only kapcsoló):
       // a vendorhívás el sem indult, és a config magától SOHA nem javul meg. A

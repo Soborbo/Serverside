@@ -315,7 +315,7 @@ export function readConsentFromCookie(
 /**
  * CMP Fázis 2 — a saját `sbo_consent` süti szerveroldali olvasata a form-POST
  * Cookie headeréből. A böngésző-lib `consent-sbo-state.ts` parserének párja
- * (formátum: `v1.<a>.<m>.<revision>.<decision>.<consent_id>.<decidedAtSec>`);
+ * (formátum: `v2.<a>.<m>.<revision>.<decision>.<consent_id>.<decidedAtSec>.<policy_version>`);
  * azért külön implementáció, mert ez a modul önállóan másolódik a site-okra.
  * Bármely mező hibája → null — consentet nem találunk ki.
  */
@@ -578,9 +578,19 @@ export function readGa4IdsFromCookie(
     const sessionCookieName = `_ga_${measurementId.replace(/^G-/, '')}`;
     const gaSession = cookies[sessionCookieName];
     if (gaSession) {
+      // KÉT formátum él egymás mellett, és eddig csak az egyiket ismertük:
+      //   GS1: `GS1.1.<session_id>.<...>`
+      //   GS2: `GS2.1.s<session_id>$o..$g..`  ← 2025-05-06 óta ez az ALAPÉRTELMEZÉS
+      //        az új munkamenetekre (a session_id előtt egy literál `s` áll, utána
+      //        `$`-elválasztású mezők).
+      // A böngésző-lib mindkettőt kezeli (`lib/gateway.ts extractGASessionId`), ez
+      // a szerver-láb viszont csak a `GS1`-et fogadta el — vagyis a form-POST
+      // útján érkező konverziók `session_id`-je gyakorlatilag MINDEN mai
+      // munkamenetnél undefined maradt, némán, a böngésző-lábbal ellentmondásban.
       const parts = gaSession.split('.');
-      if (parts.length >= 3 && parts[0] === 'GS1' && /^\d+$/.test(parts[2])) {
-        sessionId = parts[2];
+      if (parts.length >= 3 && /^GS\d+$/.test(parts[0])) {
+        const m = /^s?(\d+)/.exec(parts[2]);
+        if (m) sessionId = m[1];
       }
     }
   }

@@ -116,6 +116,15 @@ export function skipReasonFromErrorCode(code: string | undefined): SkipReason | 
     case TrackingErrorCode.PLATFORM_NOT_CONFIGURED:
     case TrackingErrorCode.MISSING_CONVERSION_ACTION:
       return 'not_configured';
+    // Az OFFLINE láb formahibás azonosítója (Data Manager: nem 10 jegyű
+    // `customer_id` / `login_customer_id`). A böngésző-fan-out ezt a
+    // `skip_reason`-ön hozza, az offline vendor-eredménynek viszont nincs ilyen
+    // mezője — ott a hibakód a jel, és a ledger-címkét itt vezetjük le belőle.
+    // Enélkül a sor csupasz 'skipped' lenne, megkülönböztethetetlenül egy jogos
+    // consent-kihagyástól: pontosan az a vakfolt, ami a lomtalan Meta-kiesését
+    // öt napig elrejtette.
+    case TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID:
+      return 'invalid_identifier';
     case TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS:
       return 'no_identifiers';
     default:

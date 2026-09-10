@@ -322,6 +322,32 @@ export async function handleConversion(
     payload.session_id = undefined;
   }
 
+  // Meta böngésző-azonosítók (`_fbp` / `_fbc`) ALAK-ellenőrzése — ugyanaz a
+  // drop-nem-reject szabály, mint fent. Eddig VALIDÁLATLANUL utaztak a Meta
+  // payloadba: egy csonka vagy `"undefined"` értékű süti (a site backendje a
+  // Cookie headerből olvassa) a TELJES eventet 400-ba viszi a Metánál, ami
+  // TERMINÁLIS hibakód → három azonos retry, majd dead. Egy formahibás
+  // azonosító a match-minőséget viheti el, nem magát a konverziót.
+  // A minta a kliens-lib `readMetaCookies` regexeinek tükre.
+  if (payload.fbp !== undefined && !/^fb\.\d+\.\d+\.\d+$/.test(String(payload.fbp))) {
+    logStructured({
+      level: 'warn',
+      message: 'fbp dropped — not a `fb.<subdomain>.<ts>.<rand>` Meta browser id; event proceeds without it',
+      hostname,
+      event_name: payload.event_name
+    });
+    payload.fbp = undefined;
+  }
+  if (payload.fbc !== undefined && !/^fb\.\d+\.\d+\.[A-Za-z0-9_-]+$/.test(String(payload.fbc))) {
+    logStructured({
+      level: 'warn',
+      message: 'fbc dropped — not a `fb.<subdomain>.<ts>.<fbclid>` Meta click id; event proceeds (fbclid fallback still applies)',
+      hostname,
+      event_name: payload.event_name
+    });
+    payload.fbc = undefined;
+  }
+
   const { config: siteConfig, unavailable: siteConfigUnavailable } = await lookupSiteConfig(
     hostname,
     env
@@ -809,6 +835,31 @@ function fanOut(
   // Meta fbc: a kliens _fbc cookie-ja elsődleges; ha nincs, fbclid-ből építjük.
   const fbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
 
+  // PÉNZNEM: a tenant sajátja a tartalék, és az alak ellenőrzött.
+  //
+  // A `value`-t az ingress validálja, a `currency`-t SEMMI — és a Meta-láb
+  // `value > 0 && currency` feltételre köti a `custom_data`-t (lib/meta.ts).
+  // Egy `{event_name:'purchase', value:250}` payload (currency nélkül) tehát
+  // ÉRTÉK NÉLKÜLI Purchase-t küldött a Metának: a ROAS-ból pontosan az az összeg
+  // hiányzik, amiért az egész lánc létezik — némán, egyetlen log nélkül.
+  // A `/lead-status` offline lába ugyanezt a tartalékot használja
+  // (`body.currency ?? siteConfig.currency`); az aszimmetria itt volt.
+  //
+  // A tartalék a SITE-CONFIG értéke, NEM bedrótozott konstans: egy hardkódolt
+  // fallback a rossz pénznemet szállítaná, amint a modul másik piacra kerül.
+  const rawCurrency = typeof payload.currency === 'string' ? payload.currency.toUpperCase() : undefined;
+  const currency =
+    rawCurrency && /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : siteConfig.currency;
+  if (rawCurrency && !/^[A-Z]{3}$/.test(rawCurrency)) {
+    logStructured({
+      level: 'warn',
+      message: `currency '${rawCurrency.slice(0, 8)}' is not a 3-letter ISO 4217 code — falling back to the site currency '${siteConfig.currency}'`,
+      site_id: siteConfig.site_id,
+      hostname,
+      event_name: payload.event_name
+    });
+  }
+
   // Ledger: az elfogadott event nyers rekordja + consent receipt (NEM PII;
   // csak az `em/ph` jelenléti flag-ek a match-quality audithoz). Fire-and-forget.
   ctx.waitUntil(
@@ -820,7 +871,7 @@ function fanOut(
       event_name: payload.event_name,
       event_time: payload.event_time,
       value: payload.value,
-      currency: payload.currency,
+      currency,
       ad_allowed: adAllowed,
       em_present: Boolean(hashedUserData.em),
       ph_present: Boolean(hashedUserData.ph),
@@ -881,7 +932,7 @@ function fanOut(
     event_id: payload.event_id,
     event_time: payload.event_time,
     value: payload.value,
-    currency: payload.currency,
+    currency,
     event_source_url: payload.event_source_url,
     ecommerce: Object.keys(ecommerce).length > 0 ? ecommerce : undefined,
     fbp: payload.fbp,
@@ -903,7 +954,7 @@ function fanOut(
     event_id: payload.event_id,
     event_time: payload.event_time,
     value: payload.value,
-    currency: payload.currency,
+    currency,
     event_source_url: payload.event_source_url,
     ttclid: attribution?.ttclid,
     client_ip: clientIp,
@@ -914,14 +965,14 @@ function fanOut(
     event_id: payload.event_id,
     event_time: payload.event_time,
     value: payload.value,
-    currency: payload.currency,
+    currency,
     li_fat_id: attribution?.li_fat_id
   };
   const msadsPayload: MsAdsPayload = {
     event_name: payload.event_name,
     event_time: payload.event_time,
     value: payload.value,
-    currency: payload.currency,
+    currency,
     msclkid: attribution?.msclkid
   };
 

@@ -12,6 +12,7 @@ import { handleOAuthCallback } from './routes/oauth-callback';
 import { handleOAuthDebug } from './routes/oauth-debug';
 import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
+import { isTerminalSkip } from './lib/skip-reason';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import {
   handleScheduledRetry,
@@ -220,7 +221,23 @@ export default {
           msg.ack();
           continue;
         }
-        if (result.skipped) logSkippedRetry(record);
+        if (result.skipped) {
+          logSkippedRetry(record);
+          // TERMINÁLIS skip → ACK, nem retry. A consent-tiltás/visszavonás, a
+          // hiányzó azonosító és a nem-elvárt platform SOSEM javul meg magától,
+          // mégis a retry-ágra estek: a 4. kézbesítés után az R2 'dead'
+          // archívumba kerültek, hashed PII-vel, kliens-IP-vel és UA-val együtt,
+          // a `DEAD_RECORD_RETENTION_DAYS` (90 nap) végéig. Vagyis egy VISSZAVONT
+          // hozzájárulású lead adatát pont azért őriztük tovább, mert
+          // tiszteletben tartottuk a visszavonását. A cron-ág ezt már helyesen
+          // csinálja (markDoNotReplay + delete) — a Queue-ág most követi.
+          // A RETRYABLE konfigurációs skip (`not_configured` / `invalid_identifier`)
+          // marad a régi úton: azt a KV javítása után újra kell játszani.
+          if (isTerminalSkip(result.skip_reason)) {
+            msg.ack();
+            continue;
+          }
+        }
         // Valódi vendor-bukás → 'rejected' delivery a ledgerbe (a skip NEM az). Enélkül
         // a reconciliation vendor-hibarátája pont kiesés alatt mér alul (K2 / #17).
         else await recordRetryDelivery(env, record, result);

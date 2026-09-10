@@ -80,8 +80,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "2cfad2d579c05be77ab34000490c314aef47d4f5cac0baaded90da24395897bd",
-      "bytes": 32855,
+      "sha256": "a819528d918210807e576ea8abb179ee7422b9cde2d23efee1a2390e6f7496a0",
+      "bytes": 33266,
       "role": "browser"
     },
     "lib/submit.ts": {
@@ -105,8 +105,8 @@
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
-      "sha256": "51727df261cabecb8d291fdef92d522a04d2b87b458100970e03475227eede84",
-      "bytes": 3416,
+      "sha256": "22d407ec30a0eae84683a1c05fadfcb97998a876046614925813d40da3447e85",
+      "bytes": 4536,
       "role": "browser"
     },
     "components/CookiePolicy.astro": {
@@ -145,8 +145,8 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "3f25e754f7c417ae33541eef952365510d6ce7236d755a850fa3419fb695bd38",
-      "bytes": 33526,
+      "sha256": "19f1d0a3f1316caa5f055fa4d7c8995b2175936662403368b54746463cf91937",
+      "bytes": 34260,
       "role": "backend"
     },
     "server/backend/smoke.ts": {

@@ -141,6 +141,35 @@ export async function sendToDataManager(
     };
   }
 
+  // CLAUDE.md 4.: a customer id PONTOSAN 10 számjegy, kötőjelek NÉLKÜL (a felület
+  // `123-456-7890`-ként mutatja, az API `1234567890`-et vár). Eddig CSAK az
+  // onboarding-generátor ellenőrizte, futásidőben semmi — egy kézzel szerkesztett
+  // KV-config kötőjeles vagy elgépelt id-je determinisztikus vendor-400-akat
+  // termelt, DLQ-zajjal és riasztásokkal, „jogosultsági hiba" képében.
+  // A Meta-láb ugyanezt a hibaosztályt már `invalid_identifier` skippel kezeli
+  // (lib/meta.ts pixel_id) — a ledger-kódot a normalizeDelivery képezi le belőle,
+  // ezért itt SZÁNDÉKOSAN nincs `error_code`.
+  const customerIdInvalid = !/^\d{10}$/.test(customerId);
+  const loginCustomerId = siteConfig.gads?.login_customer_id;
+  const loginIdInvalid = loginCustomerId != null && !/^\d{10}$/.test(loginCustomerId);
+  if (customerIdInvalid || loginIdInvalid) {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID],
+      site_id: siteConfig.site_id,
+      event_name: payload.event_name,
+      // Az ÉRTÉK nem megy logba (elrontott configba bármi kerülhetett); a hossz
+      // és az, hogy melyik mező hibás, elég a diagnózishoz.
+      field: customerIdInvalid ? 'gads.customer_id' : 'gads.login_customer_id',
+      value_length: (customerIdInvalid ? customerId : loginCustomerId!).length
+    });
+    // A `GAdsResult`-nak nincs `skip_reason` mezője (a böngésző-fan-out
+    // vendor-eredményeivel ellentétben) — az offline láb a HIBAKÓDDAL jelez, és a
+    // ledger-oldali `skip_reason`-t a `skipReasonFromErrorCode` képezi belőle.
+    return { success: true, skipped: true, error_code: TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID };
+  }
+
   const conversionActionId = siteConfig.gads?.conversion_actions?.[payload.event_name];
   if (!conversionActionId) {
     logStructured({
@@ -174,18 +203,47 @@ export async function sendToDataManager(
   if (hashedUserData.em) userIdentifiers.push({ emailAddress: hashedUserData.em });
   if (hashedUserData.ph) userIdentifiers.push({ phoneNumber: hashedUserData.ph });
 
-  // address is matched "all at once" — only worth sending when we have the
-  // hashed name parts (parity with the legacy addressInfo behaviour). region/
-  // postal are PLAIN (CLAUDE.md Rule 7 holds for the Data Manager too).
-  if (hashedUserData.fn || hashedUserData.ln) {
-    const address: Record<string, unknown> = {};
-    if (hashedUserData.fn) address.givenName = hashedUserData.fn;
-    if (hashedUserData.ln) address.familyName = hashedUserData.ln;
-    const region = normalizeCountry(payload.country) || normalizeCountry(siteConfig.country_code);
-    if (region) address.regionCode = region.toUpperCase();
-    const zp = normalizePostalCode(payload.postal_code);
-    if (zp) address.postalCode = zp;
-    userIdentifiers.push({ address });
+  // A CÍM-AZONOSÍTÓ CSAK HIÁNYTALANUL KÜLDHETŐ. A Google `AddressInfo`-ja MIND A
+  // NÉGY mezőt (givenName, familyName, regionCode, postalCode) kötelezőnek jelöli,
+  // és egy hiányos bundle NEM „gyengébb match": a Data Manager a TELJES kérést
+  // utasítja el (400 INVALID_ARGUMENT), tehát a MELLETTE utazó, tökéletesen
+  // érvényes e-mail/telefon azonosító is odavész. A hiba a
+  // `DATAMANAGER_VALIDATION_FAILED` TERMINÁLIS ágra fut, vagyis három azonos
+  // újrapróbálkozás után a lifecycle-konverzió halott — pont a pénz-lábon.
+  //
+  // Az eddigi feltétel (`fn || ln`) ezt aktívan megtermelte: egy csak-keresztneves
+  // vagy irányítószám nélküli lead (telefonos/manuális rögzítés, admin-replay)
+  // csonka bundle-t küldött. Az `EU` régió-kód szintén ide esik: a
+  // `normalizeCountry('EU')` undefined, tehát a regionCode kimaradt volna.
+  //
+  // Innentől: hiányos cím → a bundle KIMARAD, az event megy tovább a hash-elt
+  // e-maillel/telefonnal. A kihagyás nem néma (warn + a hiányzó mezőnevek; a
+  // mezőNÉV nem PII).
+  const region = normalizeCountry(payload.country) || normalizeCountry(siteConfig.country_code);
+  const zp = normalizePostalCode(payload.postal_code);
+  if (hashedUserData.fn || hashedUserData.ln || zp) {
+    const missing: string[] = [];
+    if (!hashedUserData.fn) missing.push('givenName');
+    if (!hashedUserData.ln) missing.push('familyName');
+    if (!region) missing.push('regionCode');
+    if (!zp) missing.push('postalCode');
+    if (missing.length === 0) {
+      userIdentifiers.push({
+        address: {
+          givenName: hashedUserData.fn,
+          familyName: hashedUserData.ln,
+          regionCode: region!.toUpperCase(),
+          postalCode: zp
+        }
+      });
+    } else {
+      logStructured({
+        level: 'warn',
+        message: `Data Manager address identifier omitted — incomplete bundle (missing: ${missing.join(', ')}); the event still carries its email/phone identifiers`,
+        site_id: siteConfig.site_id,
+        event_name: payload.event_name
+      });
+    }
   }
 
   // --- event ---------------------------------------------------------------

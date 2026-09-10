@@ -47,10 +47,35 @@ interface Props {
 
 const { eventId = null, identity = null } = Astro.props;
 const payload = eventId ? { eventId, identity: identity ?? null } : null;
+
+/**
+ * JSON EGY `<script>` ELEMBE — ESCAPE-ELVE.
+ *
+ * A `JSON.stringify` NEM escape-eli a `<` karaktert, a `<script>` tartalma pedig
+ * nyers szöveg: egy `</script>` részlet BÁRMELYIK mezőben lezárja az elemet, és
+ * ami utána jön, azt a böngésző HTML-ként értelmezi — a site saját originjén.
+ *
+ * Ez itt nem elméleti: az `identity` a LÁTOGATÓ ÁLTAL BEÍRT név/e-mail/telefon,
+ * amit a siker-oldal a saját üzleti rekordjából renderel vissza. A támadási alak:
+ * curl-lel elküldött form preparált vezetéknévvel → a 303 `Location` fejlécből
+ * kiolvasott, MÉG BE NEM VÁLTOTT commit-token → a link átadása az áldozatnak.
+ *
+ * A `<` alak JSON-ként ugyanazt a stringet adja vissza, tehát a
+ * `JSON.parse` eredménye BITRE változatlan. Az U+2028/2029 azért van itt, mert
+ * azok JSON-ban legálisak, JS-forrásban viszont sortörésnek számítanak.
+ */
+const payloadJson = payload
+  ? JSON.stringify(payload)
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/&/g, '\\u0026')
+      .replace(/ /g, '\\u2028')
+      .replace(/ /g, '\\u2029')
+  : '';
 ---
 
 {payload && (
-  <script type="application/json" data-sb-conversion-commit set:html={JSON.stringify(payload)} />
+  <script type="application/json" data-sb-conversion-commit set:html={payloadJson} />
   <script>
     import { commitPendingConversion } from '../lib';
 
