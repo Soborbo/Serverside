@@ -12,8 +12,8 @@
 | `phone_number` | E.164 formátum (`+447123456789`). Normalize_phone helper. |
 | `first_name` | lowercase, trim |
 | `last_name` | lowercase, trim |
-| `city` | lowercase, trim. NE strip ékezetet (`Pécs` marad `pécs`). |
-| `postal_code` | uppercase, ALL whitespace stripped (`SW1A 1AA` → `SW1A1AA`) |
+| `city` | lowercase, trim, **szóköz+központozás nélkül** a Meta-hashhez (`New York` → `newyork`). NE strip ékezetet (`Pécs` marad `pécs`). |
+| `postal_code` | **Meta-hashhez: lowercase**, szóköz ÉS kötőjel nélkül (`SW1A 1AA` → `sw1a1aa`). A Google plain-ághoz uppercase, kötőjellel. |
 | `country` | 2-betűs ISO 3166-1 alpha-2 lowercase (`gb`, `hu`, `de`) |
 
 ### Mezők, amiket NEM hash-elünk (pass-through plain)
@@ -50,9 +50,31 @@
 
 ### Postal code
 
+> **⚠️ PLATFORM-ELTÉRÉS (2026-09-10) — KÉT ALAK, KÉT CÉL.** A `zp`/`ct` az e-mail
+> ELLENTÉTE: ott a Meta a literál stringet hash-eli (ezért tilos okoskodni), itt
+> viszont EXPLICIT normalizálást ír elő. A §1 korábban a kettőt összemosta, és a
+> `zp` NAGYBETŰSEN ment ki — a SHA-256 pedig kis/nagybetű-érzékeny, tehát az a
+> hash SOHA nem találhatott. (A Dataset Quality API 100% `zip` coverage-et mutat,
+> de a coverage a KÜLDÉST méri, nem a TALÁLATOT.)
+
+**META (hash-elve) — `normalizePostalCodeForMeta` / `normalizeCityForMeta`:**
+
+- Lowercase: `SW1A 1AA` → `sw1a1aa`
+- Strip ALL whitespace ÉS kötőjel: `12345-6789` → `123456789`
+- US: csak az első 5 számjegy (`12345-6789` + `country_code:'US'` → `12345`)
+- City: szóköz és központozás ki (`Stoke-on-Trent` → `stokeontrent`), **az ékezet MARAD**
+  (a Meta ezt nem kérte — kitalált szabályt nem vezetünk be)
+
+**GOOGLE DATA MANAGER (PLAIN, nem hash-elve — §7) — `normalizePostalCode`:**
+
 - Uppercase: `sw1a 1aa` → `SW1A 1AA`
 - Strip ALL whitespace: `SW1A 1AA` → `SW1A1AA`
 - Ne strip kötőjelet (US ZIP+4 format `12345-6789` marad)
+- `city` a Data Manager AddressInfo-ban NEM létezik → eldobjuk
+
+**Ha a két ágat összevonod**, vagy a Google plain-értéke romlik el, vagy a Meta
+hash-e — mindkettő NÉMÁN. Az őr: `tests/hash.test.ts` a hash-elt byte-stringet
+pinneli (nem csak a 64-hex alakot), mindkét irányban.
 
 ### Country
 
