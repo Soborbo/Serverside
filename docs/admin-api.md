@@ -20,8 +20,15 @@ legyen auth-gated — a váz nem tartalmaz secretet; a tokent te írod be, és m
 adat-hívás az `X-Admin-Token` headerrel megy. A token a `sessionStorage`-ben marad
 (tab-záráskor törlődik), relatív URL-ek → azon a host-on dolgozik, ahol megnyitod.
 
+> ⚠️ **CSAK A GATEWAY SAJÁT HOSZTJÁN NYITHATÓ MEG.** Ügyfél-zónán (painlessremovals.com,
+> beautyflow.pro, …) a végpont **404**-et ad. Ok: a `sessionStorage` ORIGIN-hez kötött,
+> tehát egy ügyfél-hoszton megnyitva a **globális, flotta-szintű** `ADMIN_API_TOKEN` az
+> ÜGYFÉL originjére kerülne, ahol bármelyik ott futó szkript (site-XSS, kompromittált
+> third-party tag, gazdátlan GTM Custom HTML tag) kiolvashatja — a robbanási sugár az
+> egész flotta, nem egy site. Az `ADMIN_UI_HOSTS` env-var (vesszős lista) csak BŐVÍT.
+
 ```
-https://<host>/api/event/admin-ui
+https://tracking.soborbo.co.uk/api/event/admin-ui
 ```
 
 Szigorú CSP (`default-src 'none'; connect-src 'self'`), minden ledger-adat

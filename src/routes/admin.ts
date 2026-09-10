@@ -76,7 +76,17 @@ export async function handleAdmin(
     return handleReconReport(request, env);
   }
   if (request.method === 'GET' && path.startsWith('leads/')) {
-    return handleLeadTrail(env, hostname, decodeURIComponent(path.slice('leads/'.length)));
+    // A `decodeURIComponent` `URIError`-t dob hibas percent-szekvenciara
+    // (`/admin/leads/%zz`). Orizetlenul ez a globalis catch-be esett -> 500 + egy
+    // `critical` sulyu TRK-000-001 log-sor. Egy elgepelt lead-id nem lehet
+    // „kritikus rendszerhiba": a rossz alak egyszeruen ervenytelen azonosito.
+    let leadId;
+    try {
+      leadId = decodeURIComponent(path.slice('leads/'.length));
+    } catch {
+      return json({ error: 'invalid_lead_id' }, 400);
+    }
+    return handleLeadTrail(env, hostname, leadId);
   }
   if (request.method === 'POST' && path === 'dlq/replay') {
     return handleDlqReplay(request, env, ctx);
@@ -150,10 +160,16 @@ async function handleConsentStats(env: Env, hostname: string): Promise<Response>
       banner_impressions: shown.results ?? []
     }, 200);
   } catch (err) {
-    return json(
-      { error: 'query_failed', detail: err instanceof Error ? err.message : String(err) },
-      500
-    );
+    // A NYERS D1-hibauzenet NEM megy a valaszba: tartalmazhat lekerdezes-reszletet
+    // es sematikai belsoseget. A reszlet a strukturalt logba valo, a valasz
+    // ANNYIT mondjon, hogy a lekerdezes elszallt.
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.LEDGER_WRITE_FAILED,
+      message: 'Admin consent-stats query failed',
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return json({ error: 'query_failed' }, 500);
   }
 }
 

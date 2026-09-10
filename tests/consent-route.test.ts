@@ -97,10 +97,32 @@ function makeEnv(
   return { env, calls };
 }
 
-function post(path: string, body: unknown, host = HOST): Request {
+/**
+ * A `sbo_consent` suti a body `consent_id`-jehez kotve.
+ *
+ * A dontest CSAK a SAJAT bongeszoje irhatja: a `consent_id` a kliens altal
+ * valasztott azonosito, es a `getConsentState` a LEGMAGASABB revisiont adja
+ * vissza — kotes nelkul barki, aki egy `consent_id`-t ismer, ravihetne egy
+ * `withdrawn`-t (az Origin curl-bol hamisithato), amivel az aldozat offline
+ * konverzioi neman kimaradnanak es a jogi naplo hamis visszavonast rogzitene.
+ * A valodi kliens mindig hozza a sutit (a consent-sbo.ts ELOBB ir sutit, csak
+ * UTANA POST-ol, same-origin fetch-csel).
+ */
+function sboCookie(consentId: string): string {
+  return `sbo_consent=v2.1.1.1.accept_all.${consentId}.1787000000.2026-08-a`;
+}
+
+function post(path: string, body: unknown, host = HOST, cookie?: string): Request {
+  const consentId = (body as { consent_id?: string } | null)?.consent_id;
+  const cookieHeader =
+    cookie !== undefined ? cookie : consentId ? sboCookie(consentId) : undefined;
   return new Request(`https://${host}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: `https://${host}` },
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: `https://${host}`,
+      ...(cookieHeader ? { Cookie: cookieHeader } : {})
+    },
     body: JSON.stringify(body)
   });
 }
@@ -265,5 +287,42 @@ describe('GET /api/consent/:id — a legfrissebb revision', () => {
     // Egy cache-elt consent-állapot a visszavonást késleltetné — pont azt, aminek
     // azonnal hatnia kell.
     expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
+});
+
+describe('a dontes a SAJAT sutijehez kotott (consent_id ↔ sbo_consent)', () => {
+  it('IDEGEN consent_id-re kuldott visszavonas 403 — es SEMMI nem irodik D1-be', async () => {
+    // Ez a tamadas: az aldozat `consent_id`-jet ismerve egy `withdrawn` sor
+    // beirasa max revisionnel. A `lead-status.ts` a consent_log AKTUALIS
+    // allapotat kerdezi, tehat ettol az aldozat osszes offline konverzioja
+    // neman kimaradna — a jogi bizonyitek-naplo pedig hamis visszavonast orizne.
+    const { env, calls } = makeEnv(SBO_SITE);
+    const victimId = DECISION.consent_id;
+    const res = await handleConsent(
+      post(
+        '/api/consent',
+        { ...DECISION, decision: 'withdrawn', cat_analytics: false, cat_marketing: false, revision: 10000 },
+        HOST,
+        sboCookie('tamado-sajat-id-0000000000001')
+      ),
+      env
+    );
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe('consent_id_cookie_mismatch');
+    expect(calls.filter((c) => /INSERT INTO consent_log/i.test(c.sql))).toHaveLength(0);
+    expect(victimId).toBe(DECISION.consent_id);
+  });
+
+  it('suti NELKUL sem irhato dontes egy ismert consent_id-re', async () => {
+    const { env, calls } = makeEnv(SBO_SITE);
+    const res = await handleConsent(post('/api/consent', DECISION, HOST, ''), env);
+    expect(res.status).toBe(403);
+    expect(calls.filter((c) => /INSERT INTO consent_log/i.test(c.sql))).toHaveLength(0);
+  });
+
+  it('a SAJAT sutijevel viszont atmegy (a legitim kliens utja valtozatlan)', async () => {
+    const { env } = makeEnv(SBO_SITE);
+    const res = await handleConsent(post('/api/consent', DECISION), env);
+    expect(res.status).toBe(204);
   });
 });

@@ -316,7 +316,16 @@ export async function fetchBusinessSourceFindings(
         .bind(date)
         .all<BusinessCountRow>(),
       env.LEDGER.prepare(
-        `SELECT site_id, substr(occurred_at, 1, 10) AS date, status AS event_name, COUNT(*) AS count
+        // `COUNT(DISTINCT COALESCE(order_id, id))`, NEM `COUNT(*)`: a `lead_status`
+        // sorai per-KÍSÉRLET keletkeznek (a beszúrás a 503/202 elágazások ELŐTT
+        // ütemeződik), tehát minden CRM-retry új sort ír ugyanarról az üzleti
+        // eseményről. Nyers darabszámmal három újrapróbált lead PONTOSAN elfedhet
+        // hármat, ami sosem érkezett meg — a drift-ellenőrzés `got >= count` ágon
+        // továbblép, és a hiány láthatatlan marad. A régi (order_id IS NULL)
+        // sorokra a COALESCE a sor-egyedi `id`-t adja → azokra bitre a mai
+        // viselkedés. Lásd 0010 migráció.
+        `SELECT site_id, substr(occurred_at, 1, 10) AS date, status AS event_name,
+                COUNT(DISTINCT COALESCE(order_id, id)) AS count
          FROM lead_status
          WHERE substr(occurred_at, 1, 10) = ?1
            AND lead_id NOT LIKE '%smoke%' AND lead_id NOT LIKE '%dm-validate%'

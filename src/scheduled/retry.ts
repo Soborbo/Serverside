@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import {
   listPendingRetries,
+  listSitePrefixes,
   deleteDeadLetter,
   writeDeadLetter,
   archiveExpiredRecord,
@@ -14,7 +15,7 @@ import { sendToDataManager } from '../lib/datamanager';
 import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
-import { getSiteConfig } from '../lib/config';
+import { lookupSiteConfig } from '../lib/config';
 import {
   recordDeliveries,
   normalizeDelivery,
@@ -29,6 +30,8 @@ import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 const MAX_RETRIES_PER_RUN = 100;
+/** A lejart rekordok archivalasi kerete egy futasra (a listPendingRetries default-ja). */
+const MAX_EXPIRED_PER_RUN = 200;
 
 export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Promise<void> {
   logStructured({
@@ -41,7 +44,30 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
   let pending: { key: string; record: DeadLetterRecord }[];
   let expired: { key: string; record: DeadLetterRecord }[];
   try {
-    ({ pending, expired } = await listPendingRetries(env));
+    // SITE-ONKÉNTI, MÉLTÁNYOS begyűjtés. A prefix nélküli listázás R2
+    // KULCS-SORRENDBEN adja a rekordokat, és a 100-as futás-keret az első
+    // site-oknál elfogy: egy alfabetikusan korai site tartós
+    // `blocked_configuration` backlogja (eseményenként egy 7 napig élő rekord)
+    // minden utána következő site-ot ELÉHEZTET — azok 24 órás ablakú, VALÓDI
+    // vendor-hibái egyetlen újrapróbálkozás nélkül járnak le.
+    //
+    // A prefixeket delimiter-listázás adja (olcsó), a keretet pedig elosztjuk.
+    // Egy site sem kaphat 5-nél kevesebbet: különben sok tenantnál a méltányos
+    // rész nullára kerekedne, és senki nem haladna.
+    const prefixes = await listSitePrefixes(env);
+    if (prefixes.length > 1) {
+      const perSite = Math.max(5, Math.floor(MAX_RETRIES_PER_RUN / prefixes.length));
+      const perSiteExpired = Math.max(5, Math.floor(MAX_EXPIRED_PER_RUN / prefixes.length));
+      pending = [];
+      expired = [];
+      for (const prefix of prefixes) {
+        const page = await listPendingRetries(env, prefix, perSite, perSiteExpired);
+        pending.push(...page.pending);
+        expired.push(...page.expired);
+      }
+    } else {
+      ({ pending, expired } = await listPendingRetries(env));
+    }
   } catch (err) {
     logStructured({
       level: 'error',
@@ -236,12 +262,19 @@ export function logSkippedRetry(record: DeadLetterRecord): void {
  * a szándékos skip (időközben eltávolított config) pedig 'skipped'-ként.
  */
 export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<VendorResult> {
-  const siteConfig = await getSiteConfig(record.hostname, env);
+  // `lookupSiteConfig`, NEM a `getSiteConfig` compat-burkoló: az a TRANZIENS
+  // KV-hibát és a NEM LÉTEZŐ site-ot egyformán `null`-ként adta vissza. Egy pár
+  // másodperces KV-blip így `NO_SITE_CONFIG` néven égetett el egy retry-kísérletet
+  // ÉS írt egy 'rejected' delivery-sort a ledgerbe (ami a reconciliation
+  // vendor-hibarátáját is felhúzza) — három blip alatt a rekord dead lett, holott
+  // a site végig létezett. A pénz-utak mind ezt a feloldót használják (lib/config.ts).
+  const { config: siteConfig, unavailable } = await lookupSiteConfig(record.hostname, env);
   if (!siteConfig) {
+    const code = unavailable ? TrackingErrorCode.KV_READ_FAILED : TrackingErrorCode.NO_SITE_CONFIG;
     return {
       success: false,
-      error_code: TrackingErrorCode.NO_SITE_CONFIG,
-      error: ERROR_DESCRIPTIONS[TrackingErrorCode.NO_SITE_CONFIG]
+      error_code: code,
+      error: ERROR_DESCRIPTIONS[code]
     };
   }
 

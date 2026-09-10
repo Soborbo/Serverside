@@ -1,6 +1,6 @@
 {
   "_comment": "GENERÁLT RACSNI — csak szűkülhet. Lásd scripts/check-error-code-emission.mjs",
-  "generated_from_active_codes": 105,
+  "generated_from_active_codes": 124,
   "uncovered": [
     "TRK-000-008",
     "TRK-400-006",
@@ -10,7 +10,6 @@
     "TRK-600-002",
     "TRK-600-004",
     "TRK-600-005",
-    "TRK-600-006",
     "TRK-600-007",
     "TRK-600-008",
     "TRK-700-001",

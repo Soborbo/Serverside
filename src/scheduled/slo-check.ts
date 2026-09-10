@@ -131,10 +131,31 @@ async function checkConversionSpike(env: Env): Promise<void> {
 }
 
 export async function handleSloCheck(env: Env): Promise<void> {
-  const siteCount = await countSiteConfigs(env);
-  const { pending: pendingCount, dead: deadCount, truncated } = await countDlqRecords(env);
-
+  // A spike-őr ELŐRE került, és a DLQ-számlálás guardot kapott. Eddig a
+  // `countDlqRecords` R2-listázása ŐRIZETLEN volt, és a hívás a
+  // `checkConversionSpike` ELŐTT állt: egy dobó `list()` a teljes handlert
+  // elutasította, MIELŐTT a spike-detektor egyáltalán lefutott volna. Az pedig az
+  // EGYETLEN 30 perces kontroll a tokenless böngésző-úton — és a kiesés néma volt
+  // (nincs TRK-kód, csak a runtime unhandled-rejection sora).
   await checkConversionSpike(env);
+
+  const siteCount = await countSiteConfigs(env);
+  let dlq: { pending: number; dead: number; truncated: boolean };
+  try {
+    dlq = await countDlqRecords(env);
+  } catch (err) {
+    // SZÁNDÉKOSAN nem esünk vissza nullára: a „0 pending / 0 dead" HAMIS ZÖLD
+    // lenne — pont az a néma egészség-jelentés, ami ellen ez a cron készült.
+    // Inkább nincs DLQ-szakasz ebben a körben, de hangosan.
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.DLQ_LIST_FAILED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.DLQ_LIST_FAILED],
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return;
+  }
+  const { pending: pendingCount, dead: deadCount, truncated } = dlq;
 
   const truncNote = truncated ? ` (≥${MAX_PAGES * PAGE_LIMIT} — list truncated)` : '';
 

@@ -125,6 +125,20 @@ export function normalizePhone(
   let cleaned = phone.replace(/[\s\-().]/g, '');
   if (cleaned.length === 0) return undefined;
 
+  // NEMZETKÖZI HOZZÁFÉRÉSI PREFIX (`00`) → `+`. A `0044 7123 456789` alak
+  // hétköznapi (nyomtatott névjegy, ügyfél által beírt szám), és eddig a
+  // trunk-`0` ágra esett: `+44` + `0447123456789` = `+440447123456789` — 15
+  // számjegy, tehát ÁTMENT a záró regexen, és NÉMÁN egy sosem-létező számot
+  // hash-elt. Ugyanez HU-n: `0036 30…` → `+36036…`. A hibás `ph` egyik
+  // platformon sem match-el, és semmi nem jelzi.
+  //
+  // A csere a legelső lépés, hogy a lenti ország-ágak már a kanonikus `+CC`
+  // alakot lássák. (`00` UTÁN legalább egy számjegy kell — a puszta `00` nem
+  // hívókód.)
+  if (cleaned.startsWith('00') && /^\d/.test(cleaned.slice(2))) {
+    cleaned = '+' + cleaned.slice(2);
+  }
+
   if (cleaned.startsWith('+')) {
     // Generalized trunk-prefix repair: if `+CC0` matches a known dialing
     // code that uses a trunk `0`, strip the trunk. Covers UK, HU, DE, FR

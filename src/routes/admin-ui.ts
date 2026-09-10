@@ -1,3 +1,5 @@
+import type { Env } from '../env';
+import { logStructured } from '../types';
 /**
  * Admin UI (#18) — önálló, build-mentes egylapos dashboard, amit a Worker
  * szolgál ki a `GET /api/event/admin-ui` útvonalon. A 4 admin-endpointot
@@ -11,13 +13,64 @@
  *   nyers adatra) → XSS-védelem a vendor_message-szerű mezőkre.
  * - Szigorú CSP: csak inline style/script + same-origin fetch engedett.
  */
-export function handleAdminUI(): Response {
+/**
+ * A GATEWAY SAJÁT hosztjai. CSAK ezeken szolgáljuk ki az admin-UI-t.
+ *
+ * ── A ZÁRT RÉS ──────────────────────────────────────────────────────────────
+ * Az UI a GLOBÁLIS, FLOTTA-SZINTŰ `ADMIN_API_TOKEN`-t a `sessionStorage`-be
+ * teszi (lentebb), és eddig MINDEN hoszton kiszolgáltuk, amit a Worker felvesz —
+ * vagyis minden ügyfél-zónán (`wrangler.toml [[routes]]`). A `sessionStorage`
+ * ORIGIN-hez kötött: a token így az ÜGYFÉL sajátjába került. Onnantól bármelyik
+ * szkript, ami azon az originen fut ugyanabban a tabban — a site saját XSS-e, egy
+ * kompromittált third-party tag, vagy egy gazdátlan GTM Custom HTML tag (épp az a
+ * osztály, amit a `lib/gtm-conformance.ts` keres) — kiolvashatja. A robbanási
+ * sugár nem egy site, hanem az EGÉSZ flotta: minden tenant lead-trailje,
+ * DLQ-replay és -discard, fleet-riport.
+ *
+ * A token maga sosem utazott a HTML-ben — a rés a TÁROLÁS HELYE volt.
+ *
+ * A `tracking.soborbo.co.uk` tenant-semleges (a Worker saját custom domainje),
+ * a `*.workers.dev` pedig a teszt/curl-hoszt. Az `ADMIN_UI_HOSTS` env-var
+ * (vesszős lista) csak BŐVÍT, ha egy operátor másik saját hosztról dolgozik.
+ */
+const DEFAULT_ADMIN_UI_HOST = 'tracking.soborbo.co.uk';
+
+export function isAdminUiHost(hostname: string, env?: Env): boolean {
+  if (hostname.endsWith('.workers.dev')) return true;
+  if (hostname === DEFAULT_ADMIN_UI_HOST) return true;
+  const extra = env?.ADMIN_UI_HOSTS;
+  if (!extra) return false;
+  return extra
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(hostname.toLowerCase());
+}
+
+export function handleAdminUI(request: Request, env?: Env): Response {
+  const hostname = new URL(request.url).hostname;
+  if (!isAdminUiHost(hostname, env)) {
+    // 404, nem 403: egy ügyfél-zónán ennek a végpontnak LÉTEZNIE sem kell.
+    // A pontos ok a logban van, nem a válaszban.
+    logStructured({
+      level: 'info',
+      message:
+        'Admin UI refused on a tenant hostname — open it on the gateway domain instead (the global admin token must not be stored on a tenant origin)',
+      hostname
+    });
+    return new Response('Not found', { status: 404 });
+  }
   return new Response(ADMIN_UI_HTML, {
     status: 200,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
+      // `frame-ancestors 'none'` — az UI nem beágyazható. Enélkül egy idegen lap
+      // iframe-be tehette; a `sessionStorage` ugyan böngészési-kontextusonként
+      // külön él (tehát a keretben „nem csatlakozott" állapotból indul), de a
+      // clickjacking-felület fölöslegesen nyitva állt.
       'Content-Security-Policy':
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+      'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
       'Cache-Control': 'no-store'

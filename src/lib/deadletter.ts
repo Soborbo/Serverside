@@ -194,6 +194,32 @@ export interface PendingRetryScan {
   expired: { key: string; record: DeadLetterRecord }[];
 }
 
+/**
+ * A DLQ-ban jelen lévő SITE-PREFIXEK (`<site_id>/`), delimiter-listázással.
+ *
+ * MIÉRT KELL: a `listPendingRetries` prefix nélkül a TELJES bucketet járja, R2
+ * KULCS-SORRENDBEN (`{site_id}/{platform}/{date}/…`), és az első 100 nem-lejárt
+ * rekordot tartja meg. Egy alfabetikusan korai site tartós backlogja (egy elvárt,
+ * de konfigurálatlan platform ESEMÉNYENKÉNT ír egy 7 napig élő, óránként
+ * újraírt `blocked_configuration` rekordot) így ELÉHEZTETI az összes utána
+ * következő site-ot: azok rekordjai — köztük 24 órás ablakú, valódi
+ * vendor-hibák — egyetlen újrapróbálkozás nélkül járnak le és kerülnek a dead
+ * archívumba. A hiba pont akkor a legsúlyosabb, amikor a legnagyobb a baj.
+ *
+ * A delimiter-listázás olcsó (nem olvas objektumot, csak prefixeket ad).
+ */
+export async function listSitePrefixes(env: Env): Promise<string[]> {
+  const prefixes: string[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const res: R2Objects = await env.DEAD_LETTER.list({ delimiter: '/', cursor, limit: 1000 });
+    for (const p of res.delimitedPrefixes ?? []) prefixes.push(p);
+    if (!res.truncated) break;
+    cursor = res.cursor;
+  }
+  return prefixes;
+}
+
 export async function listPendingRetries(
   env: Env,
   sitePrefix?: string,

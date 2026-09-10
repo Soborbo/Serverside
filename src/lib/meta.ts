@@ -71,7 +71,25 @@ function classifyMetaError(
   metaMessage: string | undefined
 ): TrackingErrorCode {
   if (metaCode === 190 || status === 401) return TrackingErrorCode.META_INVALID_ACCESS_TOKEN;
-  if (metaCode === 4 || metaCode === 17 || status === 429) return TrackingErrorCode.META_RATE_LIMITED;
+  // A Meta a KVÓTA-hibáit HTTP 400-zal is adja, a valódi jelzés a `code`-ban van:
+  //   4     — app-szintű rate limit
+  //   17    — user-szintű rate limit
+  //   613   — custom-rate-limit (a CAPI leggyakoribb throttle-kódja)
+  //   80004 — business-use-case (CAPI) rate limit
+  //   32    — page-szintű rate limit
+  // Ezek nélkül a throttle `META_API_REJECTED`-ként landolt, ami TERMINÁLIS
+  // besorolás: a rendszer három azonos újrapróbálkozás után eldobta a
+  // konverziót — pont egy forgalmi csúcson, amikor a legtöbb pénz múlik rajta.
+  if (
+    metaCode === 4 ||
+    metaCode === 17 ||
+    metaCode === 32 ||
+    metaCode === 613 ||
+    metaCode === 80004 ||
+    status === 429
+  ) {
+    return TrackingErrorCode.META_RATE_LIMITED;
+  }
   if (metaCode === 803 || (status === 400 && metaMessage && /pixel|object/i.test(metaMessage)))
     return TrackingErrorCode.META_PIXEL_NOT_FOUND;
   if (status === 400 && metaMessage && /user_data|hash|normaliz/i.test(metaMessage))

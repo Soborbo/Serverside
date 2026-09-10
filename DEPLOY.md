@@ -98,7 +98,10 @@ A `wrangler.toml`-ban kommentben, kódból guardolva — bekapcsolás = uncommen
 - **`INGEST_LIMITER`** rate limit, **`ADMIN_EMAIL`** email-alert, **`[[routes]]`** zone-routing.
 
 Admin API/UI + lead-status: `ADMIN_API_TOKEN` secret kell (`wrangler secret put`),
-különben 401. Az UI: `https://<host>/api/event/admin-ui`.
+különben 401. Az UI **kizárólag a gateway saját hosztján** nyitható meg:
+`https://tracking.soborbo.co.uk/api/event/admin-ui` (ügyfél-zónán 404 — a globális
+token nem kerülhet egy ügyfél originjének `sessionStorage`-ébe). Bővítés:
+`ADMIN_UI_HOSTS` var.
 
 ---
 

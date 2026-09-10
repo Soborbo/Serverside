@@ -8,7 +8,16 @@
     "`path` a szerver-lab gateway-dispatch.ts-e az adott repo default againak",
     "gyokerehez kepest. A `sbo` mezot SZANDEKOSAN NEM iratjuk ide: azt a repo",
     "git-fajabol MERJUK (van-e `consent-sbo-state.ts`), mert egy kezzel karbantartott",
-    "igen/nem oszlop pontosan ugy sodrodna el, mint a verzio-cimke."
+    "igen/nem oszlop pontosan ugy sodrodna el, mint a verzio-cimke.",
+    "",
+    "TELJESSEG (2026-09-10-i meres, `gh api .../git/trees/master?recursive=1`):",
+    "  * skinlab — VAN szerver-laba (src/lib/tracking/gateway-dispatch.ts). Eddig",
+    "    HIANYZOTT innen, tehat a riport `N site rendben`-t irt ki ugy, hogy a",
+    "    flotta legmelyebb forkjat meg sem merte. Felveve.",
+    "  * szelloztessokosan — NINCS `gateway-dispatch.ts` a repoban (Zaraz-alapu,",
+    "    sajat mereskezeles). SZANDEKOSAN nem szerepel: egy nem letezo fajlra",
+    "    olvasva a riport OROKRE pirosan allna, ami pont a valodi driftet fedne el.",
+    "    Ha kap szerver-labat, ide kell venni."
   ],
   "sites": [
     { "site": "painless", "repo": "Soborbo/painlessremovals", "path": "src/lib/soborbo-tracking/server/backend/gateway-dispatch.ts" },
@@ -16,6 +25,7 @@
     { "site": "beautyflow", "repo": "Soborbo/Beautyflow_website", "path": "src/lib/tracking/gateway-dispatch.ts" },
     { "site": "trapez", "repo": "Soborbo/trapezlemezes-webshop", "path": "src/lib/tracking/gateway-dispatch.ts" },
     { "site": "lomtalan", "repo": "Soborbo/lomtalan.hu", "path": "src/lib/tracking/gateway-dispatch.ts" },
-    { "site": "agykontroll", "repo": "Soborbo/agykontrollanglia", "path": "src/lib/gateway-dispatch.ts" }
+    { "site": "agykontroll", "repo": "Soborbo/agykontrollanglia", "path": "src/lib/gateway-dispatch.ts" },
+    { "site": "skinlab", "repo": "Soborbo/skinlab-hungary", "path": "src/lib/tracking/gateway-dispatch.ts" }
   ]
 }

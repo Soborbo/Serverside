@@ -218,6 +218,11 @@ function stripTrunkPrefix(plus: string): string {
 
 export function normalizePhone(raw: string, country: Market = trackingConfig.country): string {
   let p = raw.replace(/[\s\-(). ]/g, '');
+  // Nemzetközi hozzáférési prefix (`00`) → `+`, a szerver `hash.ts`-ével BITRE
+  // azonos szabállyal. Enélkül a `0044 7123 456789` a trunk-`0` ágra esett és
+  // `+440447123456789`-et adott — egy sosem-létező szám, ami a Pixel/CAPI/EC
+  // match-et némán elviszi. A két lábnak ugyanazt a stringet KELL hash-elnie.
+  if (p.startsWith('00') && /^\d/.test(p.slice(2))) p = '+' + p.slice(2);
   if (p.startsWith('+')) return stripTrunkPrefix(p.replace(/[^\d+]/g, '')).slice(0, 20);
   if (p.startsWith('07') && p.length === 11) p = '+44' + p.slice(1);
   else if (p.startsWith('06') && p.length === 11) p = '+36' + p.slice(2);

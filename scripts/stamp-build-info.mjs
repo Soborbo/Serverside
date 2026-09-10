@@ -47,7 +47,17 @@ const commit =
 // jelenti, hogy a kiküldött kód eltér a bélyegzett committól → a CI ezt is bukja.
 let dirty = false;
 if (commit !== 'unknown' && !process.env.WORKERS_CI_COMMIT_SHA && !process.env.GITHUB_SHA) {
-  dirty = git('status --porcelain') !== '';
+  // A BÉLYEG SAJÁT MAGÁT NEM TEHETI DIRTY-VÉ. A `src/build-info.ts` KÖVETETT
+  // fájl, amit épp ez a szkript ír át — az első lokális stamp után a working tree
+  // örökre piszkos, tehát MINDEN további lokális deploy `BUILD_DIRTY=true`-t
+  // bélyegzett egy egyébként tiszta committól. A drift-őr így egy valódi
+  // problémát jelző jelet égetett el zajjá.
+  const STAMP_FILE = 'src/build-info.ts';
+  dirty = git('status --porcelain')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    // A porcelain sor alakja `XY <path>`; a path a 4. karaktertől kezdődik.
+    .some((line) => line.slice(3).trim() !== STAMP_FILE);
 }
 
 const builtAt = process.env.SOURCE_DATE_EPOCH

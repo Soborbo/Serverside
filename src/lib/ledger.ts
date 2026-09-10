@@ -116,6 +116,15 @@ export function skipReasonFromErrorCode(code: string | undefined): SkipReason | 
     case TrackingErrorCode.PLATFORM_NOT_CONFIGURED:
     case TrackingErrorCode.MISSING_CONVERSION_ACTION:
       return 'not_configured';
+    // Az OFFLINE láb formahibás azonosítója (Data Manager: nem 10 jegyű
+    // `customer_id` / `login_customer_id`). A böngésző-fan-out ezt a
+    // `skip_reason`-ön hozza, az offline vendor-eredménynek viszont nincs ilyen
+    // mezője — ott a hibakód a jel, és a ledger-címkét itt vezetjük le belőle.
+    // Enélkül a sor csupasz 'skipped' lenne, megkülönböztethetetlenül egy jogos
+    // consent-kihagyástól: pontosan az a vakfolt, ami a lomtalan Meta-kiesését
+    // öt napig elrejtette.
+    case TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID:
+      return 'invalid_identifier';
     case TrackingErrorCode.DATAMANAGER_NO_IDENTIFIERS:
       return 'no_identifiers';
     default:
@@ -889,15 +898,29 @@ export interface LeadStatusInput {
   occurred_at: string;
   uploaded_to_gads: boolean;
   gads_error_code?: string;
+  /**
+   * A determinisztikus `orderId` — sha256(lead_id_status[_occurrence_id]), ugyanaz,
+   * ami a Google-nek `transactionId`-ként megy (0010 migráció).
+   *
+   * MIÉRT KELL: a sorok per-KÍSÉRLET keletkeznek (a beszúrás a 503/202 elágazások
+   * ELŐTT ütemeződik), tehát minden CRM-retry új sort ír ugyanarról az egyetlen
+   * üzleti eseményről. A `COUNT(*)`-os olvasók (business-counts, reconciliation)
+   * emiatt túlszámolnak: egy tranziens vendor-kiesés received=6/accepted=3 képet
+   * ad, és HAMIS CRITICAL riasztást szül. A `lead_id` nem alkalmas dedup-kulcsnak
+   * (a P10 óta egy leadhez több jogos `payment_received` tartozhat).
+   */
+  order_id?: string;
 }
 
 export async function recordLeadStatus(env: Env, l: LeadStatusInput): Promise<void> {
   if (!env.LEDGER) return;
   try {
     await env.LEDGER.prepare(
+      // Az `order_id` az oszloplista VÉGÉN (0010 ALTER TABLE) — a pozíciófüggő
+      // olvasók indexei így érintetlenek maradnak.
       `INSERT INTO lead_status
-         (id, lead_id, site_id, status, value, currency, occurred_at, source, uploaded_to_gads, gads_error_code, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'crm', ?, ?, ?)`
+         (id, lead_id, site_id, status, value, currency, occurred_at, source, uploaded_to_gads, gads_error_code, created_at, order_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'crm', ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -909,7 +932,8 @@ export async function recordLeadStatus(env: Env, l: LeadStatusInput): Promise<vo
         l.occurred_at,
         l.uploaded_to_gads ? 1 : 0,
         l.gads_error_code ?? null,
-        new Date().toISOString()
+        new Date().toISOString(),
+        l.order_id ?? null
       )
       .run();
   } catch (err) {
