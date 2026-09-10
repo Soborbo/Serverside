@@ -353,10 +353,18 @@ export async function handleConversion(
     env
   );
   if (!siteConfig) {
-    // Tranziens KV-kiesés ≠ nem létező site. A hívók (CRM outbox, site-backend) a
-    // 404-et VÉGLEGESNEK osztályozzák, ezért egy pár másodperces KV-blip alatt
-    // érkező valódi konverziók retry nélkül vesztek volna el. 503 + Retry-After →
-    // a hívó újrapróbál, a vendor-dedup (event_id) pedig védi a duplikáció ellen.
+    // Tranziens KV-kiesés ≠ nem létező site. 503 + Retry-After → a hívó
+    // újrapróbál, a vendor-dedup (event_id) pedig védi a duplikáció ellen.
+    //
+    // ⚠️ A HÍVÓK MA NEM EGYFORMÁK (2026-09-10-i pontosítás). A komment korábban
+    // azt mondta, hogy „a hívók (CRM outbox, site-backend) a 404-et VÉGLEGESNEK
+    // osztályozzák" — ez már csak az EGYIKRE igaz:
+    //   * site-backend (soborbo-tracking `gateway-dispatch.ts`, 5. szerződés):
+    //     a 404 NEM-RETRIABLE → a konverzió azonnal, véglegesen elveszne;
+    //   * CRM outbox: a 2026-07-23-i audit óta a 404 RETRYABLE, a tág (48 próbás)
+    //     konfigurációs kerettel.
+    // A 503 tehát a site-backend miatt is kötelező, a CRM felé pedig azért helyes,
+    // mert a 404 a site NEM LÉTEZÉSÉT állítaná egy múló KV-hiba közben.
     if (siteConfigUnavailable) {
       const kvDuration = Date.now() - startedAt;
       logStructured({

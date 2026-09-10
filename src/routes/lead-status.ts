@@ -224,9 +224,21 @@ export async function handleLeadStatus(
     env
   );
   if (!siteConfig) {
-    // Tranziens KV-hiba → 503 (retry-olható), NEM 404: a CRM outbox a 404-et
-    // failed_permanent-nek osztályozza, így egy KV-blip véglegesen elégetné a
-    // lifecycle-konverziót. A valóban ismeretlen host marad 404.
+    // Tranziens KV-hiba → 503 (retry-olható), NEM 404. A valóban ismeretlen host
+    // marad 404.
+    //
+    // ⚠️ AZ INDOKLÁS FRISSÍTVE (2026-09-10). Ez a komment korábban azt állította,
+    // hogy „a CRM outbox a 404-et failed_permanent-nek osztályozza" — ez a
+    // 2026-07-23-i audit óta NEM IGAZ: a CRM `classifyGatewayStatus`-a a 404-et
+    // RETRYABLE-nek veszi, méghozzá a TÁG, konfigurációs kerettel (48 próba),
+    // mert a 404 javítható ops-állapot (config-drift, félkész onboarding).
+    //
+    // A 503 attól még a helyes válasz, csak MÁS okból: a 404 azt ÁLLÍTANÁ, hogy
+    // ehhez a hosztnévhez nincs site-config. Egy KV-blip alatt ez hazugság, és a
+    // hívót rossz diagnózisra vinné — a CRM az ops-keretét égetné egy nem létező
+    // konfigurációs hibára, a site-backend pedig (gateway-dispatch.ts, 5. szerződés)
+    // a 404-et TOVÁBBRA IS nem-retriable-ként kezeli, tehát ott azonnal elveszne
+    // a lifecycle-konverzió.
     if (siteConfigUnavailable) {
       logStructured({
         level: 'error',
@@ -858,8 +870,13 @@ export async function handleLeadStatus(
   }
   if (configurationBlocked) {
     // A konfigurációs hiba DETERMINISZTIKUS: a CRM újrapróbálkozása magától soha
-    // nem oldja meg — csak elégeti a ~2 órás retry-keretét, aztán failed_permanent
-    // lesz belőle, és a konverzió a config javítása után is elveszett marad.
+    // nem oldja meg, csak égeti a keretét, aztán failed_permanent lesz belőle.
+    //
+    // (2026-09-10: a keret azóta TÁGABB. A `gads_configuration_blocked` 503-unk
+    // `retryable:true`-t hordoz, és a CRM #150 óta ELOLVASSA a szerződést, tehát
+    // a 48 próbás ops-keretet kapja, nem a ~2 óráshoz elegendő 8-at. A 202 attól
+    // még a jobb válasz: ha a példány NÁLUNK van, a CRM-nek egyáltalán nem kell
+    // pörögnie rajta.)
     // Ha a gateway tartósan letette a 7 napos replay-példányt, 202-t adunk („nálam
     // van, ne pörögj rajta"); ha a letétel NEM sikerült, marad az 503, mert akkor a
     // CRM outboxa az egyetlen őrző, és neki KELL megtartania.
