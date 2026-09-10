@@ -790,7 +790,16 @@ async function fetchOfflineLegs(
   const [recv24, recv7d, del24, del7d, lastAcc] = await Promise.all([
     ledger
       .prepare(
-        `SELECT site_id, status AS event_name, COUNT(*) AS received
+        // COUNT(DISTINCT COALESCE(order_id, id)) — a `lead_status` sorai
+        // per-KISERLET keletkeznek (a beszuras a 503/202 elagazasok ELOTT
+        // utemezodik). Nyers darabszammal egy tranziens Data Manager-kieses
+        // (3 lead, mind 503-azva, majd elfogadva) received=6 / accepted=3 kepet
+        // ad -> HAMIS `offline_coverage_drift` + 50%-os `offline_vendor_failure`,
+        // mindketto CRITICAL: a riasztas pont akkor kialt, amikor minden rendben
+        // van. A regi (order_id IS NULL) sorokra a COALESCE a sor-egyedi `id`-t
+        // adja -> azokra bitre a mai viselkedes. Lasd 0010 migracio.
+        `SELECT site_id, status AS event_name,
+                COUNT(DISTINCT COALESCE(order_id, id)) AS received
          FROM lead_status WHERE created_at >= ?1 AND ${NOT_SYNTHETIC}
          GROUP BY site_id, status`
       )
@@ -798,7 +807,16 @@ async function fetchOfflineLegs(
       .all<OfflineReceivedRow>(),
     ledger
       .prepare(
-        `SELECT site_id, status AS event_name, COUNT(*) AS received
+        // COUNT(DISTINCT COALESCE(order_id, id)) — a `lead_status` sorai
+        // per-KISERLET keletkeznek (a beszuras a 503/202 elagazasok ELOTT
+        // utemezodik). Nyers darabszammal egy tranziens Data Manager-kieses
+        // (3 lead, mind 503-azva, majd elfogadva) received=6 / accepted=3 kepet
+        // ad -> HAMIS `offline_coverage_drift` + 50%-os `offline_vendor_failure`,
+        // mindketto CRITICAL: a riasztas pont akkor kialt, amikor minden rendben
+        // van. A regi (order_id IS NULL) sorokra a COALESCE a sor-egyedi `id`-t
+        // adja -> azokra bitre a mai viselkedes. Lasd 0010 migracio.
+        `SELECT site_id, status AS event_name,
+                COUNT(DISTINCT COALESCE(order_id, id)) AS received
          FROM lead_status WHERE created_at >= ?1 AND ${NOT_SYNTHETIC}
          GROUP BY site_id, status`
       )

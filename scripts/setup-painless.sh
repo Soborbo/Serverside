@@ -32,7 +32,16 @@
 
 set -euo pipefail
 
-PHASE="dev"          # dev | production
+# ── A BIZTONSAGOS IRANY AZ ALAPERTELMEZES (CLAUDE.md 17.) ────────────────────
+# Korabban `dev` volt a default, es a dev-fazis `test_event_code`-ot IR A KV-BE.
+# Vagyis a szkript ARGUMENTUM NELKULI futtatasa a painless ELES configjaba tette
+# a TEST_PAINLESS kodot. A site-config edge-cache-elt (300s), tehat a beiras utani
+# ~5 percben a VALODI konverziok a Meta TEST streambe mennek — ez a hibaosztaly
+# ketszer fordult mar elo elesben. A teszt-kod helye a KERES BODY-ja
+# (/api/event/conversion-server), nem a KV.
+#
+# Innentol: a teszt-kodos fazis EXPLICIT `--dev` kapcsolot igenyel.
+PHASE="production"   # production | dev (a --dev test_event_code-ot IR a KV-be)
 DRY_RUN=0
 ONLY="all"           # all | kv | secrets
 HOSTNAME="painlessremovals.com"
@@ -40,6 +49,7 @@ HOSTNAME="painlessremovals.com"
 for arg in "$@"; do
   case "$arg" in
     --production) PHASE="production" ;;
+    --dev)        PHASE="dev" ;;
     --dry-run)    DRY_RUN=1 ;;
     --only=kv)      ONLY="kv" ;;
     --only=secrets) ONLY="secrets" ;;
@@ -214,7 +224,10 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "secrets" ]; then
   echo
   echo "=== Wrangler secrets ==="
 
-  put_secret TURNSTILE_SECRET_KEY    "Turnstile widget secret key"               TURNSTILE_SECRET_KEY
+  # A TURNSTILE_SECRET_KEY KIVEVE: a Turnstile-kapu 2026 nyaran kikerult a
+  # gateway-bol (CLAUDE.md 10.) — a kod NEM olvassa. A prompt bent hagyasa arra
+  # tanitotta az operatort, hogy egy halott secretet allitson be, es azt a
+  # latszatot keltette, hogy a kapu meg el.
   put_secret GADS_OAUTH_CLIENT_ID    "Google Cloud OAuth Client ID"              GADS_OAUTH_CLIENT_ID
   put_secret GADS_OAUTH_CLIENT_SECRET "Google Cloud OAuth Client Secret"          GADS_OAUTH_CLIENT_SECRET
   put_secret GADS_DEVELOPER_TOKEN    "Google Ads Developer Token (jóváhagyott)"  GADS_DEVELOPER_TOKEN

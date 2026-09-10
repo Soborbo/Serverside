@@ -56,6 +56,17 @@ export interface Env {
   // to the request hostname (workers.dev in test mode).
   ALLOWED_ORIGINS?: string;
 
+  /**
+   * Extra hosztnevek (vesszos lista), ahol a `GET /api/event/admin-ui` kiszolgalhato.
+   *
+   * Az UI a GLOBALIS admin-tokent a bongeszo `sessionStorage`-eben tartja, ami
+   * ORIGIN-hez kotott — ezert az UI CSAK a gateway sajat, tenant-semleges
+   * hosztjan (`tracking.soborbo.co.uk`) es a `*.workers.dev` teszt-hoszton jelenik
+   * meg. Egy ugyfel-zonan kiszolgalva a flotta-szintu token az UGYFEL originjere
+   * kerulne, ahol barmelyik ott futo szkript kiolvashatja. Ez a var CSAK BOVIT.
+   */
+  ADMIN_UI_HOSTS?: string;
+
   // A napi synthetic-lead füstteszt elvárt site-jai (vesszővel elválasztva).
   // A daily digest riaszt, ha bármelyiknek nincs friss smoke-sora a ledgerben.
   SMOKE_SITES?: string;

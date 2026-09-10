@@ -827,7 +827,11 @@ export async function handleLeadStatus(
       currency: body.currency,
       occurred_at: occurredAtIso,
       uploaded_to_gads: uploadedToGads,
-      gads_error_code: gadsErrorCode
+      gads_error_code: gadsErrorCode,
+      // A sor per-KÍSÉRLET íródik (ez a hívás a 503/202 elágazások ELŐTT
+      // ütemeződik), ezért a determinisztikus orderId a dedup-kulcs a
+      // COUNT-oló olvasóknak — lásd 0010 migráció.
+      order_id: orderId
     })
   );
 

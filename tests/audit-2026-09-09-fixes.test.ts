@@ -19,6 +19,10 @@ import { stripCommentsForRules } from '../../scripts/check-backend-contract.mjs'
 import type { SiteConfig } from '../src/lib/config';
 import type { Env } from '../src/env';
 import type { GAdsPayload } from '../src/lib/gads';
+import { sendToMetaCAPI } from '../src/lib/meta';
+import { listSitePrefixes } from '../src/lib/deadletter';
+import { handleScheduledRetry } from '../src/scheduled/retry';
+import { readFile } from 'node:fs/promises';
 
 /**
  * A 2026-09-09-i teljes kód-audit javításainak REGRESSZIÓS őre.
@@ -424,5 +428,146 @@ describe('check-backend-contract — a szabály a KÓD-ra kérdez, nem a komment
   it('a valódi kód VÁLTOZATLANUL átmegy', () => {
     const src = `export const BACKEND_LIB_VERSION = '6.7.1';`;
     expect(stripCommentsForRules(src)).toContain(`BACKEND_LIB_VERSION = '6.7.1'`);
+  });
+});
+
+// ── 5. Meta: a kvóta-hiba nem TERMINÁLIS ────────────────────────────────────
+describe('Meta hibaosztályozás — a throttle nem végleges elutasítás', () => {
+  const metaSite = {
+    site_id: 'test',
+    country_code: 'GB',
+    currency: 'GBP',
+    meta: { pixel_id: '1234567890123456', access_token: 'T' }
+  } as unknown as Parameters<typeof sendToMetaCAPI>[0];
+
+  const metaPayload = {
+    event_name: 'contact_form_submitted',
+    event_id: 'evt-1',
+    event_time: 1781122021
+  } as unknown as Parameters<typeof sendToMetaCAPI>[1];
+
+  // A Meta a CAPI kvóta-hibáit HTTP 400-zal is adja; a jelzés a `code`-ban van.
+  // Rate-limitként osztályozva a rekord retryable; `META_API_REJECTED`-ként
+  // TERMINÁLIS, tehát három azonos újrapróbálkozás után a konverzió halott —
+  // pont egy forgalmi csúcson, amikor a legtöbb pénz múlik rajta.
+  for (const code of [4, 17, 32, 613, 80004]) {
+    it(`a Meta code=${code} RATE_LIMITED, nem végleges elutasítás`, async () => {
+      vi.stubGlobal('fetch', async () =>
+        new Response(JSON.stringify({ error: { code, message: 'rate limited' } }), { status: 400 })
+      );
+      const res = await sendToMetaCAPI(metaSite, metaPayload, { em: 'a'.repeat(64) });
+      expect(res.success).toBe(false);
+      expect(res.error_code).toBe(TrackingErrorCode.META_RATE_LIMITED);
+    });
+  }
+
+  it('a nem-kvóta 400 VÁLTOZATLANUL META_API_REJECTED marad', async () => {
+    vi.stubGlobal('fetch', async () =>
+      new Response(JSON.stringify({ error: { code: 100, message: 'something else' } }), { status: 400 })
+    );
+    const res = await sendToMetaCAPI(metaSite, metaPayload, { em: 'a'.repeat(64) });
+    expect(res.error_code).toBe(TrackingErrorCode.META_API_REJECTED);
+  });
+});
+
+// ── 6. A lifecycle-sorok dedup-kulcsa ───────────────────────────────────────
+describe('lead_status — a determinisztikus orderId a soron van (0010)', () => {
+  it('a beszúrás hordozza az orderId-t, és két retry UGYANAZT írja', async () => {
+    // A sorok per-KÍSÉRLET keletkeznek (a beszúrás a 503/202 elágazások ELŐTT
+    // ütemeződik). orderId nélkül a COUNT-oló olvasók a retry-kat külön
+    // eseménynek látják: egy tranziens vendor-kiesés received=6/accepted=3
+    // képet ad → HAMIS CRITICAL riasztás.
+    const orderIds: unknown[] = [];
+    for (let i = 0; i < 2; i++) {
+      const captured: CapturedDelivery[] = [];
+      const ctx = leadStatusCtx();
+      await handleLeadStatus(
+        leadStatusRequest({
+          lead_id: 'lead-9001-abcd',
+          status: 'revenue_confirmed',
+          value: 1000,
+          ad_allowed: true
+        }),
+        leadStatusEnv({
+          siteConfig: {
+            site_id: 'beautyflow',
+            country_code: 'HU',
+            currency: 'HUF',
+            require_consent: true,
+            expected_platforms: { smoke: ['meta'], offline: ['gads'] },
+            gads: {
+              customer_id: '9796138635',
+              login_customer_id: null,
+              conversion_actions: { revenue_confirmed: '7664842040' }
+            }
+          },
+          captured
+        }),
+        ctx
+      );
+      await (ctx as unknown as { settle: () => Promise<unknown> }).settle();
+      const insert = captured.find((c) => /INSERT INTO lead_status/.test(c.sql));
+      expect(insert, 'lead_status insert missing').toBeDefined();
+      expect(insert!.sql).toContain('order_id');
+      orderIds.push(insert!.values[insert!.values.length - 1]);
+    }
+    expect(orderIds[0]).toBeTruthy();
+    expect(orderIds[0]).toBe(orderIds[1]);
+  });
+
+  it('a COUNT-oló olvasók DISTINCT-tel számolnak, nem nyers darabszámmal', async () => {
+    const [recon, counts] = await Promise.all([
+      readFile(new URL('../src/lib/reconciliation.ts', import.meta.url), 'utf8'),
+      readFile(new URL('../src/lib/business-counts.ts', import.meta.url), 'utf8')
+    ]);
+    for (const [name, src] of [
+      ['reconciliation', recon],
+      ['business-counts', counts]
+    ] as const) {
+      const leadStatusQueries = src
+        .split('\n')
+        .filter((l) => /COUNT\(\*\)/.test(l) && /lead_status/.test(src));
+      expect(src, `${name}: a lead_status olvasói DISTINCT-et használnak`).toContain(
+        'COUNT(DISTINCT COALESCE(order_id, id))'
+      );
+      expect(leadStatusQueries.join('\n')).not.toContain('COUNT(*) AS received');
+    }
+  });
+});
+
+// ── 7. A DLQ-retry méltányos a site-ok között ───────────────────────────────
+describe('cron retry — egy site backlogja nem éheztetheti ki a többit', () => {
+  it('a prefixeket delimiterrel gyűjti, és site-onként osztja a keretet', async () => {
+    // R2 KULCS-SORRENDBEN egy alfabetikusan korai site tartós
+    // `blocked_configuration` backlogja elfogyasztotta a 100-as futás-keretet,
+    // és minden utána következő site 24 órás ablakú, VALÓDI vendor-hibái
+    // egyetlen újrapróbálkozás nélkül jártak le.
+    const listCalls: { prefix?: string; delimiter?: string; limit?: number }[] = [];
+    const env = {
+      DEAD_LETTER: {
+        list: async (opts: { prefix?: string; delimiter?: string; limit?: number }) => {
+          listCalls.push(opts);
+          if (opts.delimiter === '/') {
+            return {
+              objects: [],
+              delimitedPrefixes: ['aaa-site/', 'zzz-site/'],
+              truncated: false
+            };
+          }
+          return { objects: [], delimitedPrefixes: [], truncated: false };
+        }
+      }
+    } as unknown as Env;
+
+    const prefixes = await listSitePrefixes(env);
+    expect(prefixes).toEqual(['aaa-site/', 'zzz-site/']);
+    expect(listCalls[0].delimiter).toBe('/');
+
+    // A késői site is sorra kerül: a scan MINDKÉT prefixre lefut.
+    listCalls.length = 0;
+    await handleScheduledRetry({ cron: '0 * * * *', scheduledTime: Date.now() } as ScheduledEvent, env);
+    const scanned = listCalls.filter((c) => c.delimiter !== '/').map((c) => c.prefix);
+    expect(scanned).toContain('aaa-site/');
+    expect(scanned).toContain('zzz-site/');
   });
 });

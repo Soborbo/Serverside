@@ -42,6 +42,39 @@ const MAX_BODY_BYTES = 4 * 1024;
 /** A 204-en visszaadott fejléc — a kliens ebből tudja, hogy TÉNYLEG tárolva van. */
 const RECEIVED_HEADER = { 'X-Consent-Received': '1' } as const;
 
+/**
+ * A keres SAJAT `sbo_consent` sutijenek `consent_id`-je, vagy `undefined`.
+ *
+ * SZANDEKOSAN MINIMALIS parse: itt NEM a dontes ervenyesseget vizsgaljuk (azt a
+ * `readSboConsent` / a szerver-lab parsere teszi, teljes alak- es lejarat-
+ * ellenorzessel), hanem EGYETLEN kerdest teszunk fel: melyik consent-lanchoz
+ * tartozik ez a bongeszo. Egy lejart vagy mas policy-verziohoz tartozo sutinek is
+ * VALODI `consent_id`-je van, es epp az ilyen bongeszo kuld uj dontest — egy
+ * szigoru parser itt pont a legitim frissitest utasitana el.
+ *
+ * Formatum: `v2.<a>.<m>.<revision>.<decision>.<consent_id>.<decidedAtSec>.<policy>`
+ */
+function readSboConsentIdFromCookie(cookieHeader: string | null): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() !== 'sbo_consent') continue;
+    let raw = part.slice(idx + 1).trim();
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {
+      // Hibas percent-szekvencia: a nyers ertekkel probalkozunk tovabb. Egy
+      // elrontott suti nem dobhat 500-at ezen a vegponton.
+    }
+    const fields = raw.split('.');
+    if (fields.length !== 8 || fields[0] !== 'v2') return undefined;
+    const id = fields[5];
+    return id.length > 0 ? id : undefined;
+  }
+  return undefined;
+}
+
 async function readBody(request: Request): Promise<unknown | undefined> {
   const declared = request.headers.get('Content-Length');
   if (declared) {
@@ -160,7 +193,16 @@ export async function handleConsent(request: Request, env: Env): Promise<Respons
     return await handleShown(request, env, siteConfig.site_id, hostname, cors, startedAt);
   }
   if (request.method === 'GET' && path.startsWith('/api/consent/')) {
-    const consentId = decodeURIComponent(path.slice('/api/consent/'.length));
+    // A `decodeURIComponent` `URIError`-t dob egy hibás percent-szekvenciára
+    // (`/api/consent/%zz`). Őrizetlenül ez a globális catch-be esett → 500 + egy
+    // `critical` súlyú TRK-000-001 log-sor. Egy elgépelt URL nem lehet
+    // „kritikus rendszerhiba": a rossz alak egyszerűen nem található azonosító.
+    let consentId: string;
+    try {
+      consentId = decodeURIComponent(path.slice('/api/consent/'.length));
+    } catch {
+      return new Response('invalid_consent_id', { status: 400, headers: cors });
+    }
     return await handleLookup(env, siteConfig.site_id, consentId, cors);
   }
 
@@ -178,6 +220,44 @@ async function handleDecision(
   const body = await readBody(request);
   if (body === undefined) {
     return new Response('invalid_json_or_too_large', { status: 400, headers: cors });
+  }
+
+  // ── A DÖNTÉS A SAJÁT SÜTIJÉHEZ KÖTÖTT ──────────────────────────────────────
+  //
+  // A `consent_id` a kliens által VÁLASZTOTT azonosító, és a `getConsentState` a
+  // LEGMAGASABB revisiont adja vissza. Kötés nélkül tehát bárki, aki egy
+  // `consent_id`-t ismer (az a látogató sütijének értéke), POST-olhatna rá egy
+  // `{decision:'withdrawn', revision:10000}` sort — az Origin curl-ből
+  // hamisítható (lib/origin.ts saját fejléce mondja ki), a rate-limit binding
+  // pedig bizonyítottan nem korlátoz. Következmény: az áldozat offline
+  // konverziói némán kimaradnának (routes/lead-status.ts a consent_log AKTUÁLIS
+  // állapotát kérdezi), és a „jogi bizonyíték" append-only naplóba egy HAMIS
+  // visszavonás kerülne. Ráadásul a sorok korlátlanul szaporíthatók (a UNIQUE
+  // csak a támadó által választott `consent_event_id`-n van).
+  //
+  // A kötés: a kérésnek hoznia KELL a saját `sbo_consent` sütijét, és annak
+  // `consent_id`-je meg kell egyezzen a body-ban küldöttel. A valódi kliens
+  // MINDIG hozza (a `consent-sbo.ts` ELŐBB írja a sütit, csak UTÁNA POST-ol, és
+  // a fetch same-origin → a süti megy), a támadó viszont nem tudja előállítani.
+  // Ez nem kriptográfiai bizonyíték — de a „ismerem az id-t, tehát írhatok"
+  // lépést megszünteti, ami ennek a végpontnak az EGYETLEN valódi támadási útja.
+  const cookieConsentId = readSboConsentIdFromCookie(request.headers.get('Cookie'));
+  const bodyConsentId =
+    body !== null && typeof body === 'object'
+      ? (body as { consent_id?: unknown }).consent_id
+      : undefined;
+  if (typeof bodyConsentId === 'string' && cookieConsentId !== bodyConsentId) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.ORIGIN_NOT_ALLOWED,
+      message:
+        'Consent decision rejected — the body consent_id does not match the request `sbo_consent` cookie (a decision may only be written by its own browser)',
+      hostname,
+      site_id: siteId,
+      cookie_present: cookieConsentId !== undefined,
+      duration_ms: Date.now() - startedAt
+    });
+    return new Response('consent_id_cookie_mismatch', { status: 403, headers: cors });
   }
 
   const parsed = parseConsentPayload(body, siteId);

@@ -113,7 +113,7 @@ export default {
       // fogyasztja böngészőből. NEM az /api/event/admin/ prefix alatt, hogy ne
       // legyen auth-gated (a token a fetch-headerben megy). Lásd routes/admin-ui.ts.
       if (request.method === 'GET' && url.pathname === '/api/event/admin-ui') {
-        return handleAdminUI();
+        return handleAdminUI(request, env);
       }
 
       // Admin read/ops API (reconciliation, lead-trail, DLQ replay, health-check).

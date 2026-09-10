@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import {
   listPendingRetries,
+  listSitePrefixes,
   deleteDeadLetter,
   writeDeadLetter,
   archiveExpiredRecord,
@@ -29,6 +30,8 @@ import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 const MAX_RETRIES_PER_RUN = 100;
+/** A lejart rekordok archivalasi kerete egy futasra (a listPendingRetries default-ja). */
+const MAX_EXPIRED_PER_RUN = 200;
 
 export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Promise<void> {
   logStructured({
@@ -41,7 +44,30 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
   let pending: { key: string; record: DeadLetterRecord }[];
   let expired: { key: string; record: DeadLetterRecord }[];
   try {
-    ({ pending, expired } = await listPendingRetries(env));
+    // SITE-ONKÉNTI, MÉLTÁNYOS begyűjtés. A prefix nélküli listázás R2
+    // KULCS-SORRENDBEN adja a rekordokat, és a 100-as futás-keret az első
+    // site-oknál elfogy: egy alfabetikusan korai site tartós
+    // `blocked_configuration` backlogja (eseményenként egy 7 napig élő rekord)
+    // minden utána következő site-ot ELÉHEZTET — azok 24 órás ablakú, VALÓDI
+    // vendor-hibái egyetlen újrapróbálkozás nélkül járnak le.
+    //
+    // A prefixeket delimiter-listázás adja (olcsó), a keretet pedig elosztjuk.
+    // Egy site sem kaphat 5-nél kevesebbet: különben sok tenantnál a méltányos
+    // rész nullára kerekedne, és senki nem haladna.
+    const prefixes = await listSitePrefixes(env);
+    if (prefixes.length > 1) {
+      const perSite = Math.max(5, Math.floor(MAX_RETRIES_PER_RUN / prefixes.length));
+      const perSiteExpired = Math.max(5, Math.floor(MAX_EXPIRED_PER_RUN / prefixes.length));
+      pending = [];
+      expired = [];
+      for (const prefix of prefixes) {
+        const page = await listPendingRetries(env, prefix, perSite, perSiteExpired);
+        pending.push(...page.pending);
+        expired.push(...page.expired);
+      }
+    } else {
+      ({ pending, expired } = await listPendingRetries(env));
+    }
   } catch (err) {
     logStructured({
       level: 'error',
