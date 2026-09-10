@@ -7,7 +7,9 @@ import {
   normalizeName,
   normalizeCountry,
   sha256Hex,
-  hashUserData
+  hashUserData,
+  normalizePostalCodeForMeta,
+  normalizeCityForMeta
 } from '../src/lib/hash';
 
 describe('normalizeEmail', () => {
@@ -230,5 +232,102 @@ describe('normalizePhone — az EU régió-kód nem UK (audit 2026-08-16)', () =
 
   it('GB viszont TOVÁBBRA IS trunk-0 → +44 (a valódi országkódnál ez helyes)', () => {
     expect(normalizePhone('07123 456789', 'GB')).toBe('+447123456789');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// META-SPECIFIKUS zp/ct NORMALIZÁLÁS (2026-09-10)
+//
+// A MÉRT HIÁNY, AMIÉRT EZEK A TESZTEK LÉTEZNEK. A fenti `hashUserData` esetek
+// CSAK annyit állítottak, hogy a `zp` 64 hex karakter, és hogy két EGYENÉRTÉKŰ
+// bemenet UGYANAZT adja. Egyik sem mondta meg, MELYIK byte-stringet hash-eljük —
+// ezért zöldek maradtak akkor is, amikor `SW1A1AA`-t küldtünk, és zöldek
+// maradnának `sw1a1aa`-val is. A vendor-illeszkedés szempontjából ez nulla
+// információ: a teszt kevesebbet igazolt, mint amennyit ígért.
+//
+// A Meta CAPI doksi (Customer information parameters):
+//   zp — „Use lowercase with no spaces and no dash. Use only the first 5 digits
+//        for U.S. zip codes."
+//   ct — „Lowercase only with no punctuation, no special characters, and no spaces."
+// A SHA-256 kis/nagybetű-érzékeny, tehát a nagybetűs alak SOHA nem találhatott.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('normalizePostalCodeForMeta — a hash-elendő alak', () => {
+  it('kisbetűs, szóköz nélkül (UK)', () => {
+    expect(normalizePostalCodeForMeta('SW1A 1AA')).toBe('sw1a1aa');
+    expect(normalizePostalCodeForMeta('sw1a 1aa')).toBe('sw1a1aa');
+  });
+  it('a KÖTŐJEL kiesik (a plain ág megtartja — ez a különbség lényege)', () => {
+    expect(normalizePostalCodeForMeta('12345-6789')).toBe('123456789');
+    expect(normalizePostalCode('12345-6789')).toBe('12345-6789');
+  });
+  it('US: csak az első 5 számjegy', () => {
+    expect(normalizePostalCodeForMeta('12345-6789', 'US')).toBe('12345');
+    expect(normalizePostalCodeForMeta('90210', 'US')).toBe('90210');
+  });
+  it('HU 4-jegyű változatlan', () => {
+    expect(normalizePostalCodeForMeta('1011', 'HU')).toBe('1011');
+  });
+  it('üres / nem-string → undefined', () => {
+    expect(normalizePostalCodeForMeta('   ')).toBeUndefined();
+    expect(normalizePostalCodeForMeta(null)).toBeUndefined();
+  });
+});
+
+describe('normalizeCityForMeta — a hash-elendő alak', () => {
+  it('a SZÓKÖZ kiesik (a plain ág megtartja)', () => {
+    expect(normalizeCityForMeta('New York')).toBe('newyork');
+    expect(normalizeCity('New York')).toBe('new york');
+  });
+  it('a központozás kiesik', () => {
+    expect(normalizeCityForMeta('Stoke-on-Trent')).toBe('stokeontrent');
+    expect(normalizeCityForMeta("St. John's")).toBe('stjohns');
+  });
+  it('az ÉKEZET MARAD — ezt a Meta nem kérte, és nem találunk ki szabályt', () => {
+    expect(normalizeCityForMeta('Pécs')).toBe('pécs');
+    expect(normalizeCityForMeta('Győr')).toBe('győr');
+    expect(normalizeCityForMeta('Székesfehérvár')).toBe('székesfehérvár');
+  });
+  it('üres → undefined', () => {
+    expect(normalizeCityForMeta('  ')).toBeUndefined();
+  });
+});
+
+describe('hashUserData — MELYIK byte-stringet hash-eljük (a hiányzó őr)', () => {
+  it('a zp a KISBETŰS, kötőjel-mentes alak hash-e', async () => {
+    const result = await hashUserData({ postal_code: 'SW1A 1AA' }, 'GB');
+    expect(result.zp).toBe(await sha256Hex('sw1a1aa'));
+    // És NEM a régi, nagybetűs alaké — ez a regresszió, amit zárunk.
+    expect(result.zp).not.toBe(await sha256Hex('SW1A1AA'));
+  });
+
+  it('a ct a SZÓKÖZ-MENTES alak hash-e', async () => {
+    const result = await hashUserData({ city: 'New York' }, 'GB');
+    expect(result.ct).toBe(await sha256Hex('newyork'));
+    expect(result.ct).not.toBe(await sha256Hex('new york'));
+  });
+
+  it('US ZIP+4: az első 5 számjegy hash-e megy ki', async () => {
+    const result = await hashUserData({ postal_code: '12345-6789' }, 'US');
+    expect(result.zp).toBe(await sha256Hex('12345'));
+  });
+
+  it('ékezetes város: a hash az ékezetes alaké', async () => {
+    const result = await hashUserData({ city: 'Pécs' }, 'HU');
+    expect(result.ct).toBe(await sha256Hex('pécs'));
+  });
+});
+
+describe('a GOOGLE plain-ág NEM változott (platform-split regresszió-őr)', () => {
+  // A Data Manager `addressInfo.postalCode` PLAIN megy (CLAUDE.md §7). Ha a
+  // Meta-igazítás átszivárogna ide, a Google feltöltés alakja megváltozna —
+  // pont az a fajta néma mellékhatás, amiért a split egyáltalán készült.
+  it('a plain postal továbbra is NAGYBETŰS, kötőjellel', () => {
+    expect(normalizePostalCode('sw1a 1aa')).toBe('SW1A1AA');
+    expect(normalizePostalCode('12345-6789')).toBe('12345-6789');
+  });
+  it('a plain city továbbra is megtartja a szóközt és az ékezetet', () => {
+    expect(normalizeCity('  Pécs  ')).toBe('pécs');
+    expect(normalizeCity('New York')).toBe('new york');
   });
 });

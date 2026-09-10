@@ -207,6 +207,15 @@ function stripTrunkPrefix(plus: string): string {
   return plus;
 }
 
+/**
+ * A PLAIN (nem hash-elt) irányítószám-alak — a Google Data Manager `addressInfo`
+ * `postalCode` mezőjéhez (CLAUDE.md §7: ott a postal PLAIN megy).
+ *
+ * Ez az alak SZÁNDÉKOSAN nagybetűs és megtartja a kötőjelet: a Google a plain
+ * értéket a saját oldalán normalizálja, a `SW1A1AA` / `12345-6789` alak pedig az
+ * emberi olvashatóság és a meglévő feltöltések folytonossága miatt marad.
+ * A META hash-elt ága MÁST kíván — lásd {@link normalizePostalCodeForMeta}.
+ */
 export function normalizePostalCode(postal: string | null | undefined): string | undefined {
   if (typeof postal !== 'string') return undefined;
   const cleaned = postal.replace(/\s+/g, '').toUpperCase();
@@ -214,9 +223,82 @@ export function normalizePostalCode(postal: string | null | undefined): string |
   return cleaned;
 }
 
+/**
+ * A META `zp` HASH-ELENDŐ alakja. ELTÉR a {@link normalizePostalCode}-tól.
+ *
+ * ── MIÉRT KELL KÜLÖN (a hibaosztály, amit zár) ──────────────────────────────
+ * A Meta CAPI „Customer information parameters" doksija a `zp`-re SZÓ SZERINT
+ * ezt írja: „Use lowercase with no spaces and no dash. Use only the first 5
+ * digits for U.S. zip codes." Mi eddig NAGYBETŰSEN, kötőjellel küldtük.
+ *
+ * A SHA-256 kis- és nagybetűre ÉRZÉKENY: `sha256('SW1A1AA')` és
+ * `sha256('sw1a1aa')` két teljesen különböző érték. A Meta a SAJÁT rekordját a
+ * fenti szabály szerint normalizálja, majd hash-eli — vagyis a mi nagybetűs
+ * hash-ünk SOHA nem találhatott. A mező „jelen van" (a Dataset Quality API 100%
+ * `zip` coverage-et mutat a painless Lead-en), csak épp nem ér semmit: a
+ * coverage a KÜLDÉST méri, nem a TALÁLATOT.
+ *
+ * ── MIÉRT NEM MOND ELLENT A CLAUDE.md §1-nek ───────────────────────────────
+ * A §1 tiltása („ne okoskodjunk saját normalizációval") az E-MAILRE szól, és ott
+ * helyes: a Meta az e-mailt LITERÁLISAN hash-eli, tehát a plus-suffix vagy a
+ * Gmail-pont levágása valóban elrontaná. A `zp`/`ct` viszont az ELLENKEZŐ eset —
+ * ott a Meta EXPLICIT normalizálást ír elő. A §1 a kettőt összemosta.
+ *
+ * ── AMIT SZÁNDÉKOSAN NEM TESZÜNK ───────────────────────────────────────────
+ * Nem találunk ki a doksin túli szabályt. Az ékezet MARAD (lásd
+ * {@link normalizeCityForMeta}), és a nem-US irányítószámot nem csonkítjuk.
+ */
+export function normalizePostalCodeForMeta(
+  postal: string | null | undefined,
+  countryCode?: string
+): string | undefined {
+  if (typeof postal !== 'string') return undefined;
+  // Szóköz ÉS kötőjel ki, kisbetű — pontosan a doksi három szabálya.
+  const cleaned = postal.replace(/[\s-]+/g, '').toLowerCase();
+  if (cleaned.length === 0) return undefined;
+  // „Use only the first 5 digits for U.S. zip codes" — a ZIP+4 (`12345-6789`)
+  // a kötőjel-strip után `123456789` lenne, ami a Meta rekordjával nem egyezik.
+  if (typeof countryCode === 'string' && countryCode.toUpperCase() === 'US') {
+    return cleaned.slice(0, 5);
+  }
+  return cleaned;
+}
+
+/**
+ * A PLAIN városnév. A Google Data Manager AddressInfo-jában NINCS `city` mező
+ * (eldobjuk), tehát ezt ma csak a teszt-vektorok és a jövőbeli plain fogyasztók
+ * használják. A META hash-elt ága {@link normalizeCityForMeta}.
+ */
 export function normalizeCity(city: string | null | undefined): string | undefined {
   if (typeof city !== 'string') return undefined;
   const cleaned = city.trim().toLowerCase();
+  if (cleaned.length === 0) return undefined;
+  return cleaned;
+}
+
+/**
+ * A META `ct` HASH-ELENDŐ alakja. ELTÉR a {@link normalizeCity}-től.
+ *
+ * A doksi szó szerint: „Lowercase only with no punctuation, no special
+ * characters, and no spaces." Eddig a szóközt BENNE hagytuk, tehát a
+ * `sha256('new york')` ment ki, miközben a Meta `sha256('newyork')`-ot tárol —
+ * ugyanaz a néma nem-találat, mint a `zp`-nél.
+ *
+ * ── AZ ÉKEZET MARAD, ÉS EZ TUDATOS ─────────────────────────────────────────
+ * A „no special characters" kifejezés kétértelmű, de a doksi a KÖZPONTOZÁSSAL
+ * egy sorban említi, és a Meta globális terméke ékezetes városneveket is kezel.
+ * A `pécs` → `pecs` átírás olyan szabály lenne, amit a szolgáltató NEM mondott
+ * ki — pontosan az a „kitalált wire-formátum", ami ebben a rendszerben már
+ * egyszer évekig némán dobta el az adatot. Ezért: szóköz és központozás ki,
+ * BETŰ (ékezetes is) és számjegy marad. A CLAUDE.md §1 ékezet-tilalma áll.
+ */
+export function normalizeCityForMeta(city: string | null | undefined): string | undefined {
+  if (typeof city !== 'string') return undefined;
+  const cleaned = city
+    .toLowerCase()
+    // Unicode-tudatos szűrés: minden, ami NEM betű és NEM számjegy, kiesik
+    // (szóköz, kötőjel, aposztróf, pont). A `\p{L}` az ékezetes betűket IS fedi.
+    .replace(/[^\p{L}\p{N}]/gu, '');
   if (cleaned.length === 0) return undefined;
   return cleaned;
 }
@@ -314,10 +396,15 @@ export async function hashUserData(
   const lastName = normalizeName(input.last_name);
   if (lastName) result.ln = await sha256Hex(lastName);
 
-  const city = normalizeCity(input.city);
+  // ── A HASH-ELT ct/zp a VENDOR szabálya szerint normalizálódik ─────────────
+  // Ezeket a mezőket KIZÁRÓLAG a Meta kapja (a Data Manager AddressInfo-ban
+  // nincs `city`, a `postalCode` pedig PLAIN megy — CLAUDE.md §7), ezért itt a
+  // Meta-alak a helyes. A plain párjuk (`normalizeCity` / `normalizePostalCode`)
+  // változatlan marad a Google-lábnak.
+  const city = normalizeCityForMeta(input.city);
   if (city) result.ct = await sha256Hex(city);
 
-  const postal = normalizePostalCode(input.postal_code);
+  const postal = normalizePostalCodeForMeta(input.postal_code, countryCode);
   if (postal) result.zp = await sha256Hex(postal);
 
   const country = normalizeCountry(input.country) || normalizeCountry(countryCode);
