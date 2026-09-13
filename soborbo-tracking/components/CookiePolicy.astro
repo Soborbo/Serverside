@@ -119,7 +119,9 @@ const groups = ORDER.map((category) => ({
                   </span>
                 </td>
                 <td>{e.issuer === 'first_party' ? (lang === 'hu' ? 'mi magunk' : 'us') : e.issuer}</td>
-                <td>{e.lifetime}</td>
+                {/* Az elettartam KET nyelvu: korabban a `lifetime` egyetlen sztring
+                    volt, ezert az ANGOL tabla a magyar szoveget jelenitette meg. */}
+                <td>{e.lifetime[lang]}</td>
                 <td>{e.transfer ?? T.none}</td>
               </tr>
             ))}
