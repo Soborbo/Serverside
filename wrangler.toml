@@ -34,7 +34,14 @@ command = "node scripts/stamp-build-info.mjs"
 # ellentmondás: a lomtalan-weboldal worker SERVICE BINDINGON hívja a gateway-t
 # (szerver-ingress), zóna-route nélkül. A SMOKE_SITES a ledger-oldali elvárást
 # írja le, nem a routing-ot.
-SMOKE_SITES = "painless,beautyflow,lomtalan,skinlab"
+# 2026-09-13: az `olcsokontenerhaz` FELVEVE. A sorrend KOTELEZO volt es be is
+# tartottuk: eloszor a `TRACKING_TEST_EVENT_CODE` titok a site workerere, aztan
+# megvartuk, hogy a 04:47 UTC cron TENYLEG termeljen sort, es csak azutan kerult
+# ide. Forditva minden reggel HAMIS riasztas menne ki — pont az a riasztas-
+# faradtsag, ami miatt ez a lanc egyaltalan letezik.
+# BIZONYITEK (D1 `deliveries`): smoke-olcsokontenerhaz-20260912 es -20260913,
+# mindketto platform=meta, status=accepted.
+SMOKE_SITES = "painless,beautyflow,lomtalan,skinlab,olcsokontenerhaz"
 
 # Google OAuth kliens (Soborbo Tracking Worker, Google Cloud Console). NEM titok
 # (public client identifier) — szándékosan ITT él, nem dashboard-only varként:
