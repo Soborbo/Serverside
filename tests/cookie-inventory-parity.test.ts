@@ -45,6 +45,7 @@ type Entry = {
   lifetime: { hu: string; en: string };
   transfer: string | null;
   purged_on_withdrawal: boolean;
+  provider: 'any' | 'sbo' | 'cookieyes';
   why_not_purged?: string;
   purpose: { hu: string; en: string };
 };
@@ -271,6 +272,75 @@ describe('süti-tábla ↔ purge-kód paritás', () => {
       const read = persistenceSrc.slice(persistenceSrc.indexOf('export function getAttribution'));
       const body = read.slice(0, read.indexOf('\n}'));
       expect(body).not.toMatch(/EXPIRY_DAYS/);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // A CMP SAJÁT SÜTIJE PROVIDER-SPECIFIKUS.
+  //
+  // 2026-09-13, ÉLES MÉRÉS a flotta nyolc hosztján: `data-sb-consent-open` = 0
+  // MINDENHOL — vagyis az sbo CMP ma egyetlen site-on sem fut, minden élő site
+  // CookieYes-en van. A tábla viszont CSAK az `sbo_consent`-et ismerte. Egy
+  // olcsokontenerhaz.hu-ra kitett tábla tehát egyszerre hirdetett volna egy NEM
+  // LÉTEZŐ sütit, és hallgatta volna el a valóban kiírt `cookieyes-consent`-et.
+  // Mindkettő GDPR Art 13(1)(e) hiba, és a korábbi őr egyiket sem látta, mert
+  // nem ismerte a provider fogalmát.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('provider-dimenzió', () => {
+    const PROVIDERS = ['sbo', 'cookieyes'] as const;
+    const visibleFor = (p: (typeof PROVIDERS)[number]) =>
+      inventory.entries.filter((e) => e.provider === 'any' || e.provider === p);
+
+    it('minden bejegyzés deklarálja a providerét', () => {
+      for (const e of inventory.entries) {
+        expect(['any', 'sbo', 'cookieyes'], `${e.name}: provider`).toContain(e.provider);
+      }
+    });
+
+    for (const p of PROVIDERS) {
+      it(`${p}: PONTOSAN EGY hozzájárulás-kezelő süti látszik`, () => {
+        // Se nulla (a látogató nem tudja meg, mi tárolja a döntését), se kettő
+        // (az egyik nem létezik az ő böngészőjében).
+        const cmpCookies = visibleFor(p).filter(
+          (e) => e.category === 'necessary' && e.storage === 'cookie'
+        );
+        expect(
+          cmpCookies.map((e) => e.name),
+          `${p} alatt pontosan egy CMP-sütinek kell látszania`
+        ).toHaveLength(1);
+      });
+
+      it(`${p}: a MÁSIK provider sütije NEM látszik`, () => {
+        const other = p === 'sbo' ? 'cookieyes' : 'sbo';
+        expect(visibleFor(p).map((e) => e.provider)).not.toContain(other);
+      });
+
+      it(`${p}: mind a három kategória kap sort`, () => {
+        const cats = new Set(visibleFor(p).map((e) => e.category));
+        for (const c of ['necessary', 'analytics', 'marketing']) {
+          expect(cats, `${p}: hiányzó kategória: ${c}`).toContain(c);
+        }
+      });
+    }
+
+    it('a `sbo_consent` neve TOVÁBBRA IS a kódból jön', () => {
+      // A provider-szűrés nem lazíthat a meglévő állításon: a saját CMP-nk
+      // süti-neve a `consent-sbo-state.ts`-ből olvasva kerül a táblába.
+      const name = stringConstants(consentStateSrc).SBO_CONSENT_COOKIE;
+      expect(name).toBeTruthy();
+      const e = inventory.entries.find((x) => x.name === name);
+      expect(e, `a ${name} süti nincs a táblában`).toBeDefined();
+      expect(e?.provider, `a ${name} CSAK sbo alatt létezik`).toBe('sbo');
+    });
+
+    it('a `cookieyes-consent` nem ígér olyan törlést, amit nem teljesítünk', () => {
+      // A CookieYes sütijét MI nem töröljük (nem is szabad: a visszavont
+      // állapotot maga tárolja). Ilyenkor a `why_not_purged` kötelező — ezt a
+      // fenti általános teszt is méri, itt csak a provider-hez kötjük.
+      const e = inventory.entries.find((x) => x.name === 'cookieyes-consent');
+      expect(e?.provider).toBe('cookieyes');
+      expect(e?.purged_on_withdrawal).toBe(false);
+      expect((e?.why_not_purged ?? '').length).toBeGreaterThan(20);
     });
   });
 
