@@ -1,12 +1,12 @@
 {
   "_comment": "A KOZZETEENDO suti-/tarolo-tabla kanonikus forrasa (GDPR Art 13(1)(e), PECR reg. 6, NAIH). MIERT ITT: a jogi kotelezettseg az, hogy amit KIIRUNK, azt le is irjuk, es amit a visszavonaskor IGERUNK torolni, azt torolju is. Ezt a ket allitast a `tests/cookie-inventory-parity.test.ts` KETIRANYBAN meri a `lib/persistence.ts` VALODI purge-kodjahoz kepest — a tabla igy nem tud elcsuszni a kodtol. Kezzel irt suti-tabla mindig elcsuszik; ez a fajl a kod parja.",
-  "version": "2026-09-a",
+  "version": "2026-09-b",
   "_fields": {
     "name": "A suti/kulcs neve. `match: prefix` eseten nev-elotag (a per-property utotag miatt).",
     "storage": "cookie | localStorage | sessionStorage",
     "category": "necessary | analytics | marketing",
     "issuer": "first_party | a harmadik fel neve",
-    "lifetime": "Ember altal olvashato elettartam (a kozzeteendo tablaba igy kerul).",
+    "lifetime": "Ember által olvasható élettartam, KÉT NYELVEN (`{hu, en}`). Az angol tábla korábban a magyar sztringet jelenítette meg. AMI A KÓDBÓL JÖN, AZT A `tests/cookie-inventory-parity.test.ts` MÉRI: a saját `sb_*` kulcsokra az élettartamnak egyeznie kell a `lib/persistence.ts` tényleges lejárati logikájával.",
     "transfer": "Harmadik orszagba tortenő tovabbitas (null = nincs).",
     "purged_on_withdrawal": "true = a visszavonas torli. false ESETEN a `why_not_purged` KOTELEZO es nem lehet ures — egy nem torolt suti lehet vedheto, de NEM lehet kimondatlan."
   },
@@ -17,12 +17,15 @@
       "storage": "cookie",
       "category": "necessary",
       "issuer": "first_party",
-      "lifetime": "180 nap",
+      "lifetime": {
+        "hu": "180 nap",
+        "en": "180 days"
+      },
       "transfer": null,
       "purged_on_withdrawal": false,
       "why_not_purged": "Ez MAGA a hozzajarulasi dontes bizonyiteka (GDPR Art 7(1)). A torlese epp a visszavonas tenyet vinne el, es a bannert azonnal ujra feldobna — vagyis a latogato dontese nem ervenyesulne.",
       "purpose": {
-        "hu": "A sutikre vonatkozo dontesed tarolasa (kategorianként), hogy ne kerdezzuk ujra minden oldalbetolteskor, es hogy a dontes bizonyithato legyen.",
+        "hu": "A sütikre vonatkozó döntésének tárolása (kategóriánként), hogy ne kérdezzük újra minden oldalbetöltéskor, és hogy a döntés bizonyítható legyen.",
         "en": "Stores your cookie choice per category so we do not ask again on every page load, and so the choice is provable."
       }
     },
@@ -32,11 +35,14 @@
       "storage": "sessionStorage",
       "category": "analytics",
       "issuer": "first_party",
-      "lifetime": "a bongeszo-lap bezarasaig",
+      "lifetime": {
+        "hu": "a böngészőlap bezárásáig",
+        "en": "until you close the browser tab"
+      },
       "transfer": null,
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Munkamenet-azonosito, hogy az egy latogatashoz tartozo esemenyek osszetartozzanak a merésben.",
+        "hu": "Munkamenet-azonosító, hogy az egy látogatáshoz tartozó események összetartozzanak a mérésben.",
         "en": "Session identifier so that events from one visit belong together in measurement."
       }
     },
@@ -46,11 +52,14 @@
       "storage": "cookie",
       "category": "analytics",
       "issuer": "Google Ireland Ltd. / Google LLC",
-      "lifetime": "2 ev",
+      "lifetime": {
+        "hu": "2 év",
+        "en": "2 years"
+      },
       "transfer": "USA (Google LLC), EU-U.S. Data Privacy Framework / SCC",
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Google Analytics 4 latogato-azonosito: megkulonbozteti az egyes latogatokat a forgalmi statisztikaban.",
+        "hu": "Google Analytics 4 látogató-azonosító: megkülönbözteti az egyes látogatókat a forgalmi statisztikában.",
         "en": "Google Analytics 4 visitor identifier: distinguishes visitors in traffic statistics."
       }
     },
@@ -60,11 +69,14 @@
       "storage": "cookie",
       "category": "analytics",
       "issuer": "Google Ireland Ltd. / Google LLC",
-      "lifetime": "2 ev",
+      "lifetime": {
+        "hu": "2 év",
+        "en": "2 years"
+      },
       "transfer": "USA (Google LLC), EU-U.S. Data Privacy Framework / SCC",
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Google Analytics 4 munkamenet-allapot az adott merési adatfolyamhoz (`_ga_<STREAM>`).",
+        "hu": "Google Analytics 4 munkamenet-állapot az adott mérési adatfolyamhoz (`_ga_<STREAM>`).",
         "en": "Google Analytics 4 session state for the given measurement stream (`_ga_<STREAM>`)."
       }
     },
@@ -74,11 +86,14 @@
       "storage": "localStorage",
       "category": "marketing",
       "issuer": "first_party",
-      "lifetime": "24 ora",
+      "lifetime": {
+        "hu": "90 nap",
+        "en": "90 days"
+      },
       "transfer": null,
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "A hirdetesi attribuciohoz szukseges adatok atmeneti tarolasa (pl. kattintas-azonosito), hogy a kesobb leadott urlap a helyes hirdeteshez kotodjon.",
+        "hu": "A hirdetési attribúcióhoz szükséges adatok tárolása (pl. kattintás-azonosító), hogy a később leadott űrlap a helyes hirdetéshez kötődjön.",
         "en": "Temporary storage of advertising attribution data (e.g. click identifier) so a later form submission is tied to the correct ad."
       }
     },
@@ -88,11 +103,14 @@
       "storage": "localStorage",
       "category": "marketing",
       "issuer": "first_party",
-      "lifetime": "24 ora",
+      "lifetime": {
+        "hu": "a hozzájárulás visszavonásáig (nincs időalapú lejárat)",
+        "en": "until you withdraw consent (no time-based expiry)"
+      },
       "transfer": null,
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Az elso latogatas forrasa (kampany, kulcsszo), hogy a konverzio ne csak az utolso kattintashoz szamitson.",
+        "hu": "Az első látogatás forrása (kampány, kulcsszó), hogy a konverzió ne csak az utolsó kattintáshoz számítson.",
         "en": "The source of the first visit (campaign, keyword) so a conversion is not credited to the last click only."
       }
     },
@@ -102,11 +120,14 @@
       "storage": "localStorage",
       "category": "marketing",
       "issuer": "first_party",
-      "lifetime": "24 ora",
+      "lifetime": {
+        "hu": "a hozzájárulás visszavonásáig (nincs időalapú lejárat)",
+        "en": "until you withdraw consent (no time-based expiry)"
+      },
       "transfer": null,
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Az attribucios rekord (elso es utolso erintes egyben), a hirdetesi merés pontossagahoz.",
+        "hu": "Az attribúciós rekord (első és utolsó érintés egyben), a hirdetési mérés pontosságához.",
         "en": "The attribution record (first and last touch together) for advertising measurement accuracy."
       }
     },
@@ -116,11 +137,14 @@
       "storage": "cookie",
       "category": "marketing",
       "issuer": "Meta Platforms Ireland Ltd.",
-      "lifetime": "90 nap",
+      "lifetime": {
+        "hu": "90 nap",
+        "en": "90 days"
+      },
       "transfer": "USA (Meta Platforms Inc.), SCC",
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Meta (Facebook/Instagram) bongeszo-azonosito a hirdetesek merésehez es a duplikalt konverziok kiszureséhez.",
+        "hu": "Meta (Facebook/Instagram) böngésző-azonosító a hirdetések méréséhez és a duplikált konverziók kiszűréséhez.",
         "en": "Meta (Facebook/Instagram) browser identifier for ad measurement and de-duplication of conversions."
       }
     },
@@ -130,11 +154,14 @@
       "storage": "cookie",
       "category": "marketing",
       "issuer": "Meta Platforms Ireland Ltd.",
-      "lifetime": "90 nap",
+      "lifetime": {
+        "hu": "90 nap",
+        "en": "90 days"
+      },
       "transfer": "USA (Meta Platforms Inc.), SCC",
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "A Meta-hirdetesre tortent kattintas azonositoja, hogy a kesobbi konverzio ahhoz a hirdeteshez kotodjon.",
+        "hu": "A Meta-hirdetésre történt kattintás azonosítója, hogy a későbbi konverzió ahhoz a hirdetéshez kötődjön.",
         "en": "Identifier of the click on a Meta ad, so a later conversion is tied to that ad."
       }
     },
@@ -144,11 +171,14 @@
       "storage": "cookie",
       "category": "marketing",
       "issuer": "Google Ireland Ltd. / Google LLC",
-      "lifetime": "90 nap",
+      "lifetime": {
+        "hu": "90 nap",
+        "en": "90 days"
+      },
       "transfer": "USA (Google LLC), EU-U.S. Data Privacy Framework / SCC",
       "purged_on_withdrawal": true,
       "purpose": {
-        "hu": "Google Ads konverzio-osszekapcsolo (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`): a hirdetesre tortent kattintast koti ossze a kesobbi konverzioval.",
+        "hu": "Google Ads konverzió-összekapcsoló (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`): a hirdetésre történt kattintást köti össze a későbbi konverzióval.",
         "en": "Google Ads conversion linker (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`): links the ad click to a later conversion."
       }
     }

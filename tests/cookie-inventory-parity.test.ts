@@ -42,7 +42,7 @@ type Entry = {
   storage: Storage;
   category: 'necessary' | 'analytics' | 'marketing';
   issuer: string;
-  lifetime: string;
+  lifetime: { hu: string; en: string };
   transfer: string | null;
   purged_on_withdrawal: boolean;
   why_not_purged?: string;
@@ -194,13 +194,84 @@ describe('süti-tábla ↔ purge-kód paritás', () => {
       expect(['cookie', 'localStorage', 'sessionStorage']).toContain(e.storage);
       expect(['necessary', 'analytics', 'marketing']).toContain(e.category);
       expect(e.issuer, `${e.name}: kiállító`).toBeTruthy();
-      expect(e.lifetime, `${e.name}: élettartam`).toBeTruthy();
+      expect(e.lifetime?.hu, `${e.name}: magyar élettartam`).toBeTruthy();
+      expect(e.lifetime?.en, `${e.name}: angol élettartam`).toBeTruthy();
       // A `transfer` LEHET null (nincs továbbítás) — de a mezőnek léteznie kell,
       // különben nem tudjuk, hogy „nincs" vagy „nem néztük meg".
       expect(e, `${e.name}: transfer mező`).toHaveProperty('transfer');
       expect(e.purpose?.hu?.length ?? 0, `${e.name}: magyar cél`).toBeGreaterThan(20);
       expect(e.purpose?.en?.length ?? 0, `${e.name}: angol cél`).toBeGreaterThan(20);
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // A SAJÁT KULCSOK ÉLETTARTAMA A KÓDBÓL JÖN, NEM A SZERZŐ EMLÉKEZETÉBŐL.
+  //
+  // MIÉRT KELLETT: a fájl saját fejléce azt állította, hogy „a tábla így nem tud
+  // elcsúszni a kódtól" — a lejárati IDŐ mégis elcsúszott, mert egyik teszt sem
+  // mérte. A `sb_tracking`/`sb_first_touch`/`__sb_attribution` bejegyzésekben
+  // „24 óra" állt, miközben a `persistence.ts` `EXPIRY_DAYS = 90`, a másik két
+  // kulcsnak pedig egyáltalán NINCS idő-alapú lejárata. Egy közzétett
+  // tájékoztató, ami a megőrzési időt kilencvenszeresen alábecsüli, pontosan az
+  // a jogi hiba, ami ellen ez a fájl készült.
+  //
+  // Ez a blokk tehát nem szöveget hasonlít szöveghez: a `persistence.ts`
+  // FORRÁSÁBÓL olvassa ki a tényleges lejárati logikát.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('a saját kulcsok élettartama ↔ a kód lejárati logikája', () => {
+    const byName = new Map(inventory.entries.map((e) => [e.name, e]));
+
+    /** `const X = 90` / `export const X = 90` → { X: 90 } */
+    function numberConstants(src: string): Record<string, number> {
+      const out: Record<string, number> = {};
+      const re = /(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)\s*;/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src)) !== null) out[m[1]] = Number(m[2]);
+      return out;
+    }
+
+    const nums = numberConstants(persistenceSrc);
+
+    it('a mérés nem néma: az EXPIRY_DAYS tényleg kiolvasható a kódból', () => {
+      expect(
+        nums.EXPIRY_DAYS,
+        'EXPIRY_DAYS nem olvasható ki a persistence.ts-ből — a lenti állítások vakok lennének'
+      ).toBeGreaterThan(0);
+    });
+
+    it('sb_tracking: a táblában ugyanaz a nap-szám áll, mint az EXPIRY_DAYS', () => {
+      // A kód: `Date.now() - d.timestamp > EXPIRY_DAYS * 86_400_000` → lejár.
+      expect(persistenceSrc).toMatch(/EXPIRY_DAYS\s*\*\s*86_?400_?000/);
+      const hu = byName.get('sb_tracking')?.lifetime.hu ?? '';
+      const en = byName.get('sb_tracking')?.lifetime.en ?? '';
+      expect(hu, 'sb_tracking magyar élettartam').toContain(`${nums.EXPIRY_DAYS} nap`);
+      expect(en, 'sb_tracking angol élettartam').toContain(`${nums.EXPIRY_DAYS} day`);
+    });
+
+    // A `sb_first_touch` EGYSZER íródik ki (`if (lsGet(FIRST_TOUCH_KEY)) return;`),
+    // és a `getAttribution()` olvasásakor NINCS TTL-ellenőrzés; a `__sb_attribution`
+    // írása (`gateway.ts`) timestampet sem tesz bele. Vagyis mindkettő a
+    // visszavonásig él. Amíg ez így van, a táblának EZT kell mondania — ha valaki
+    // lejáratot épít be, ez a teszt bukik, és a szöveget is javítani KELL.
+    for (const key of ['sb_first_touch', '__sb_attribution'] as const) {
+      it(`${key}: a tábla a valóságot mondja (nincs idő-alapú lejárat)`, () => {
+        const e = byName.get(key);
+        expect(e, `${key} hiányzik a táblából`).toBeDefined();
+        expect(e?.lifetime.hu).toMatch(/nincs id/i);
+        expect(e?.lifetime.en).toMatch(/no time-based expiry/i);
+        // …és a visszavonás tényleg törli — különben a fenti mondat féligazság.
+        expect(e?.purged_on_withdrawal, `${key}: a visszavonásnak törölnie kell`).toBe(true);
+      });
+    }
+
+    it('a sb_first_touch olvasásán tényleg NINCS lejárat-ellenőrzés', () => {
+      // Mutációs horgony: ha valaki TTL-t tesz a first touch olvasására, ez bukik
+      // — és a fenti szöveget is javítani kell. A teszt így nem konzerválja a
+      // hiányt, csak összeköti a kódot a közzétett állítással.
+      const read = persistenceSrc.slice(persistenceSrc.indexOf('export function getAttribution'));
+      const body = read.slice(0, read.indexOf('\n}'));
+      expect(body).not.toMatch(/EXPIRY_DAYS/);
+    });
   });
 
   it('nincs duplikált bejegyzés', () => {
