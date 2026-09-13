@@ -16,22 +16,41 @@
  * hazudna.
  *
  * HASZNÁLAT (a site adatkezelési tájékoztatójában):
- *   <CookiePolicy lang="hu" />
- *   <a href="#" data-sb-consent-open>Süti beállítások</a>   ← a visszavonás útja
+ *   <CookiePolicy lang="hu" />                 ← a provider az env-ből jön
+ *   <CookiePolicy lang="en" provider="sbo" />  ← vagy kézzel felülírva
+ *
+ * A VISSZAVONÁS ÚTJA PROVIDER-FÜGGŐ, és a tábla alá KELL egy link:
+ *   - provider='sbo':       <a href="#" data-sb-consent-open>Süti beállítások</a>
+ *   - provider='cookieyes': a CookieYes saját újranyitó eleme
+ *                           (<a href="#" class="cky-banner-element">Süti beállítások</a>)
+ * Rossz provider alatt a `data-sb-consent-open` link NÉMÁN nem csinál semmit —
+ * a látogató nem tudja visszavonni a hozzájárulását, miközben a tájékoztató azt
+ * ígéri, hogy tudja.
  *
  * A komponens SZÁNDÉKOSAN nem ír jogi bevezetőt: az adatkezelő neve, a jogalap
  * és a jogorvoslat site-onként más. Ez a tábla, nem a teljes tájékoztató.
  */
 import inventory from '../consent-texts/cookie-inventory.json';
+import { trackingConfig, type ConsentProvider } from '../lib/config';
 
 interface Props {
   /** A tábla nyelve. Alapértelmezés: magyar. */
   lang?: 'hu' | 'en';
+  /**
+   * Melyik CMP fut a site-on. Alapértelmezés a `PUBLIC_TRACKING_CONSENT_PROVIDER`
+   * env — ugyanaz a forrás, amiből a <Tracking /> dolgozik, tehát a tábla és a
+   * banner nem tud szétcsúszni egy elfelejtett propon.
+   */
+  provider?: ConsentProvider;
   /** Extra osztály a külső wrapperre (a site tipográfiájához). */
   class?: string;
 }
 
-const { lang = 'hu', class: className } = Astro.props;
+const {
+  lang = 'hu',
+  provider = trackingConfig.consentProvider,
+  class: className,
+} = Astro.props;
 
 const T = {
   hu: {
@@ -76,13 +95,20 @@ const T = {
 
 type Entry = (typeof inventory.entries)[number];
 const ORDER = ['necessary', 'analytics', 'marketing'] as const;
+// A CMP SAJAT sutije provider-specifikus: `sbo_consent` CSAK sbo alatt letezik,
+// `cookieyes-consent` CSAK CookieYes alatt. A rossz provider tablaja egyszerre
+// hirdetne nem letezo sutit ES hallgatna el egy valodit — mindketto Art 13(1)(e)
+// hiba. Minden mas bejegyzes `provider: 'any'`.
+const visible = inventory.entries.filter(
+  (e: Entry) => e.provider === 'any' || e.provider === provider
+);
 const groups = ORDER.map((category) => ({
   category,
-  entries: inventory.entries.filter((e: Entry) => e.category === category),
+  entries: visible.filter((e: Entry) => e.category === category),
 })).filter((g) => g.entries.length > 0);
 ---
 
-<div class:list={['sb-cookie-policy', className]} data-inventory-version={inventory.version}>
+<div class:list={['sb-cookie-policy', className]} data-inventory-version={inventory.version} data-consent-provider={provider}>
   {groups.map((group) => (
     <section class="sb-cp-group">
       <h3>{T.categories[group.category]}</h3>
