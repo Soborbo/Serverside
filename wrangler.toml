@@ -306,6 +306,23 @@ zone_name = "olcsokontenerhaz.hu"
 pattern = "www.olcsokontenerhaz.hu/api/event/*"
 zone_name = "olcsokontenerhaz.hu"
 #
+# Befilo (thebespokejoinery.co.uk) — 2026-09-17, a flotta ELSŐ sbo-site-ja.
+# Az sbo banner same-origin `/api/consent`-re ír, ezt a generate-site.mjs
+# routes.toml-ja NEM tartalmazza (csak /api/event/*) — sbo-site-on kézzel kell.
+# A négy route a zónán API-val már létrejött; ez a blokk a repo-igazság.
+[[routes]]
+pattern = "thebespokejoinery.co.uk/api/event/*"
+zone_name = "thebespokejoinery.co.uk"
+[[routes]]
+pattern = "www.thebespokejoinery.co.uk/api/event/*"
+zone_name = "thebespokejoinery.co.uk"
+[[routes]]
+pattern = "thebespokejoinery.co.uk/api/consent*"
+zone_name = "thebespokejoinery.co.uk"
+[[routes]]
+pattern = "www.thebespokejoinery.co.uk/api/consent*"
+zone_name = "thebespokejoinery.co.uk"
+#
 # Hét 6-7: SkinLab + Life Story Video
 # [[routes]]
 # pattern = "skinlab.hu/api/event/*"

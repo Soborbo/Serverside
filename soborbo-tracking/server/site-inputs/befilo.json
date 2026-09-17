@@ -1,0 +1,10 @@
+{
+  "_comment": "Generator input for thebespokejoinery.co.uk (Befilo), LIVE in KV since 2026-09-17. Consent-only site for the sbo CMP pilot (fleet's first flip). No Meta pixel / Google Ads account yet — both legs absent on purpose (generated without --new-site, which would require them). Regenerate WITHOUT rotating the token: crm_token_sha256 is passed through; the plaintext lives only in the befilo Worker secret TRACKING_GATEWAY_TOKEN. The /api/consent* zone routes are NOT in the generated routes.toml — see wrangler.toml.",
+  "site_id": "befilo",
+  "hostnames": ["thebespokejoinery.co.uk", "www.thebespokejoinery.co.uk"],
+  "country_code": "GB",
+  "currency": "GBP",
+  "require_consent": true,
+  "consent": { "provider": "sbo", "mode": "basic" },
+  "crm_token_sha256": "ac9792eda6508e80a4d23aaca85e9be4afc0bf94105906cd0d5c5b29c2a72f74"
+}
