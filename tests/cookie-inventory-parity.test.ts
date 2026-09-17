@@ -374,7 +374,8 @@ describe('site-onként választott eszközök (vendor) a süti-táblában', () =
       fileURLToPath(new URL('../soborbo-tracking/components/CookiePolicy.astro', import.meta.url)),
       'utf8'
     );
-    expect(src).toMatch(/vendors\s*=\s*\[\]/);
+    // Az alapérték UGYANABBÓL a listából jön, amiből a banner szövege épül.
+    expect(src).toMatch(/vendors\s*=\s*inventoryVendorsFor\(trackingConfig\.vendors\)/);
     expect(src).toMatch(/vendors\.includes\(/);
   });
 });
