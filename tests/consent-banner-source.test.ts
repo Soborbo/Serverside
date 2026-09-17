@@ -26,4 +26,11 @@ describe('<ConsentBanner /> forrás', () => {
     expect(SRC).toContain("from '../consent-texts/2026-09-a/en.json'");
     expect(SRC).not.toContain('2026-08-a');
   });
+
+  it('A/B: a változat-választás a verziók kiolvasása ELŐTT fut', () => {
+    const pick = SRC.indexOf('pickBannerVariant(root, Math.random())');
+    const read = SRC.indexOf('root.dataset.bannerVersion');
+    expect(pick, 'pickBannerVariant hívás hiányzik').toBeGreaterThan(-1);
+    expect(read).toBeGreaterThan(pick);
+  });
 });

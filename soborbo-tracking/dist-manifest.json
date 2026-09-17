@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.8.0",
+  "version": "6.9.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "634a3a625274cae36c2b9cbb3395607ef4ec72c13b82d51c727481081e55afda",
+      "sha256": "889d32fb04f76c41b4dfa87a1f30b41d2b9a443b793e19ff2477846aac9e3584",
       "bytes": 4267,
       "role": "browser"
     },
@@ -15,8 +15,8 @@
       "role": "browser"
     },
     "lib/consent-banner-ui.ts": {
-      "sha256": "f88685f4e9cc59017bf01a4e51eb90d33e6849eba6964b0bfd966e1afe5fdab0",
-      "bytes": 9645,
+      "sha256": "236f2281b9a9d378f0ef4629d59003d108f9db4b41583df0ef5669589d09f97b",
+      "bytes": 12736,
       "role": "browser"
     },
     "lib/consent-migration.ts": {
@@ -105,8 +105,8 @@
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
-      "sha256": "9644efb097f4b076bc9147bcccb29f4232af77353201f17c33663e39e9fcffd2",
-      "bytes": 9403,
+      "sha256": "07b0980906e4070afd692b173eb63c4b7ecfcb44569330cef957cb7846b02eee",
+      "bytes": 10125,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
@@ -150,7 +150,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "3686c2bb7a4238a35d580e0cba78989bc0781590e48a766229ea5b0c2cb3ec6c",
+      "sha256": "91fa4197ed28b8f229b98119a8f779965452a00432c10b4fb7f37ada7d7086b2",
       "bytes": 34260,
       "role": "backend"
     },

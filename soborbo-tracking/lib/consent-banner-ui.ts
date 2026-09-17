@@ -22,6 +22,63 @@
 /** A banner-UI verziója (consent_log.banner_version). A szöveg-verziótól FÜGGETLEN. */
 export const SBO_BANNER_VERSION = '2026-09-a-b2';
 
+/**
+ * A/B teszt B-ága (b3): site-onként adott cím + balról beúszó kártya.
+ *
+ * MIÉRT ÍGY. A változat oldalbetöltésenként, véletlenszerűen dől el, és
+ * SEMMIT nem tárol a látogatónál: egy A/B-vödör sütije döntés előtt nem
+ * „feltétlenül szükséges" (PECR reg. 6), vagyis épp azt sértené, amit a
+ * banner kérdez. Mérésre ez elég: a megjelenés-ping és a döntés is a
+ * TÉNYLEGESEN látott változat banner_version-jét viszi.
+ *
+ * A gombok a B-ágban is pixelre azonosak — a teszt a címet és a mozgást
+ * méri, nem a terelést.
+ */
+export const SBO_BANNER_VERSION_B = '2026-09-a-b3';
+
+export interface BannerVariantB {
+  /** A B-ág címe (a site adja, pl. PUBLIC_TRACKING_BANNER_B_TITLE). */
+  title: string;
+  /** A B-ág consent_text_version-je — lásd variantTextVersion(). */
+  textVersion: string;
+}
+
+/**
+ * A B-ág szöveg-verziója: az alapverzió + a cím rövid, determinisztikus
+ * lenyomata. A cím maga a site repójában (Git) él — a lenyomatból és a
+ * történetből visszakereshető, MIT olvasott a látogató (GDPR Art. 7(1)).
+ */
+export function variantTextVersion(baseVersion: string, title: string): string {
+  let h = 0x811c9dc5; // FNV-1a 32 bit
+  for (const ch of title) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${baseVersion}.t${h.toString(16).padStart(8, '0')}`;
+}
+
+/**
+ * Oldalbetöltéskor kiválasztja a változatot, és a DOM-ot ahhoz igazítja
+ * (verziók, látható cím, aria-label, animáció-horog). B-ág nélküli markupon
+ * no-op, 'a'-t ad. Tiszta függvény a `rand` bemenettel — tesztelhető.
+ */
+export function pickBannerVariant(root: HTMLElement, rand: number): 'a' | 'b' {
+  const versionB = root.dataset.bannerVersionB;
+  const textB = root.dataset.textVersionB;
+  const titleB = root.querySelector<HTMLElement>('[data-sb-title="b"]');
+  if (!versionB || !textB || !titleB || rand >= 0.5) {
+    root.dataset.sbActiveVariant = 'a';
+    return 'a';
+  }
+  root.dataset.bannerVersion = versionB;
+  root.dataset.textVersion = textB;
+  root.querySelector<HTMLElement>('[data-sb-title="a"]')?.setAttribute('hidden', '');
+  titleB.removeAttribute('hidden');
+  root.querySelector<HTMLElement>('[data-sb-layer="banner"]')?.setAttribute('aria-label', titleB.textContent ?? '');
+  root.dataset.sbActiveVariant = 'b';
+  return 'b';
+}
+
 export interface ConsentBannerTexts {
   version: string;
   lang: string;
@@ -55,13 +112,23 @@ function esc(s: string): string {
  * viselkedés-réteg (ConsentBanner.astro script) dönt, KIZÁRÓLAG akkor, ha nincs
  * érvényes döntés a sütiben.
  */
-export function renderConsentBannerHtml(t: ConsentBannerTexts, policyHref: string): string {
+export function renderConsentBannerHtml(
+  t: ConsentBannerTexts,
+  policyHref: string,
+  variantB?: BannerVariantB
+): string {
   const c = t.panel.categories;
+  const bAttrs = variantB
+    ? ` data-banner-version-b="${esc(SBO_BANNER_VERSION_B)}" data-text-version-b="${esc(variantB.textVersion)}"`
+    : '';
+  const bTitle = variantB
+    ? `\n      <p class="sb-consent-title" data-sb-title="b" hidden>${esc(variantB.title)}</p>`
+    : '';
   return `
-<div id="sb-consent" data-banner-version="${esc(SBO_BANNER_VERSION)}" data-text-version="${esc(t.version)}" hidden>
+<div id="sb-consent" data-banner-version="${esc(SBO_BANNER_VERSION)}" data-text-version="${esc(t.version)}"${bAttrs} hidden>
   <div class="sb-consent-bar" role="region" aria-label="${esc(t.banner.title)}" data-sb-layer="banner">
     <div class="sb-consent-bar-text">
-      <p class="sb-consent-title">${esc(t.banner.title)}</p>
+      <p class="sb-consent-title" data-sb-title="a">${esc(t.banner.title)}</p>${bTitle}
       <p class="sb-consent-body">${esc(t.banner.body)}</p>
     </div>
     <div class="sb-consent-actions">
@@ -183,6 +250,10 @@ export function consentBannerCss(): string {
 @media (prefers-reduced-motion: no-preference) {
   #sb-consent .sb-consent-bar { animation: sb-consent-in .25s ease-out; }
   @keyframes sb-consent-in { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  /* b3: a kártya balról úszik be (a figyelem a mozgásra fordul); a
+     reduced-motion alatt ez sem mozog. */
+  #sb-consent[data-sb-active-variant="b"] .sb-consent-bar { animation: sb-consent-slide .45s cubic-bezier(.2,.8,.2,1) .6s both; }
+  @keyframes sb-consent-slide { from { transform: translateX(calc(-100% - 32px)); } to { transform: translateX(0); } }
 }
 `;
 }
