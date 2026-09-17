@@ -10,6 +10,12 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.9.0 (2026-09-17)
+
+### Hozzáadva — banner A/B teszt (b3: site-onkénti cím + balról beúszó kártya)
+
+`PUBLIC_TRACKING_BANNER_B_TITLE` megadásakor az oldalbetöltések fele a B-ágat látja (`banner_version = 2026-09-a-b3`, `consent_text_version = <alap>.t<cím-lenyomat>`). A választás oldalbetöltésenként véletlen, és SEMMIT nem tárol a látogatónál (döntés előtt egy A/B-süti nem lenne feltétlenül szükséges). A gombparitás a B-ágban is áll. Kiértékelés: `node scripts/consent-rate-report.mjs --site <id>` — a két ág külön sorban.
+
 ## 6.8.0 (2026-09-17)
 
 ### Hozzáadva — site-onkénti banner-szöveg egy env-sorból (`PUBLIC_TRACKING_VENDORS`)

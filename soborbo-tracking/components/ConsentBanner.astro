@@ -17,6 +17,8 @@
 import {
   renderConsentBannerHtml,
   consentBannerCss,
+  variantTextVersion,
+  type BannerVariantB,
   type ConsentBannerTexts,
 } from '../lib/consent-banner-ui';
 import { trackingConfig } from '../lib/config';
@@ -35,7 +37,13 @@ const { policyHref = '/adatkezelesi-tajekoztato' } = Astro.props;
 const vendors = parseVendors(import.meta.env.PUBLIC_TRACKING_VENDORS, { strict: true });
 const template = (trackingConfig.locale === 'hu' ? huTexts : enTexts) as VendorTextTemplate;
 const texts: ConsentBannerTexts = composeBannerTexts(template, vendors);
-const html = renderConsentBannerHtml(texts, policyHref);
+// Opcionális A/B teszt (b3): ha a site megad egy B-címet, az oldalbetöltések
+// fele ezt a címet és a balról beúszó kártyát látja. Üres = nincs teszt.
+const titleB = (import.meta.env.PUBLIC_TRACKING_BANNER_B_TITLE ?? '').trim();
+const variantB: BannerVariantB | undefined = titleB
+  ? { title: titleB, textVersion: variantTextVersion(texts.version, titleB) }
+  : undefined;
+const html = renderConsentBannerHtml(texts, policyHref, variantB);
 const css = consentBannerCss();
 ---
 
@@ -55,6 +63,7 @@ const css = consentBannerCss();
   // tesztelhető legyen — a komponens bundle-ölt szkriptjét jsdom nem tudja
   // futtatni, tehát itt bent NULLA fedés lenne rajta.
   import { createPanelKeydownHandler, panelFocusables, restoreFocus } from '../lib/consent-banner-a11y';
+  import { pickBannerVariant } from '../lib/consent-banner-ui';
 
   declare global {
     interface Window {
@@ -74,6 +83,9 @@ const css = consentBannerCss();
     if (!rootMaybe || rootMaybe.dataset.sbBound === '1') return;
     const root: HTMLElement = rootMaybe;
     root.dataset.sbBound = '1';
+    // A/B: a változat ELŐBB dől el, mint hogy bármi kiolvasná a verziókat —
+    // a megjelenés-ping és a döntés így a ténylegesen látott ágat rögzíti.
+    pickBannerVariant(root, Math.random());
 
     const bar = root.querySelector<HTMLElement>('[data-sb-layer="banner"]')!;
     const overlay = root.querySelector<HTMLElement>('[data-sb-layer="overlay"]')!;
