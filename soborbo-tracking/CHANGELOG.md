@@ -10,6 +10,28 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.8.0 (2026-09-17)
+
+### Hozzáadva — site-onkénti banner-szöveg egy env-sorból (`PUBLIC_TRACKING_VENDORS`)
+
+A 2026-08-a szöveg flotta-egységes volt: a Befilón (az első sbo-site) Meta- és Google Ads-hirdetésre kért engedélyt, holott egyik sem futott, a ténylegesen futó Microsoft Clarity-t viszont nem nevezte meg. Mostantól a site felsorolja, mi fut (`PUBLIC_TRACKING_VENDORS=ga4,clarity,google_ec`), és a banner + panel szövege a `consent-texts/2026-09-a` töredékeiből áll össze (`lib/consent-vendors.ts`). Ugyanez a lista a `<CookiePolicy />` alapértéke. Bizonyíték: `consent_text_version = 2026-09-a.<rendezett vendorok>`. Üres env = a régi tartalomnak megfelelő alapkészlet (`ga4,google_ads,meta`). Ismeretlen azonosító a buildben hiba, a böngészőben néma kihagyás.
+
+A 2026-09-a szöveg haszon-központú ("Help us improve this site"), rövidebb, és a US-transzfert cégnévvel mondja ki.
+
+### Változott — banner-elrendezés b2 (`2026-09-a-b2`)
+
+Mobilon kompakt alsó lap (Elfogadom/Elutasítom egymás mellett, egyforma), asztalon bal alsó kártya a teljes szélességű sáv helyett. Színek CSS-változóból (`--sb-consent-choice-bg` stb.) — a két döntés-gomb ugyanazt a változót kapja, a paritás így sem törhető.
+
+### Hozzáadva — `scripts/consent-rate-report.mjs` (repó-gyökér)
+
+Elfogadási arány banner-változatonként a `consent_metrics` + `consent_log` táblákból — szabályos változatok A/B-jéhez.
+
+## 6.7.4 (2026-09-17)
+
+### Javítva — a visszavonás a Clarity és a Hotjar sütiket is törli
+
+`_clck`, `_clsk`, `_hj…`; a futó Clarity előbb leáll (`consentv2` denied). Az inventory új, opcionális `vendor` mezője alapján a tábla csak ott mutatja ezeket, ahol a site használja őket.
+
 ## 6.7.1 (2026-09-09)
 
 ### Javítva — az `OFFLINE_EVENTS` szinkronban a kanonikus `events.json`-nel

@@ -310,5 +310,6 @@ changes when set to `sbo`:
 - The backend dispatch passes `consentId:
   readSboConsentCookieHeader(cookieHeader)?.consentId` so the offline/replay leg
   can resolve the consent_log's current revision.
+- Set `PUBLIC_TRACKING_VENDORS` to exactly the tools the GTM container runs (e.g. `ga4,clarity,google_ec`; ids in `lib/consent-vendors.ts`). The banner copy and the cookie table are built from it — one line per site, no hand-written copy. Keep it in sync with GTM whenever a tag is added or removed.
 - Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
   it is a mandatory field of every consent-log row.

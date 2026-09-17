@@ -1,0 +1,53 @@
+{
+  "_comment": "Fragment copy, pinned to a version. The visitor-facing text is ASSEMBLED from these fragments and the site's PUBLIC_TRACKING_VENDORS list (lib/consent-vendors.ts), so each site names exactly the tools it runs. consent_log.consent_text_version = '<version>.<sorted vendors>' — together with Git history that reproduces what the visitor read (GDPR Art. 7(1)). NEVER EDIT IN PLACE: a copy change is a new version directory and a re-consent trigger. Tone: benefit first, factual, no promises. Accept and Reject stay pixel-identical (unit-tested).",
+  "version": "2026-09-a",
+  "lang": "en",
+
+  "banner": {
+    "title": "Help us improve this site",
+    "lead": "We always use the cookies the site needs to work.",
+    "analytics": "With your permission we also use {list} to see which pages help visitors and where they get stuck.",
+    "marketing": "We also measure our advertising: {list}.",
+    "none": "We do not use any other cookies.",
+    "transfer": "Some of this data is processed by {orgs} in the United States.",
+    "accept": "Accept",
+    "reject": "Reject",
+    "settings": "Settings"
+  },
+
+  "panel": {
+    "title": "Cookie settings",
+    "intro": "You can decide per category and change your mind at any time with the “Cookie settings” link at the bottom of every page.",
+    "save": "Save settings",
+    "accept_all": "Accept all",
+    "reject_all": "Reject all",
+    "categories": {
+      "necessary": {
+        "label": "Strictly necessary",
+        "always_on": "Always active",
+        "body": "Required for the site to work at all (security, forms, remembering your cookie choice). We do not ask permission for these, because without them the site cannot be used."
+      },
+      "analytics": {
+        "label": "Analytics",
+        "body": "How visitors use the site: which pages are useful and where people get stuck. Tools: {list}.",
+        "none": "We do not use analytics cookies."
+      },
+      "marketing": {
+        "label": "Marketing",
+        "body": "Measuring whether our advertising brings enquiries. Tools: {list}.",
+        "none": "We do not use marketing cookies."
+      }
+    },
+    "policy_link": "Privacy notice"
+  },
+
+  "footer_link": "Cookie settings",
+
+  "_copy_rules": [
+    "FORBIDDEN: “if you reject, no data goes to any third party” — false under advanced Consent Mode.",
+    "FORBIDDEN: “you won't get irrelevant ads” — a promise, not a fact.",
+    "REQUIRED: third parties BY NAME — the fragments are filled from lib/consent-vendors.ts, never “our partners”.",
+    "REQUIRED: the US transfer sentence whenever a listed tool transfers to the US.",
+    "Benefit-framed and human, never a threat or a guilt trip."
+  ]
+}

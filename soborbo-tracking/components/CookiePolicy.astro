@@ -33,6 +33,7 @@
  */
 import inventory from '../consent-texts/cookie-inventory.json';
 import { trackingConfig, type ConsentProvider } from '../lib/config';
+import { inventoryVendorsFor } from '../lib/consent-vendors';
 
 interface Props {
   /** A tábla nyelve. Alapértelmezés: magyar. */
@@ -45,7 +46,8 @@ interface Props {
   provider?: ConsentProvider;
   /**
    * A site-on (GTM-ből) ténylegesen futó, site-onként választott eszközök:
-   * `clarity` | `hotjar`. Alapértelmezés: egyik sem. A `vendor` mezős
+   * `clarity` | `hotjar`. Alapértelmezés: a PUBLIC_TRACKING_VENDORS-ból (ugyanaz a
+   * lista, amiből a banner szövege épül). A `vendor` mezős
    * bejegyzések CSAK akkor látszanak, ha itt fel vannak sorolva — különben a
    * tábla olyan sütit hirdetne, ami az adott site-on nem létezik.
    */
@@ -57,7 +59,7 @@ interface Props {
 const {
   lang = 'hu',
   provider = trackingConfig.consentProvider,
-  vendors = [],
+  vendors = inventoryVendorsFor(trackingConfig.vendors),
   class: className,
 } = Astro.props;
 

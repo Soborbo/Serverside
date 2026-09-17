@@ -1,0 +1,53 @@
+{
+  "_comment": "Töredék-szöveg, verzióhoz kötve. A látogatónak megjelenő szöveg ezekből a töredékekből és a site PUBLIC_TRACKING_VENDORS listájából ÁLL ÖSSZE (lib/consent-vendors.ts), így minden site pontosan azt nevezi meg, ami nála fut. consent_log.consent_text_version = '<verzió>.<rendezett vendorok>' — a Git-történettel együtt ez visszaadja, mit olvasott a látogató (GDPR Art. 7(1)). SOSEM SZERKESZTJÜK A HELYÉN: szövegváltozás = új verziókönyvtár és re-consent. Hangnem: előbb a haszon, tényszerű, ígéret nélkül. Az Elfogadom és az Elutasítom pixelre azonos (unit teszt).",
+  "version": "2026-09-a",
+  "lang": "hu",
+
+  "banner": {
+    "title": "Segíts jobbá tenni az oldalt",
+    "lead": "Az oldal működéséhez szükséges sütiket mindig használjuk.",
+    "analytics": "Az engedélyeddel ezen felül mérjük ({list}), mely oldalak hasznosak a látogatóknak, és hol akadnak el.",
+    "marketing": "A hirdetéseink eredményességét is mérjük: {list}.",
+    "none": "Más sütit nem használunk.",
+    "transfer": "Az adatok egy részét az Egyesült Államokban kezelik: {orgs}.",
+    "accept": "Elfogadom",
+    "reject": "Elutasítom",
+    "settings": "Beállítások"
+  },
+
+  "panel": {
+    "title": "Süti-beállítások",
+    "intro": "Kategóriánként dönthetsz, és bármikor módosíthatod az oldal alján lévő „Süti beállítások” hivatkozással.",
+    "save": "Beállítások mentése",
+    "accept_all": "Mindet elfogadom",
+    "reject_all": "Mindet elutasítom",
+    "categories": {
+      "necessary": {
+        "label": "Működéshez szükséges",
+        "always_on": "Mindig aktív",
+        "body": "Az oldal alapvető működéséhez kell (biztonság, űrlapok, a süti-döntésed tárolása). Ezekhez nem kérünk engedélyt, mert nélkülük az oldal nem használható."
+      },
+      "analytics": {
+        "label": "Statisztika",
+        "body": "Hogyan használják a látogatók az oldalt: mely oldalak hasznosak, hol akadnak el. Eszközök: {list}.",
+        "none": "Statisztikai sütit nem használunk."
+      },
+      "marketing": {
+        "label": "Marketing",
+        "body": "Annak mérése, hogy a hirdetéseinkből érkezik-e ajánlatkérés. Eszközök: {list}.",
+        "none": "Marketing sütit nem használunk."
+      }
+    },
+    "policy_link": "Adatkezelési tájékoztató"
+  },
+
+  "footer_link": "Süti beállítások",
+
+  "_copy_rules": [
+    "TILOS: „elutasítás esetén semmilyen adat nem kerül harmadik félhez” — advanced Consent Mode mellett hamis.",
+    "TILOS: „nem kapsz irreleváns hirdetést” — ígéret, nem tény.",
+    "KÖTELEZŐ: harmadik felek NÉVVEL — a töredékeket a lib/consent-vendors.ts tölti ki, soha nem „partnereink”.",
+    "KÖTELEZŐ: az USA-transzfer mondat, ha a listán olyan eszköz van, ami oda továbbít.",
+    "Haszon-központú és emberi, soha nem fenyegető vagy bűntudatkeltő."
+  ]
+}

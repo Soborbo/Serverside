@@ -12,6 +12,8 @@
  * `currency` independently — keep them in sync with these.
  */
 
+import { parseVendors } from './consent-vendors';
+
 export type Market = 'GB' | 'HU';
 
 /**
@@ -48,6 +50,13 @@ export interface TrackingConfig {
    * ír (TRK-4003) — nincs néma engedés.
    */
   devConsentAllow: boolean;
+  /**
+   * A site-on ténylegesen futó eszközök (PUBLIC_TRACKING_VENDORS, pl.
+   * `ga4,clarity,google_ec`). EGY forrás a banner szövegéhez és a süti-
+   * táblához — lásd lib/consent-vendors.ts. Üres = a 2026-08-a tartalmának
+   * megfelelő alapkészlet (ga4, google_ads, meta).
+   */
+  vendors: string[];
 }
 
 function readEnv(key: string): string | undefined {
@@ -68,7 +77,7 @@ function readEnv(key: string): string | undefined {
  * böngészőbe másolódik, nincs bundler-injektálás). A gateway minimuma:
  * Serverside `src/lib/consent.ts` MIN_CLIENT_LIB_VERSION.
  */
-export const CLIENT_LIB_VERSION = '6.7.4';
+export const CLIENT_LIB_VERSION = '6.8.0';
 
 export const trackingConfig: TrackingConfig = {
   country: (readEnv('PUBLIC_TRACKING_COUNTRY') as Market) || 'GB',
@@ -78,6 +87,7 @@ export const trackingConfig: TrackingConfig = {
   policyVersion: readEnv('PUBLIC_TRACKING_POLICY_VERSION') || 'policy-unset',
   ruleset: readEnv('PUBLIC_TRACKING_RULESET') || 'eea_uk',
   devConsentAllow: readEnv('PUBLIC_TRACKING_DEV_CONSENT_ALLOW') === '1',
+  vendors: parseVendors(readEnv('PUBLIC_TRACKING_VENDORS')),
 };
 
 /** EGY helyen definiált provider-kérdés — ne szóródjon `=== 'sbo'` összehasonlítás. */

@@ -1,12 +1,12 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.7.4",
-  "file_count": 31,
+  "version": "6.8.0",
+  "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "45a93e5c9dd23f580602b1d3ae427582781e4510a6a652b7ff1107a8363679eb",
-      "bytes": 3832,
+      "sha256": "634a3a625274cae36c2b9cbb3395607ef4ec72c13b82d51c727481081e55afda",
+      "bytes": 4267,
       "role": "browser"
     },
     "lib/consent-banner-a11y.ts": {
@@ -15,8 +15,8 @@
       "role": "browser"
     },
     "lib/consent-banner-ui.ts": {
-      "sha256": "e67489fa0896556814d0cc0ede616074228d19ee2d41d629f81338a1b85ff28a",
-      "bytes": 8358,
+      "sha256": "f88685f4e9cc59017bf01a4e51eb90d33e6849eba6964b0bfd966e1afe5fdab0",
+      "bytes": 9645,
       "role": "browser"
     },
     "lib/consent-migration.ts": {
@@ -32,6 +32,11 @@
     "lib/consent-sbo.ts": {
       "sha256": "687df30cfaada01cdc7feb9989f5cd3574428b9e04f133e3e702a30ed50dda8f",
       "bytes": 13249,
+      "role": "browser"
+    },
+    "lib/consent-vendors.ts": {
+      "sha256": "cc75d96f120ed1ed1aa2d1814ce375541c116e49347d7550ef7fb8c08e8728fc",
+      "bytes": 8791,
       "role": "browser"
     },
     "lib/consent.ts": {
@@ -100,8 +105,8 @@
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
-      "sha256": "967e6a8cd5acb6e276b34e06ec7bb30b1cfd2a189a6e6c3b11e1d432f12a155d",
-      "bytes": 8959,
+      "sha256": "9644efb097f4b076bc9147bcccb29f4232af77353201f17c33663e39e9fcffd2",
+      "bytes": 9403,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
@@ -110,8 +115,8 @@
       "role": "browser"
     },
     "components/CookiePolicy.astro": {
-      "sha256": "b0f898025b4c6ef520745b3ae0d490713da13e0273c2c83ac91c507dbabbaab1",
-      "bytes": 8299,
+      "sha256": "b3bb75004cc55b08fb970e7d39c686a50fd691ba94278fefb81bae1c118d9796",
+      "bytes": 8480,
       "role": "browser"
     },
     "components/CookieYesEqualButtons.astro": {
@@ -145,7 +150,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "10ffe468c37e325aedf6f98518077a14e6da32339c34e4be892e59c086709ecd",
+      "sha256": "3686c2bb7a4238a35d580e0cba78989bc0781590e48a766229ea5b0c2cb3ec6c",
       "bytes": 34260,
       "role": "backend"
     },

@@ -20,8 +20,9 @@ import {
   type ConsentBannerTexts,
 } from '../lib/consent-banner-ui';
 import { trackingConfig } from '../lib/config';
-import huTexts from '../consent-texts/2026-08-a/hu.json';
-import enTexts from '../consent-texts/2026-08-a/en.json';
+import { composeBannerTexts, parseVendors, type VendorTextTemplate } from '../lib/consent-vendors';
+import huTexts from '../consent-texts/2026-09-a/hu.json';
+import enTexts from '../consent-texts/2026-09-a/en.json';
 
 interface Props {
   /** Az adatkezelési tájékoztató útvonala (a panel alján hivatkozva). */
@@ -29,7 +30,11 @@ interface Props {
 }
 const { policyHref = '/adatkezelesi-tajekoztato' } = Astro.props;
 
-const texts = (trackingConfig.locale === 'hu' ? huTexts : enTexts) as ConsentBannerTexts;
+// A szöveg a site PUBLIC_TRACKING_VENDORS listájából áll össze (lib/consent-vendors.ts).
+// BUILD-időben strict: egy ismeretlen eszköz-azonosító itt hangos build-hiba.
+const vendors = parseVendors(import.meta.env.PUBLIC_TRACKING_VENDORS, { strict: true });
+const template = (trackingConfig.locale === 'hu' ? huTexts : enTexts) as VendorTextTemplate;
+const texts: ConsentBannerTexts = composeBannerTexts(template, vendors);
 const html = renderConsentBannerHtml(texts, policyHref);
 const css = consentBannerCss();
 ---
