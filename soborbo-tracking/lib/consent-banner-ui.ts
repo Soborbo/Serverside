@@ -115,24 +115,19 @@ export function renderConsentBannerHtml(t: ConsentBannerTexts, policyHref: strin
  */
 export function consentBannerCss(): string {
   return `
-#sb-consent {
-  font-family: inherit;
-  /* Márkázás a site CSS-éből (pl. :root { --sb-consent-choice-bg: #28394b; }).
-     A két döntés-gomb UGYANAZT a változót kapja — a paritás így sem törhető. */
-  --sb-consent-bg: #ffffff;
-  --sb-consent-fg: #1c1c1e;
-  --sb-consent-choice-bg: #1c1c1e;
-  --sb-consent-choice-fg: #ffffff;
-  --sb-consent-radius: 12px;
-}
+/* Márkázás a site CSS-éből (pl. :root { --sb-consent-choice-bg: #28394b; }).
+   Az alapérték a var() TARTALÉKA, nem #sb-consent-en deklarált változó —
+   különben a site :root-beállítása sosem érvényesülne. A két döntés-gomb
+   UGYANAZT a változót kapja — a paritás így sem törhető. */
+#sb-consent { font-family: inherit; }
 /* b2 (2026-09): mobilon kompakt alsó lap, asztalon bal alsó kártya a teljes
    szélességű sáv helyett. A kártya nem takarja a tartalom felét (NN/g: a
    képernyő >50%-át fedő banner a látogatók ~18%-át azonnal elküldi). */
 #sb-consent .sb-consent-bar {
   position: fixed; inset-inline: 0; bottom: 0; z-index: 9998;
   display: flex; flex-direction: column; gap: 12px;
-  padding: 16px; background: var(--sb-consent-bg); color: var(--sb-consent-fg);
-  border-radius: var(--sb-consent-radius) var(--sb-consent-radius) 0 0;
+  padding: 16px; background: var(--sb-consent-bg, #ffffff); color: var(--sb-consent-fg, #1c1c1e);
+  border-radius: var(--sb-consent-radius, 12px) var(--sb-consent-radius, 12px) 0 0;
   box-shadow: 0 -4px 24px rgba(0,0,0,.25);
 }
 #sb-consent .sb-consent-title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; }
@@ -143,9 +138,9 @@ export function consentBannerCss(): string {
   font: inherit; font-size: .9375rem; font-weight: 600;
   padding: 10px 18px; min-height: 44px; min-width: 120px;
 }
-#sb-consent .sb-cbtn-choice { background: var(--sb-consent-choice-bg); color: var(--sb-consent-choice-fg); }
+#sb-consent .sb-cbtn-choice { background: var(--sb-consent-choice-bg, #1c1c1e); color: var(--sb-consent-choice-fg, #ffffff); }
 #sb-consent .sb-cbtn-settings {
-  grid-column: 1 / -1; background: transparent; color: var(--sb-consent-fg);
+  grid-column: 1 / -1; background: transparent; color: var(--sb-consent-fg, #1c1c1e);
   border: 1px solid currentColor;
 }
 #sb-consent .sb-cbtn:hover { filter: brightness(.92); }
@@ -154,7 +149,7 @@ export function consentBannerCss(): string {
   #sb-consent .sb-consent-bar {
     inset-inline: auto; left: 24px; bottom: 24px;
     width: min(440px, calc(100vw - 48px)); padding: 20px;
-    border-radius: var(--sb-consent-radius);
+    border-radius: var(--sb-consent-radius, 12px);
   }
   #sb-consent .sb-consent-bar .sb-consent-actions { grid-template-columns: 1fr 1fr 1fr; }
   #sb-consent .sb-consent-bar .sb-cbtn-settings { grid-column: auto; }
@@ -165,13 +160,13 @@ export function consentBannerCss(): string {
 #sb-consent .sb-consent-panel {
   position: fixed; z-index: 9999; inset-inline: 0; bottom: 0;
   max-height: min(85vh, 640px); overflow-y: auto;
-  background: var(--sb-consent-bg); color: var(--sb-consent-fg); padding: 20px 16px;
-  border-radius: var(--sb-consent-radius) var(--sb-consent-radius) 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,.35);
+  background: var(--sb-consent-bg, #ffffff); color: var(--sb-consent-fg, #1c1c1e); padding: 20px 16px;
+  border-radius: var(--sb-consent-radius, 12px) var(--sb-consent-radius, 12px) 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,.35);
 }
 @media (min-width: 640px) {
   #sb-consent .sb-consent-panel {
     inset-inline: auto; left: 50%; transform: translateX(-50%);
-    width: min(560px, calc(100vw - 32px)); bottom: 24px; border-radius: var(--sb-consent-radius);
+    width: min(560px, calc(100vw - 32px)); bottom: 24px; border-radius: var(--sb-consent-radius, 12px);
   }
 }
 #sb-consent .sb-consent-panel h2 { margin: 0 0 8px; font-size: 1.125rem; }
@@ -181,7 +176,7 @@ export function consentBannerCss(): string {
 #sb-consent .sb-consent-cat-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 #sb-consent .sb-consent-cat-label { font-weight: 600; }
 #sb-consent .sb-consent-always { font-size: .8125rem; opacity: .7; }
-#sb-consent .sb-consent-cat input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--sb-consent-choice-bg); }
+#sb-consent .sb-consent-cat input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--sb-consent-choice-bg, #1c1c1e); }
 #sb-consent .sb-consent-cat-body { margin: 6px 0 0; font-size: .8125rem; line-height: 1.4; opacity: .85; }
 #sb-consent .sb-consent-policy { margin: 12px 0 0; font-size: .8125rem; }
 #sb-consent .sb-consent-policy a { color: inherit; text-decoration: underline; }

@@ -129,3 +129,14 @@ describe('forrás-szinkron', () => {
     }
   });
 });
+
+describe('b2 márkázás', () => {
+  it('a színváltozók tartalékértékkel olvasódnak — a site :root-beállítása felülírhatja őket', async () => {
+    const { consentBannerCss } = await import('../lib/consent-banner-ui');
+    const css = consentBannerCss();
+    // Ha a #sb-consent maga deklarálná a változót, az elnyomná a :root-ot.
+    expect(css).not.toMatch(/#sb-consent\s*\{[^}]*--sb-consent-/);
+    expect(css).toMatch(/var\(--sb-consent-choice-bg, #[0-9a-f]{6}\)/i);
+    expect(css).not.toMatch(/var\(--sb-consent-[a-z-]+\)/);
+  });
+});

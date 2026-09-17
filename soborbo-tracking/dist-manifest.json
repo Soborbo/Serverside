@@ -15,8 +15,8 @@
       "role": "browser"
     },
     "lib/consent-banner-ui.ts": {
-      "sha256": "10c81226614d8d86e10804e28be3902d43fa61e6a2bc944bb30df72f36716885",
-      "bytes": 9552,
+      "sha256": "f88685f4e9cc59017bf01a4e51eb90d33e6849eba6964b0bfd966e1afe5fdab0",
+      "bytes": 9645,
       "role": "browser"
     },
     "lib/consent-migration.ts": {
