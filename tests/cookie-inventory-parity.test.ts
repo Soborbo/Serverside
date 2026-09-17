@@ -349,3 +349,32 @@ describe('süti-tábla ↔ purge-kód paritás', () => {
     expect(keys.length).toBe(new Set(keys).size);
   });
 });
+
+describe('site-onként választott eszközök (vendor) a süti-táblában', () => {
+  const ALLOWED_VENDORS = ['clarity', 'hotjar'];
+
+  it('a vendor mező — ha van — csak ismert eszközt nevezhet meg', () => {
+    const bad = inventory.entries
+      .filter((e) => 'vendor' in e)
+      .filter((e) => !ALLOWED_VENDORS.includes((e as Entry & { vendor: string }).vendor))
+      .map((e) => e.name);
+    expect(bad).toEqual([]);
+  });
+
+  it('a Clarity és a Hotjar sorai vendor-kapusak (nem jelennek meg minden site-on)', () => {
+    for (const name of ['_clck', '_clsk', '_hj']) {
+      const e = inventory.entries.find((x) => x.name === name) as (Entry & { vendor?: string }) | undefined;
+      expect(e, `${name} hiányzik a táblából`).toBeDefined();
+      expect(e?.vendor, `${name}: vendor nélkül MINDEN site táblájában megjelenne`).toBeTruthy();
+    }
+  });
+
+  it('a <CookiePolicy /> a vendor mezőt a `vendors` prop alapján szűri', () => {
+    const src = readFileSync(
+      fileURLToPath(new URL('../soborbo-tracking/components/CookiePolicy.astro', import.meta.url)),
+      'utf8'
+    );
+    expect(src).toMatch(/vendors\s*=\s*\[\]/);
+    expect(src).toMatch(/vendors\.includes\(/);
+  });
+});

@@ -640,8 +640,14 @@ const VENDOR_COOKIES = {
    * (`_ga_<STREAM>`) prefixszel. A prefix szándékosan `_ga_` és nem `_ga`: a
    * puszta `_ga` prefix a Google Ads-hez tartozó `_gac_<ID>`-t, az UA-örökség
    * `_gat*`-ot és a `_gali`-t is elvinné — azok nem analytics-kategóriájúak.
+   *
+   * Microsoft Clarity (`_clck`, `_clsk`) és Hotjar (`_hj…`, pl.
+   * `_hjSessionUser_<site>`, `_hjSession_<site>`): a GTM-ből analytics-
+   * hozzájárulással futó munkamenet-rögzítők. 2026-09-17-i élő mérés (Befilo):
+   * a visszavonás után mindkettő sütijei megmaradtak. A `_hj` prefix csak a
+   * Hotjar saját családját fedi — más gyártó nem használja.
    */
-  analytics: { exact: ['_ga'], prefixes: ['_ga_'] },
+  analytics: { exact: ['_ga', '_clck', '_clsk'], prefixes: ['_ga_', '_hj'] },
   /** Google Ads conversion linker (`_gcl_au`, `_gcl_aw`, `_gcl_dc`, `_gcl_gb`). */
   marketing: { exact: [], prefixes: ['_gcl_'] }
 } as const;
@@ -718,6 +724,15 @@ export function purgeMarketingStorage(): void {
  */
 export function purgeAnalyticsStorage(): void {
   resetSession();
+  // A lapon már betöltött Clarity a következő eseménynél újraírná a törölt
+  // `_clck`/`_clsk`-t. A saját consent-API-ja leállítja a sütihasználatot —
+  // ELŐBB szólunk neki, utána törlünk. Nincs Clarity → no-op; hiba sosem dob.
+  try {
+    const clarity = (globalThis as { clarity?: (...args: unknown[]) => void }).clarity;
+    if (typeof clarity === 'function') {
+      clarity('consentv2', { ad_Storage: 'denied', analytics_Storage: 'denied' });
+    }
+  } catch { /* a purge sosem dobhat */ }
   for (const name of matchingCookieNames(VENDOR_COOKIES.analytics)) expireCookie(name);
 }
 

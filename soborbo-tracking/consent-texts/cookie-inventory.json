@@ -1,6 +1,6 @@
 {
   "_comment": "A KOZZETEENDO suti-/tarolo-tabla kanonikus forrasa (GDPR Art 13(1)(e), PECR reg. 6, NAIH). MIERT ITT: a jogi kotelezettseg az, hogy amit KIIRUNK, azt le is irjuk, es amit a visszavonaskor IGERUNK torolni, azt torolju is. Ezt a ket allitast a `tests/cookie-inventory-parity.test.ts` KETIRANYBAN meri a `lib/persistence.ts` VALODI purge-kodjahoz kepest — a tabla igy nem tud elcsuszni a kodtol. Kezzel irt suti-tabla mindig elcsuszik; ez a fajl a kod parja.",
-  "version": "2026-09-c",
+  "version": "2026-09-d",
   "_fields": {
     "name": "A suti/kulcs neve. `match: prefix` eseten nev-elotag (a per-property utotag miatt).",
     "storage": "cookie | localStorage | sessionStorage",
@@ -9,7 +9,8 @@
     "lifetime": "Ember által olvasható élettartam, KÉT NYELVEN (`{hu, en}`). Az angol tábla korábban a magyar sztringet jelenítette meg. AMI A KÓDBÓL JÖN, AZT A `tests/cookie-inventory-parity.test.ts` MÉRI: a saját `sb_*` kulcsokra az élettartamnak egyeznie kell a `lib/persistence.ts` tényleges lejárati logikájával.",
     "transfer": "Harmadik orszagba tortenő tovabbitas (null = nincs).",
     "purged_on_withdrawal": "true = a visszavonas torli. false ESETEN a `why_not_purged` KOTELEZO es nem lehet ures — egy nem torolt suti lehet vedheto, de NEM lehet kimondatlan.",
-    "provider": "Melyik CMP alatt letezik a bejegyzes: `any` (provider-fuggetlen) | `sbo` | `cookieyes`. A `<CookiePolicy provider=\"...\" />` ez alapjan szur. MIERT KELL: a hozzajarulas-kezelo SAJAT sutije provider-specifikus, es 2026-09-13-i eles meres szerint a flottan MINDEN site CookieYes-en fut — az `sbo_consent`-et felsorolo tabla tehat ma nem letezo sutit hirdetne, a valodi `cookieyes-consent`-et pedig elhallgatna."
+    "provider": "Melyik CMP alatt letezik a bejegyzes: `any` (provider-fuggetlen) | `sbo` | `cookieyes`. A `<CookiePolicy provider=\"...\" />` ez alapjan szur. MIERT KELL: a hozzajarulas-kezelo SAJAT sutije provider-specifikus, es 2026-09-13-i eles meres szerint a flottan MINDEN site CookieYes-en fut — az `sbo_consent`-et felsorolo tabla tehat ma nem letezo sutit hirdetne, a valodi `cookieyes-consent`-et pedig elhallgatna.",
+    "vendor": "OPCIONALIS. Egy site-onkent bekapcsolt harmadik feles eszkoz (`clarity` | `hotjar`). Hianyzik = minden site-on letezik. A `<CookiePolicy vendors={[...]} />` csak a site altal felsorolt vendorok sorait mutatja. MIERT KELL: a purge-kod MINDEN site-on torli ezeket a sutiket (ahol nincsenek, ott no-op), de a kozzetett tabla csak ott sorolhatja fel oket, ahol tenyleg futnak — kulonben nem letezo sutit hirdetne (Art 13(1)(e))."
   },
   "entries": [
     {
@@ -102,6 +103,63 @@
       "purpose": {
         "hu": "Google Analytics 4 munkamenet-állapot az adott mérési adatfolyamhoz (`_ga_<STREAM>`).",
         "en": "Google Analytics 4 session state for the given measurement stream (`_ga_<STREAM>`)."
+      }
+    },
+    {
+      "name": "_clck",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "analytics",
+      "issuer": "Microsoft Corporation (Clarity)",
+      "lifetime": {
+        "hu": "1 év",
+        "en": "1 year"
+      },
+      "transfer": "USA (Microsoft Corporation), EU-U.S. Data Privacy Framework",
+      "purged_on_withdrawal": true,
+      "provider": "any",
+      "vendor": "clarity",
+      "purpose": {
+        "hu": "Microsoft Clarity látogató-azonosító: összeköti ugyanannak a látogatónak a munkameneteit a használati elemzéshez.",
+        "en": "Microsoft Clarity visitor identifier: links the same visitor's sessions for usage analysis."
+      }
+    },
+    {
+      "name": "_clsk",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "analytics",
+      "issuer": "Microsoft Corporation (Clarity)",
+      "lifetime": {
+        "hu": "1 nap",
+        "en": "1 day"
+      },
+      "transfer": "USA (Microsoft Corporation), EU-U.S. Data Privacy Framework",
+      "purged_on_withdrawal": true,
+      "provider": "any",
+      "vendor": "clarity",
+      "purpose": {
+        "hu": "Microsoft Clarity munkamenet-süti: egy látogatás oldalmegtekintéseit egy felvételbe fűzi.",
+        "en": "Microsoft Clarity session cookie: joins the page views of one visit into a single recording."
+      }
+    },
+    {
+      "name": "_hj",
+      "match": "prefix",
+      "storage": "cookie",
+      "category": "analytics",
+      "issuer": "Hotjar Ltd. (Málta)",
+      "lifetime": {
+        "hu": "30 perc – 1 év",
+        "en": "30 minutes – 1 year"
+      },
+      "transfer": null,
+      "purged_on_withdrawal": true,
+      "provider": "any",
+      "vendor": "hotjar",
+      "purpose": {
+        "hu": "Hotjar sütik (`_hjSessionUser_…` 1 év, `_hjSession_…` 30 perc): a látogató és a munkamenet felismerése a használati elemzéshez.",
+        "en": "Hotjar cookies (`_hjSessionUser_…` 1 year, `_hjSession_…` 30 minutes): recognise the visitor and the session for usage analysis."
       }
     },
     {

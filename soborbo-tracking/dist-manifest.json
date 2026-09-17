@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.7.3",
+  "version": "6.7.4",
   "file_count": 31,
   "files": {
     "lib/config.ts": {
-      "sha256": "c7157b9769786f65adfe0316463b58763ea4b3d25307fb6099965715766952d4",
+      "sha256": "45a93e5c9dd23f580602b1d3ae427582781e4510a6a652b7ff1107a8363679eb",
       "bytes": 3832,
       "role": "browser"
     },
@@ -80,8 +80,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "a819528d918210807e576ea8abb179ee7422b9cde2d23efee1a2390e6f7496a0",
-      "bytes": 33266,
+      "sha256": "3f5c3d80211d277d3cceda7278c4725d66852b59fc482b7087b12c9579ced9db",
+      "bytes": 34205,
       "role": "browser"
     },
     "lib/submit.ts": {
@@ -110,8 +110,8 @@
       "role": "browser"
     },
     "components/CookiePolicy.astro": {
-      "sha256": "decda8f0167f6e68a43d4d9b668d142780919172bff79a11f5092cf046fd8d40",
-      "bytes": 7595,
+      "sha256": "b0f898025b4c6ef520745b3ae0d490713da13e0273c2c83ac91c507dbabbaab1",
+      "bytes": 8299,
       "role": "browser"
     },
     "components/CookieYesEqualButtons.astro": {
@@ -145,7 +145,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "1e3e89d4e77b08c3cc7fa816a27a5ea8336e90621ee7ff49f2e4991ec546120f",
+      "sha256": "10ffe468c37e325aedf6f98518077a14e6da32339c34e4be892e59c086709ecd",
       "bytes": 34260,
       "role": "backend"
     },

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../lib/gateway', () => ({
   sendToWorker: vi.fn(() => Promise.resolve(true)),
@@ -178,5 +178,67 @@ describe('visszavonás — a Google saját sütijei', () => {
     for (const name of ['_ga=', '_ga_ABC123XYZ=', '_gcl_au=', '_gcl_aw=', '_fbp=']) {
       expect(document.cookie, `${name} túlélte a visszavonást`).not.toContain(name);
     }
+  });
+});
+
+/**
+ * Munkamenet-rögzítők (Microsoft Clarity, Hotjar) — 2026-09-17-i élő mérés a
+ * Befilón: a GTM-ből analytics-hozzájárulással futó eszközök sütijei a
+ * visszavonás után megmaradtak, mert a purge csak a GA4-et ismerte.
+ */
+describe('visszavonás — Clarity és Hotjar sütik', () => {
+  afterEach(() => {
+    delete (globalThis as { clarity?: unknown }).clarity;
+  });
+
+  function seedRecorderCookies(): void {
+    setCookie('_clck', 'riembz^2^g9j^1^2451');
+    setCookie('_clsk', 'nlg3zy^1789638787696^1^1^y.clarity.ms/collect');
+    setCookie('_hjSessionUser_3575748', 'eyJpZCI6IjEifQ==');
+    setCookie('_hjSession_3575748', 'eyJpZCI6IjIifQ==');
+  }
+
+  it('az analytics visszavonása törli a Clarity és a Hotjar sütiket', () => {
+    initTracking();
+    seedRecorderCookies();
+    emitConsentUpdate({ analytics: false, marketing: true });
+
+    for (const name of ['_clck=', '_clsk=', '_hjSessionUser_3575748=', '_hjSession_3575748=']) {
+      expect(document.cookie, `${name} túlélte a visszavonást`).not.toContain(name);
+    }
+  });
+
+  it('a marketing visszavonása NEM viszi el őket (analytics-kategória)', () => {
+    initTracking();
+    seedRecorderCookies();
+    emitConsentUpdate({ analytics: true, marketing: false });
+
+    expect(document.cookie).toContain('_clck=');
+    expect(document.cookie).toContain('_hjSession_3575748=');
+  });
+
+  it('a lapon futó Clarity-t leállítja, MIELŐTT törölne (különben újraírná)', () => {
+    const calls: unknown[][] = [];
+    (globalThis as { clarity?: unknown }).clarity = (...args: unknown[]) => {
+      calls.push(args);
+      // Ha a purge a hívás ELŐTT törölt volna, itt még ott lenne a süti:
+      expect(document.cookie).toContain('_clck=');
+    };
+    initTracking();
+    seedRecorderCookies();
+    emitConsentUpdate({ analytics: false, marketing: true });
+
+    expect(calls).toContainEqual(['consentv2', { ad_Storage: 'denied', analytics_Storage: 'denied' }]);
+    expect(document.cookie).not.toContain('_clck=');
+  });
+
+  it('egy dobó Clarity nem akasztja meg a törlést', () => {
+    (globalThis as { clarity?: unknown }).clarity = () => {
+      throw new Error('clarity boom');
+    };
+    initTracking();
+    seedRecorderCookies();
+    expect(() => emitConsentUpdate({ analytics: false, marketing: true })).not.toThrow();
+    expect(document.cookie).not.toContain('_clsk=');
   });
 });
