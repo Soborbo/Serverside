@@ -20,8 +20,9 @@ import {
   type ConsentBannerTexts,
 } from '../lib/consent-banner-ui';
 import { trackingConfig } from '../lib/config';
-import huTexts from '../consent-texts/2026-08-a/hu.json';
-import enTexts from '../consent-texts/2026-08-a/en.json';
+import { composeBannerTexts, parseVendors, type VendorTextTemplate } from '../lib/consent-vendors';
+import huTexts from '../consent-texts/2026-09-a/hu.json';
+import enTexts from '../consent-texts/2026-09-a/en.json';
 
 interface Props {
   /** Az adatkezelési tájékoztató útvonala (a panel alján hivatkozva). */

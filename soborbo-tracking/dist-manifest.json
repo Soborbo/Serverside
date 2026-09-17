@@ -105,8 +105,8 @@
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
-      "sha256": "379f6e10470def9803143a148002c60e628398a98e2bf76d55d902e449ab12d9",
-      "bytes": 9303,
+      "sha256": "9644efb097f4b076bc9147bcccb29f4232af77353201f17c33663e39e9fcffd2",
+      "bytes": 9403,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
