@@ -18,6 +18,7 @@
  * HASZNÁLAT (a site adatkezelési tájékoztatójában):
  *   <CookiePolicy lang="hu" />                 ← a provider az env-ből jön
  *   <CookiePolicy lang="en" provider="sbo" />  ← vagy kézzel felülírva
+ *   <CookiePolicy lang="en" vendors={['clarity']} />  ← a site-on futó Clarity sorai is
  *
  * A VISSZAVONÁS ÚTJA PROVIDER-FÜGGŐ, és a tábla alá KELL egy link:
  *   - provider='sbo':       <a href="#" data-sb-consent-open>Süti beállítások</a>
@@ -42,6 +43,13 @@ interface Props {
    * banner nem tud szétcsúszni egy elfelejtett propon.
    */
   provider?: ConsentProvider;
+  /**
+   * A site-on (GTM-ből) ténylegesen futó, site-onként választott eszközök:
+   * `clarity` | `hotjar`. Alapértelmezés: egyik sem. A `vendor` mezős
+   * bejegyzések CSAK akkor látszanak, ha itt fel vannak sorolva — különben a
+   * tábla olyan sütit hirdetne, ami az adott site-on nem létezik.
+   */
+  vendors?: readonly string[];
   /** Extra osztály a külső wrapperre (a site tipográfiájához). */
   class?: string;
 }
@@ -49,6 +57,7 @@ interface Props {
 const {
   lang = 'hu',
   provider = trackingConfig.consentProvider,
+  vendors = [],
   class: className,
 } = Astro.props;
 
@@ -99,8 +108,12 @@ const ORDER = ['necessary', 'analytics', 'marketing'] as const;
 // `cookieyes-consent` CSAK CookieYes alatt. A rossz provider tablaja egyszerre
 // hirdetne nem letezo sutit ES hallgatna el egy valodit — mindketto Art 13(1)(e)
 // hiba. Minden mas bejegyzes `provider: 'any'`.
+// Ugyanez a logika a site-onkent valasztott eszkozokre (`vendor`): a Clarity
+// sorai csak ott latszanak, ahol a site a `vendors` propban jelzi, hogy fut.
 const visible = inventory.entries.filter(
-  (e: Entry) => e.provider === 'any' || e.provider === provider
+  (e: Entry) =>
+    (e.provider === 'any' || e.provider === provider) &&
+    (!('vendor' in e) || vendors.includes((e as { vendor: string }).vendor))
 );
 const groups = ORDER.map((category) => ({
   category,
