@@ -1,0 +1,17 @@
+{
+  "_comment": "nonmono.org (paywall_boilerplate Worker nonmono-org). sbo CMP, GA4+Clarity+Meta pixel in GTM (browser only, no CAPI token), no Ads. Service binding only. LIVE in KV since 2026-09-25. Generated without --new-site (no Meta CAPI / Google Ads leg on purpose); regenerate WITHOUT rotating: crm_token_sha256 passes through, the plaintext lives only in the Worker secret TRACKING_GATEWAY_TOKEN. /api/consent* reaches the gateway through the site Worker's GATEWAY service binding (paywall_boilerplate lib/tracking/gateway-proxy.ts), so no zone route.",
+  "site_id": "nonmono-org",
+  "hostnames": [
+    "nonmono.org",
+    "www.nonmono.org",
+    "nonmono-org.golaxo.workers.dev"
+  ],
+  "country_code": "GB",
+  "currency": "EUR",
+  "require_consent": true,
+  "consent": {
+    "provider": "sbo",
+    "mode": "basic"
+  },
+  "crm_token_sha256": "886af9fd69b67629ac96a828712f1674bd40dd89f053830a5eb41a2617e6c823"
+}
