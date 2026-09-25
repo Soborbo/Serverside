@@ -1,0 +1,17 @@
+{
+  "_comment": "nonmono.hu (paywall_boilerplate Worker nonmono). sbo CMP, GA4+Clarity in GTM, no Meta/Ads. Reaches the gateway via service binding only. LIVE in KV since 2026-09-25. Generated without --new-site (no Meta CAPI / Google Ads leg on purpose); regenerate WITHOUT rotating: crm_token_sha256 passes through, the plaintext lives only in the Worker secret TRACKING_GATEWAY_TOKEN. /api/consent* reaches the gateway through the site Worker's GATEWAY service binding (paywall_boilerplate lib/tracking/gateway-proxy.ts), so no zone route.",
+  "site_id": "nonmono-hu",
+  "hostnames": [
+    "nonmono.hu",
+    "www.nonmono.hu",
+    "nonmono.golaxo.workers.dev"
+  ],
+  "country_code": "HU",
+  "currency": "EUR",
+  "require_consent": true,
+  "consent": {
+    "provider": "sbo",
+    "mode": "basic"
+  },
+  "crm_token_sha256": "c25047cfda5d83e81b9869430a9fe4254b2fbdfddc4e440200d30b4dba457aa9"
+}
