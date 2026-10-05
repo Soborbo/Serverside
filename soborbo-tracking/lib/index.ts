@@ -427,8 +427,11 @@ export function trackWhatsappConversion(params: { phone?: string } = {}): string
 // ── Hidden fields ──────────────────────────────────────────────────
 
 /**
- * Writes gclid/fbclid/event_id/UTM into hidden inputs so the form POST carries
- * them to the site backend. The `event_id` field is LOAD-BEARING: the backend
+ * Writes gclid/gbraid/wbraid/fbclid/event_id/UTM into hidden inputs so the form
+ * POST carries them to the site backend. The three Google click ids are
+ * MUTUALLY EXCLUSIVE (`google-click-id.ts`): at most one of them is non-empty —
+ * an iOS click (`gbraid`/`wbraid`) must reach the CRM / Data Manager upload just
+ * like a `gclid` does, otherwise that conversion is unattributable. The `event_id` field is LOAD-BEARING: the backend
  * reuses it for the gateway dispatch (Pixel↔CAPI dedup) — if it goes missing,
  * Meta double-counts every lead.
  */
@@ -440,13 +443,27 @@ function writeHiddenFields(form: HTMLFormElement, fields: Record<string, string 
   }
 }
 
+/**
+ * gbraid/wbraid a rejtett mezőkbe — CSAK ha nincs gclid. A `getAllTrackingData()`
+ * már kölcsönösen kizáró (gclid > gbraid > wbraid); az explicit gclid-őr azért
+ * kell, mert a gclid itt egy MÁSIK getterből (`getGclid`) jön, és két kattintás
+ * azonosítója sosem mehet egyszerre a payloadba.
+ */
+function braidFields(gclid: string | null | undefined, t: ReturnType<typeof getAllTrackingData>): {
+  gbraid: string | undefined; wbraid: string | undefined;
+} {
+  if (gclid) return { gbraid: undefined, wbraid: undefined };
+  return { gbraid: t.gbraid || undefined, wbraid: t.gbraid ? undefined : t.wbraid || undefined };
+}
+
 export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitResult): void {
   // Last-touch UTM/click context for the hidden form fields. getAttribution()
   // returns first_/last_-prefixed keys (for the Sheets sink), NOT bare utm_*;
   // getAllTrackingData() is the right source for raw utm_source/medium/... here.
   const t = getAllTrackingData();
   writeHiddenFields(form, {
-    gclid: result.gclid, fbclid: result.fbclid, event_id: result.eventId,
+    gclid: result.gclid, ...braidFields(result.gclid, t),
+    fbclid: result.fbclid, event_id: result.eventId,
     utm_source: t.utm_source, utm_medium: t.utm_medium,
     utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
   });
@@ -464,8 +481,10 @@ export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitRe
  */
 export function attachEventIdToForm(form: HTMLFormElement, eventId: string): void {
   const t = getAllTrackingData();
+  const gclid = getGclid();
   writeHiddenFields(form, {
-    event_id: eventId, gclid: getGclid() || undefined, fbclid: getFbclid() || undefined,
+    event_id: eventId, gclid: gclid || undefined, ...braidFields(gclid, t),
+    fbclid: getFbclid() || undefined,
     utm_source: t.utm_source, utm_medium: t.utm_medium,
     utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
   });

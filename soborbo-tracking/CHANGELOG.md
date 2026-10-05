@@ -10,6 +10,24 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.9.1 (2026-10-05)
+
+### Javítva — szkript-sorrend a `<Tracking />`-ban: consent default → GTM → CMP
+
+A CookieYes-szkript eddig a consent default ELŐTT töltődött. Egy visszatérő látogató tárolt döntéséből kiadott `consent update` így a default elé kerülhetett a dataLayerben, és a később érkező `default` (mind denied) felülírta. Most a CookieYes a default és a GTM-snippet UTÁN jön — a cookieyes- és az sbo-ágon is (sbo alatt a párhuzamos mérési ablak CookieYes-szkriptje is a consent-boot után). Őr: `tests/tracking-script-order.test.ts`.
+
+### Hozzáadva — `ads_data_redaction: true` a consent default mellett
+
+Mindkét ágon. ad_storage=denied mellett a Google a klikk-azonosítókat is kitakarja a pingekből (consent-terv v4 §8). A basic/advanced logika (`wait_for_update`, GTM-kapu) nem változott.
+
+### Javítva — gbraid/wbraid a rejtett form-mezőkben
+
+iOS-kattintásnál a Google `gclid` helyett `gbraid`-et vagy `wbraid`-et ad. A gateway-attribúció és a Data Manager-feltöltés ezeket már kezelte, de a rejtett mezők (`populateHiddenFields`, `attachEventIdToForm`, `<TrackedForm />`) csak a `gclid`-et vitték a site-backend felé. Mostantól a két mező is töltődik — kölcsönösen kizáróan (gclid mellett üres). A site-backend README példája is továbbítja őket az `attribution`-ben. **Site-oldali teendő:** ahol a backend saját kóddal olvassa a form-mezőket, ott a `gbraid`/`wbraid`-et is át kell adni (`attribution.gbraid` / `attribution.wbraid`, ill. a CRM felé).
+
+### Dokumentáció — `docs/gtm-setup.md`
+
+A quote-esemény GA4-neve helyenként `contact_form_submitted` volt, és több trigger-lista duplikátumot tartalmazott. Most a `src/events.json` és a `gtm/gen-container.mjs` szerint: `quote_calculator_submitted` → `quote_calculator_submitted`, `contact_form_submitted` → `contact_form_submitted`.
+
 ## 6.9.0 (2026-09-17)
 
 ### Hozzáadva — banner A/B teszt (b3: site-onkénti cím + balról beúszó kártya)

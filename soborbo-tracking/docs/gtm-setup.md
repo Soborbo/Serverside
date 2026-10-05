@@ -39,7 +39,7 @@ runs in the tag's context, so the PII never enters the dataLayer.
 
 ## Triggers (Custom Event)
 One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_step_completed`,
-`quote_calculator_option_selected`, `quote_calculator_submitted`, `quote_calculator_submitted`, `contact_form_submitted`,
+`quote_calculator_option_selected`, `quote_calculator_submitted`, `contact_form_submitted`,
 `phone_number_clicked`, `callback_request_submitted`, `email_address_clicked`, `whatsapp_button_clicked`, `form_abandoned`,
 `scroll_depth`.
 
@@ -53,7 +53,8 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
   already had a chance to fire. `gen-container.mjs` therefore emits no such tag —
   do not add one by hand. Who then sends the *update*:
   - **`cookieyes` sites** (today's default, every live site): the CookieYes script,
-    loaded from `Tracking.astro`.
+    loaded from `Tracking.astro` — AFTER the default and the GTM snippet. Order:
+    consent default (all denied) + `ads_data_redaction` → GTM → CMP.
   - **`sbo` sites** (pilot only): the synchronous consent boot in `Tracking.astro`.
     GTM is not loaded at all until a positive decision exists, so there is no
     pre-consent window to default into.
@@ -65,12 +66,12 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
 
 | dataLayer trigger (CE) | **GA4 event name (emitted by the tag)** | Key Event? | Parameters |
 |---|---|:--:|---|
-| `quote_calculator_submitted` / `contact_form_submitted` | `contact_form_submitted` | ✅ | value, currency, event_id, session_id, device, source, service |
+| `quote_calculator_submitted` | `quote_calculator_submitted` | ✅ | value, currency, event_id, calculator_name, session_id, device, source, service |
+| `contact_form_submitted` | `contact_form_submitted` | ✅ | value, currency, event_id, session_id, device, source, service |
 | `callback_request_submitted` | `callback_request_submitted` | ✅ | event_id, session_id, device |
 | `phone_number_clicked` | `phone_number_clicked` | ✅ | event_id, session_id, device |
 | `email_address_clicked` | `email_address_clicked` | ✅ | event_id, session_id |
 | `whatsapp_button_clicked` | `whatsapp_button_clicked` | ✅ | event_id, session_id |
-| `quote_calculator_submitted` | `quote_calculator_submitted` | ✅ | value, currency, event_id, calculator_name |
 | `quote_calculator_opened/step/option` | `quote_calculator_opened` / `_step` / `_option` | ❌ | calculator_name, step_id, step_index |
 | `form_abandoned` | `form_abandoned` | ❌ | form_id, last_field |
 | `scroll_depth` | `scroll_depth` | ❌ | scroll_percentage |
@@ -81,7 +82,7 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
 
 ## Meta Pixel tags
 - **Base** (Custom HTML): fbevents.js + `fbq('track','PageView')`. ad_storage + ad_user_data. All Pages.
-- **Lead** (CE-`quote_calculator_submitted` / `callback_request_submitted` / `quote_calculator_submitted`):
+- **Lead** (CE-`quote_calculator_submitted` / `callback_request_submitted`):
   ```js
   var v = {{DLV - value}};
   var cd = (typeof v === 'number' && v > 0) ? { value: v, currency: '{{DLV - currency}}' } : {};
@@ -97,7 +98,7 @@ from index.ts) → Meta Pixel↔CAPI dedup.
 ## Google Ads Conversion tag
 Conversion Value: {{DLV - value}}. Transaction ID: {{DLV - event_id}}.
 User-provided data: {{CJS - User Provided Data}}. ad_storage + ad_user_data.
-Trigger: the conversion CEs (quote_calculator_submitted/callback_request_submitted/phone_number_clicked/quote_calculator_submitted).
+Trigger: the conversion CEs (quote_calculator_submitted/callback_request_submitted/phone_number_clicked).
 **Don't set a fixed value default of 1+currency** — it poisons the bidding (see INVARIANTS).
 
 ## Enhanced Conversions

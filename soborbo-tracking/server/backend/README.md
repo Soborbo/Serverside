@@ -72,6 +72,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     },
     attribution: {
       gclid: String(form.get('gclid') || '') || undefined,
+      // iOS-kattintás: gclid HELYETT gbraid/wbraid jön (egyszerre csak egy).
+      gbraid: String(form.get('gbraid') || '') || undefined,
+      wbraid: String(form.get('wbraid') || '') || undefined,
       fbclid: String(form.get('fbclid') || '') || undefined,
       utm_source: String(form.get('utm_source') || '') || undefined,
       utm_medium: String(form.get('utm_medium') || '') || undefined,
