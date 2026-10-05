@@ -5,7 +5,8 @@
  * Két mód (CMP Fázis 2):
  *  - consentProvider="cookieyes" (DEFAULT, minden mai site): CookieYes + Consent
  *    Mode v2 default + GTM azonnali betöltéssel (advanced mód, wait_for_update).
- *    Ez az ág BITRE a Fázis 2 előtti — a defaultot átállítani tilos.
+ *    A defaultot átállítani tilos. (6.9.1 óta a CookieYes-szkript a GTM UTÁN
+ *    töltődik, és `ads_data_redaction` is be van kapcsolva — lásd lent.)
  *  - consentProvider="sbo" (pilot): NINCS CookieYes-vezérlés. Inline, SZINKRON
  *    consent-boot: default mind DENIED, majd a `sbo_consent` süti dönt — döntés
  *    (vagy reject) esetén a GTM EL SEM INDUL (basic mód, wait_for_update nélkül:
@@ -18,6 +19,8 @@
  *    ellenőrizendő, hogy a kikapcsolt banner mellett a CookieYes NEM push-ol
  *    saját consent-parancsot — ha igen, a szkriptet el kell hagyni, és az ablak
  *    a perzisztens sütiből mér.
+ *
+ * SORREND (mindkét ágon): consent default (mind denied) → GTM → CMP (CookieYes).
  *
  * GTM noscript a <body> után — <TrackingNoscript /> (sbo-pilotnál NEM kell:
  * noscript alatt consent-döntés sincs, tehát a GTM-iframe consent előtt futna).
@@ -33,11 +36,6 @@ interface Props {
 const { gtmId, cookieYesId, consentProvider = trackingConfig.consentProvider } = Astro.props;
 const isSbo = consentProvider === 'sbo';
 ---
-
-{cookieYesId && (
-  <script is:inline id="cookieyes" type="text/javascript"
-    src={`https://cdn-cookieyes.com/client_data/${cookieYesId}/script.js`} />
-)}
 
 {!isSbo && (
   <script is:inline>
@@ -55,6 +53,9 @@ const isSbo = consentProvider === 'sbo';
          segment of traffic. */
       'security_storage': 'granted', 'wait_for_update': 2000
     });
+    /* ad_storage=denied mellett a Google a hirdetés-kattintás azonosítókat
+       (gclid/gbraid/wbraid) is kitakarja a pingekből (docs/consent-terv-v4 §8). */
+    gtag('set', 'ads_data_redaction', true);
   </script>
 )}
 
@@ -90,6 +91,9 @@ const isSbo = consentProvider === 'sbo';
         'functionality_storage': 'denied', 'personalization_storage': 'denied',
         'security_storage': 'granted'
       });
+      /* Ha csak analytics-hozzájárulás van (custom), a GTM ad_storage=denied
+         mellett is betölt: ilyenkor se menjen klikk-azonosító a pingekben. */
+      gtag('set', 'ads_data_redaction', true);
       /* Idempotens GTM-loader — a boot ÉS a banner (pozitív döntés után) hívja. */
       var loaded = false;
       w.__sboLoadGtm = function(){
@@ -142,6 +146,17 @@ const isSbo = consentProvider === 'sbo';
          (ConsentBanner) kérdez; pozitív döntés után hívja a loadert. */
     })(window,document);
   </script>
+)}
+
+{/* CMP (CookieYes) — SZÁNDÉKOSAN a consent default ÉS a GTM UTÁN.
+     Helyes sorrend: consent default (mind denied) → GTM → CMP. Ha a CookieYes
+     a default ELŐTT töltődne, egy visszatérő látogató tárolt döntéséből
+     kiadott `consent update` a default ELÉ kerülhetne a dataLayerben, és a
+     későbbi `default` (mind denied) felülírná — a Google Consent Mode a
+     default-ot várja elsőként. A `tests/tracking-script-order.test.ts` őrzi. */}
+{cookieYesId && (
+  <script is:inline id="cookieyes" type="text/javascript"
+    src={`https://cdn-cookieyes.com/client_data/${cookieYesId}/script.js`} />
 )}
 
 <script>
