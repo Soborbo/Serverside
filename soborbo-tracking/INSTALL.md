@@ -8,10 +8,14 @@ file is the spine that calls them in order.
 > **Scope:** Astro.js site with `output: 'server'` on Cloudflare Workers. (Non-Astro
 > sites are out of scope — stop and tell the user if the target is not Astro.)
 >
-> **Assumed already to exist** (the user provides them as inputs in Step 0; this
-> runbook does NOT create them): a **CookieYes** ID and a **GTM** container ID. If
-> either is missing, ask the user to create it first (CookieYes: cookieyes.com;
-> GTM: tagmanager.google.com).
+> **One path.** A new site installs with the **own CMP (`sbo`) in Consent Mode
+> basic** (decision 2026-10-05, J6/I12). There is no "CookieYes or sbo" choice at
+> install time. CookieYes appears in this file only for maintaining an existing
+> site that has not been switched yet (see "CMP mode" at the end).
+>
+> **Assumed already to exist** (the user provides it in Step 0; this runbook does
+> NOT create it): a **GTM** container ID. If it is missing, ask the user to create
+> it first (tagmanager.google.com).
 >
 > **There is NO Turnstile in the tracking path.** The gateway does not validate
 > tokens; a client-side token gate once silently dropped two weeks of click
@@ -61,7 +65,10 @@ hands over what is genuinely un-fetchable.
 1. **Meta CAPI `access_token`** — Events Manager → Conversions API → Generate. *Secret.*
 2. **Meta Test Events code** — Events Manager → Test Events tab (for the smoke
    cron's `TRACKING_TEST_EVENT_CODE`; per-request use only, never KV).
-3. **CookieYes ID** — the CMP id used in `<Tracking cookieYesId="…" />`.
+3. **Consent inputs (own CMP)** — the privacy-policy URL, its version label
+   (`PUBLIC_TRACKING_POLICY_VERSION`, e.g. `2026-10`), and the exact list of tools
+   the GTM container will run (`PUBLIC_TRACKING_VENDORS`, e.g. `ga4,clarity,google_ec`;
+   ids in `lib/consent-vendors.ts`). The banner copy and cookie table are built from it.
 4. **GTM container id** — `GTM-XXXX`.
 5. **Hostnames** — apex + www (e.g. `example.com`, `www.example.com`).
 6. **`site_id`** — short slug (e.g. `trapezlemez`).
@@ -111,13 +118,21 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
 1. Copy `components/` + `lib/` into the site's `src/` as **siblings**
    (`src/components/` + `src/lib/`). Components import the lib via `../lib`, so no
    path alias is needed.
-2. **Layout** (`src/layouts/…`): in `<head>` add
-   `<Tracking gtmId="GTM-XXXX" cookieYesId="<CookieYes id>" />`; at the top of
-   `<body>` add `<TrackingNoscript gtmId="GTM-XXXX" />`.
-   (Copy from `examples/Layout.astro`. No Turnstile component — it's gone.)
-3. **Env** (`.env` / Worker vars): the market vars `PUBLIC_TRACKING_COUNTRY` /
-   `PUBLIC_TRACKING_CURRENCY` / `PUBLIC_TRACKING_LOCALE` (keep in sync with the
-   gateway KV `country_code`/`currency`). See `examples/.env.example`.
+2. **Layout** (`src/layouts/…`): in `<head>` add `<Tracking gtmId="GTM-XXXX" />`
+   (no `cookieYesId`); at the end of `<body>` add
+   `<ConsentBanner policyHref="<privacy-policy path>" />`; in the footer of every
+   page add the withdrawal link `<a href="#" data-sb-consent-open>…</a>`.
+   Do **not** add `<TrackingNoscript />`: under noscript there is no consent
+   decision, so the GTM iframe would run before consent.
+   (`examples/Layout.astro` shows the CookieYes wiring of existing sites — do not
+   copy its `cookieYesId` / `TrackingNoscript` lines. No Turnstile component.)
+3. **Env** (`.env` / Worker build vars):
+   `PUBLIC_TRACKING_CONSENT_PROVIDER=sbo`, `PUBLIC_TRACKING_POLICY_VERSION`,
+   `PUBLIC_TRACKING_VENDORS` (Step 0 #3), and the market vars
+   `PUBLIC_TRACKING_COUNTRY` / `PUBLIC_TRACKING_CURRENCY` / `PUBLIC_TRACKING_LOCALE`
+   (keep in sync with the gateway KV `country_code`/`currency`). Without
+   `PUBLIC_TRACKING_CONSENT_PROVIDER=sbo` the client silently falls back to the
+   CookieYes branch.
 4. **Astro config**: `output: 'server'` + `@astrojs/cloudflare` adapter. Do **not**
    turn on Cloudflare's Google Tag Gateway — it is default OFF fleet-wide and its
    zone-level injection starts GTM before the page's consent default
@@ -130,7 +145,9 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
      browser-allowed names (`lib/event-contract.ts`); server-only names are
      blocked with TRK-1005.
 6. **GTM**: import `gtm/container.json` into the user's GTM container and wire the
-   GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`).
+   GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`). The
+   Clarity tag (if any) requires analytics consent and passes the decision with
+   `clarity('consentv2', …)` (`references/consent.md`).
 7. **Verify locally**: `npm test` + `npm run typecheck` +
    `node server/check-event-contract.mjs` pass; with `?debugTracking=1` confirm the
    dataLayer pushes, and that form submits do NOT POST `/api/event/conversion`
@@ -138,9 +155,7 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
 8. **Record the provenance (F9)** — a másolás után a gyökérből:
    `npm run check:vendored -- <site>/src/lib/tracking`. Frissen telepített
    példányon **CLEAN**-t kell adnia. Ez az egyetlen gépi bizonyíték arról, hogy
-   a site melyik kiadást futtatja: az élő ledgerben ma 1392 consent-receiptből
-   1391 NULL `client_lib_version`-nel megy, tehát a flotta verzió-állapotáról
-   e nélkül semmit nem tudunk (`docs/vnext-f9-package-versioning.md`).
+   a site melyik kiadást futtatja (`docs/vnext-f9-package-versioning.md`).
 
 ---
 
@@ -162,8 +177,11 @@ site's form conversions have NO server leg at all.
    `keep_vars` all landed.
 3. In every API route that receives a gated form POST: bot-guard first
    (silent-drop → NO tracking), forward to the CRM, then `sendGatewayConversion`
-   with the browser `event_id` (hidden field) and the CRM's id as `lead_id` —
-   the exact pattern in `server/backend/README.md`.
+   with the browser `event_id` (hidden field), the CRM's id as `lead_id`, and
+   `consentId: readSboConsentCookieHeader(request.headers.get('cookie'))?.consentId`
+   (the offline/replay leg resolves the consent_log's current revision from it) —
+   the exact pattern in `server/backend/README.md`. Pass `gclid`, `gbraid` and
+   `wbraid` from the hidden fields into `attribution` and on to the CRM.
 4. Set worker vars/secrets: `TRACKING_GATEWAY_TOKEN` (from Step 4's
    `crm-secret.env`), `SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`,
    `TRACKING_TEST_EVENT_CODE`.
@@ -185,6 +203,7 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
      "site_id": "<slug>",
      "hostnames": ["example.com", "www.example.com"],
      "country_code": "HU", "currency": "HUF", "require_consent": true,
+     "consent": { "provider": "sbo", "mode": "basic" },
      "meta": { "pixel_id": "…", "access_token": "…" },
      "gads": { "customer_id": "1234567890", "login_customer_id": null,
                "conversion_actions": { "lead_qualified": "…", "booking_confirmed": "…" } }
@@ -206,6 +225,13 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
    Validates (bad input → exit 1; fix the input, not the script) and emits
    `site-config.json`, `routes.toml`, `kv-put.sh`, `crm-secret.env`, `INTEGRATION.md`.
    Save the generated token from `crm-secret.env` immediately.
+   The generated `INTEGRATION.md` labels an `sbo` config "PILOT" and warns that
+   switching is not part of onboarding: that warning is about flipping an
+   EXISTING CookieYes site. For a new site, sbo is the install path; continue.
+   Then check the consent prerequisites (must print `CMP_FLIP_GATE_OK`):
+   ```bash
+   node scripts/check-cmp-flip-readiness.mjs <host> --config /tmp/<site>-out/site-config.json
+   ```
    > **Token-rotation guard:** for an EXISTING site a plain re-run would overwrite
    > the live KV token (the site backend would 401 on `/lead-status`). There, either
    > pass the existing token as `crm_token` (reuse) or `--rotate-token` for a
@@ -216,6 +242,10 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
 4. **Route + deploy** — add the `routes.toml` block to the repo's `../wrangler.toml`
    (Serverside root), open a **branch + PR into the deployed branch** (Step 1); the
    user lands it. This makes `https://<host>/api/event/*` resolve to the gateway.
+   **Also add `<host>/api/consent*` and `www.<host>/api/consent*` routes by hand**
+   (same zone): the banner writes decisions to same-origin `/api/consent`, and the
+   generated `routes.toml` contains only `/api/event/*` (see the Befilo block in
+   `../wrangler.toml`).
 5. **Register the smoke guard** — add the `site_id` to the gateway's `SMOKE_SITES`
    var (wrangler.toml `[vars]`), same PR.
 
@@ -260,6 +290,10 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
 - [ ] Client diagnostics clean: no TRK-1005 (a wiring bug pushing gated events from
       the browser) and no TRK-1006 (gateway rejecting the browser path) in
       `window.__sbTrackingDiag` on a real page view.
+- [ ] Consent, three cases (`references/verification.md`): reject → no `gtm.js`
+      request and no Google/Meta/Clarity request; accept → GTM loads and tags fire;
+      a decision books a `consent_log` row in D1
+      (`SELECT decision, COUNT(*) FROM consent_log WHERE site_id='<site>' GROUP BY decision`).
 
 ---
 
@@ -281,28 +315,31 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
   improvise the JSON. There is a single `../src/events.json` (no vendored copy);
   the browser contract is checked with `node server/check-event-contract.mjs`.
 
-## CMP mode (Fázis 2 — pilot only, default: CookieYes)
+## CMP mode — new sites sbo, existing CookieYes sites stay until switched
 
 <!-- TRUTH-ANCHOR: cmp-default-cookieyes-sbo-is-pilot -->
-**Where the fleet actually stands today:** every live site runs **CookieYes**, and
-that is the DEFAULT — both when `PUBLIC_TRACKING_CONSENT_PROVIDER` is unset on the
-site and when the KV `consent` block is absent on the gateway. The own CMP (`sbo`)
-is **pilot-stage**: the engine and client code are merged and inert on `main`
-(PR #67), the flip is two manual switches (site env + KV `consent.provider`), and
-zero sites are flipped. The intended END STATE is sbo fleet-wide — but CookieYes is
-**not "legacy" yet**, and no doc should describe it that way while it is what every
-site is actually running.
+**Where the fleet stands (2026-10-05):** the own CMP (`sbo`) is the target state
+and the install path for every NEW site (Steps 0–4 above; first live sbo site:
+Befilo, 2026-09-17). The lead-gen sites that were live before that still run
+**CookieYes**, and the CODE default is still CookieYes: an unset
+`PUBLIC_TRACKING_CONSENT_PROVIDER` on the site, or an absent KV `consent` block
+on the gateway, means `cookieyes`. So an existing site never changes by itself,
+and CookieYes is what those sites really run today — describe it as the current,
+transitional setup, not as something already gone.
 
-**Do NOT flip a site to the own CMP as part of an install** — it is a human,
-per-site pilot decision with its own runbook
-(`Serverside docs/cmp-fazis2-pilot-runbook.md`), and it has an open prerequisite:
-there is **no CookieYes → sbo consent migration** (zero lines of it exist), so on
-flip day every previous CookieYes accept is gone and the banner returns for
-everyone until the `legacyConsentMigrationPolicy` decision is made. What the mode
-changes when set to `sbo`:
+**Switching an EXISTING CookieYes site to sbo is a separate, human, per-site
+decision** with its own runbook (`Serverside docs/cmp-fazis2-pilot-runbook.md`),
+never a side effect of an install or a package update. The migration policy is
+`reconsent_all`: previous CookieYes accepts are not carried over, so on switch day
+the banner returns for everyone and the consent rate dips. Before switching, run
+`node scripts/check-cmp-flip-readiness.mjs <host> --config <site-config.json>`
+(must print `CMP_FLIP_GATE_OK`), and change only the CMP in that rollout window.
+
+What `sbo` changes compared to the CookieYes wiring:
 
 - `<Tracking />` renders the synchronous consent-boot (all-denied default, GTM
-  loads ONLY after a positive decision) instead of the CookieYes+advanced flow.
+  loads ONLY after a positive decision — Consent Mode basic) instead of the
+  CookieYes flow with `wait_for_update`.
 - `<ConsentBanner policyHref=... />` goes at the end of `<body>`; a footer link
   with `data-sb-consent-open` is the withdrawal path on every page.
 - `<TrackingNoscript />` must be REMOVED on sbo sites (no consent decision
@@ -310,6 +347,8 @@ changes when set to `sbo`:
 - The backend dispatch passes `consentId:
   readSboConsentCookieHeader(cookieHeader)?.consentId` so the offline/replay leg
   can resolve the consent_log's current revision.
+- `/api/consent*` zone routes are added by hand next to the generated
+  `/api/event/*` routes.
 - Set `PUBLIC_TRACKING_VENDORS` to exactly the tools the GTM container runs (e.g. `ga4,clarity,google_ec`; ids in `lib/consent-vendors.ts`). The banner copy and the cookie table are built from it — one line per site, no hand-written copy. Keep it in sync with GTM whenever a tag is added or removed.
 - Optional A/B test: `PUBLIC_TRACKING_BANNER_B_TITLE` gives half of the page views an alternative banner title with a slide-in card (banner `2026-09-a-b3`). Buttons stay identical; nothing is stored to assign the variant. Compare with `scripts/consent-rate-report.mjs`; remove the variable to end the test.
 - Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
