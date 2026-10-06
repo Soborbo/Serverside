@@ -20,7 +20,7 @@ Since 2026-08-24 the generator is **lossless**: the input shape IS the KV
 `SiteConfig` shape plus `hostnames`, and every field the schema knows
 (`soborbo-tracking/server/site-config.schema.json`) is passed through. Before that
 fix, `consent`, `consent_strict`, `recon` and `monitoring` were **silently
-dropped** — regenerating an sbo consent-pilot site would have flipped it back to
+dropped** — regenerating an sbo consent site would have flipped it back to
 CookieYes with no error and no alert.
 
 ```bash
@@ -82,5 +82,12 @@ regeneration, and the schema-drift test will fail.
   site (`--new-site`), a loud warning when regenerating an existing one. `GB` is in
   that set: the UK is not in the EEA, but PECR + UK GDPR still require prior
   consent for cookie-based marketing tracking.
+- **CMP for a NEW site: `"consent": {"provider": "sbo", "mode": "basic"}`** — the
+  own CMP is the default install path; CookieYes is transitional (existing sites
+  until switched). The generator does NOT inject it: an absent block still means
+  `cookieyes` at runtime, because `--new-site` also covers a site that already runs
+  CookieYes and is wired to the gateway for the first time. With `--new-site` and
+  no `consent` block you get a warning; write `{"provider": "cookieyes"}`
+  explicitly if that is really what the site runs.
 - **Unknown input fields are a hard error.** A typo like `expected_platform`
   (singular) used to vanish without a trace.

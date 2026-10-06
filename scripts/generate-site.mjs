@@ -300,6 +300,21 @@ function validate(cfg, opts = {}) {
       );
     else warn(msg + ' Meglévő site: állítsd át require_consent: true-ra.');
   }
+
+  // CMP-választás ÚJ bekötésnél (L14, 2026-10): új site-nál a saját CMP (sbo, basic)
+  // az alap, a CookieYes átmeneti. SZÁNDÉKOSAN csak warning, NEM csendes injektálás:
+  // a `--new-site` a gateway-re ELŐSZÖR bekötött, de már CookieYes-t futtató site-ot
+  // is jelenti (pl. trapezlemezes). Ott egy csendben beírt `provider: 'sbo'` a
+  // gateway-t a nem létező `sbo_consent` sütire állítaná → néma konverzióvesztés.
+  // A futásidejű default (hiányzó blokk === cookieyes) ezért változatlan.
+  if (opts.newSite && (cfg.consent === undefined || cfg.consent === null)) {
+    warn(
+      'nincs `consent` blokk → a gateway CookieYes-módban fut (futásidejű default). ' +
+        'ÚJ site-nál a saját CMP az alap: add hozzá: "consent": {"provider": "sbo", "mode": "basic"}. ' +
+        'Ha a site MÁR CookieYes-t futtat (első gateway-bekötés), ez a warning figyelmen kívül hagyható ' +
+        '— vagy írd ki explicit: "consent": {"provider": "cookieyes"}.'
+    );
+  }
 }
 
 /**

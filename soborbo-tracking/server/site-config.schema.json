@@ -22,7 +22,7 @@
       "type": "object",
       "additionalProperties": false,
       "patternProperties": { "^_comment": {} },
-      "description": "Soborbo CMP (Fázis 1-2, 2026-08): WHICH consent system runs on this site. Absent (every current site) === provider 'cookieyes' — zero behaviour change. provider 'sbo' enables the own CMP: /api/consent accepts decisions, the GA4 gate requires analytics_storage GRANTED, and the offline/replay leg resolves the consent_log's current revision via the lead's consent_id. FLIPPING TO 'sbo' IS A HUMAN, PER-SITE PILOT DECISION — never a default. THIS BLOCK IS ROUND-TRIP CRITICAL: dropping it on regeneration silently reverts a pilot site to CookieYes.",
+      "description": "Soborbo CMP (Fázis 1-2, 2026-08): WHICH consent system runs on this site. Absent === provider 'cookieyes' (the RUNTIME default, kept so that an existing CookieYes site never changes by itself). provider 'sbo' enables the own CMP: /api/consent accepts decisions, the GA4 gate requires analytics_storage GRANTED, and the offline/replay leg resolves the consent_log's current revision via the lead's consent_id. NEW sites: 'sbo' is the default install path — put {\"provider\": \"sbo\", \"mode\": \"basic\"} in the generator input explicitly. CookieYes is transitional (existing sites until switched); switching an EXISTING CookieYes site to 'sbo' is a separate human, per-site decision (docs/cmp-fazis2-pilot-runbook.md), never a side effect of regeneration. THIS BLOCK IS ROUND-TRIP CRITICAL: dropping it on regeneration silently reverts an sbo site to CookieYes.",
       "properties": {
         "provider": { "type": "string", "enum": ["cookieyes", "sbo"] },
         "mode": {

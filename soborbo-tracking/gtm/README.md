@@ -17,7 +17,8 @@ and [`../docs/CANONICAL-EVENTS.md`](../docs/CANONICAL-EVENTS.md).
 | **GA4 event tags** | `contact_form_submitted`, `callback_request_submitted`, `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `quote_calculator_submitted` (Key Events) + `quote_calculator_opened/step/option`, `form_abandoned`, `scroll_depth` (engagement) — each emits the **canonical GA4 event name** |
 | **Meta Pixel** | Base (PageView), Lead (`eventID` = `{{DLV - event_id}}`), Contact (`eventID` = `{{DLV - event_id}}`) → Pixel↔CAPI dedup |
 | **Google Ads** | Conversion tag (orderId = `event_id`, value/currency, Enhanced Conversions via the side-channel) |
-| **Triggers** | one Custom Event trigger per dataLayer event |
+| **Microsoft Clarity** | `Clarity - Consent v2 (granted)` — sends `clarity('consentv2', …)` with `analytics_Storage: "granted"` once Consent Mode says analytics is granted (All Pages + Window Loaded + CMP DOM events). It does NOT load Clarity — add the Clarity loader tag yourself (analytics consent). The denied side is the client lib's job on withdrawal. |
+| **Triggers** | one Custom Event trigger per dataLayer event, + one Window Loaded (Clarity consent re-sync) |
 | **Variables** | PII-free DLVs (`event_id`, `value`, `currency`, `session_id`, `device`, …) + `CJS - User Provided Data` (reads the Task-2 side-channel) + constants |
 
 Consent is enforced via per-tag **Additional Consent Checks** (`analytics_storage`

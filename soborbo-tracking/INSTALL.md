@@ -146,7 +146,8 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
      blocked with TRK-1005.
 6. **GTM**: import `gtm/container.json` into the user's GTM container and wire the
    GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`). The
-   Clarity tag (if any) requires analytics consent and passes the decision with
+   Clarity loader tag (if any) requires analytics consent; the container's
+   `Clarity - Consent v2 (granted)` tag passes the granted decision with
    `clarity('consentv2', …)` (`references/consent.md`).
 7. **Verify locally**: `npm test` + `npm run typecheck` +
    `node server/check-event-contract.mjs` pass; with `?debugTracking=1` confirm the
@@ -225,9 +226,9 @@ Reference: `server/SETUP-SERVER.md`. Binding a site = KV config + route + token 
    Validates (bad input → exit 1; fix the input, not the script) and emits
    `site-config.json`, `routes.toml`, `kv-put.sh`, `crm-secret.env`, `INTEGRATION.md`.
    Save the generated token from `crm-secret.env` immediately.
-   The generated `INTEGRATION.md` labels an `sbo` config "PILOT" and warns that
-   switching is not part of onboarding: that warning is about flipping an
-   EXISTING CookieYes site. For a new site, sbo is the install path; continue.
+   The generated `INTEGRATION.md` labels an `sbo` config as the new-site default
+   and warns that switching an EXISTING CookieYes site is a separate human
+   decision: that warning does not apply to a new site; continue.
    Then check the consent prerequisites (must print `CMP_FLIP_GATE_OK`):
    ```bash
    node scripts/check-cmp-flip-readiness.mjs <host> --config /tmp/<site>-out/site-config.json
@@ -317,7 +318,7 @@ Run `server/smoke-test.sh https://<host>` (gate behavior: health 200, browser-pa
 
 ## CMP mode — new sites sbo, existing CookieYes sites stay until switched
 
-<!-- TRUTH-ANCHOR: cmp-default-cookieyes-sbo-is-pilot -->
+<!-- TRUTH-ANCHOR: cmp-new-site-sbo-existing-cookieyes-transitional -->
 **Where the fleet stands (2026-10-05):** the own CMP (`sbo`) is the target state
 and the install path for every NEW site (Steps 0–4 above; first live sbo site:
 Befilo, 2026-09-17). The lead-gen sites that were live before that still run

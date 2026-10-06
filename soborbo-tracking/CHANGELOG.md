@@ -10,6 +10,12 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## Kiadatlan
+
+### Hozzáadva — Clarity `consentv2` granted-jelzés a GTM-konténerben
+
+Az új `Clarity - Consent v2 (granted)` Custom HTML tag (`gtm/gen-container.mjs`) a dataLayer Consent Mode-parancsaiból számolja az állapotot, és `analytics_storage=granted` mellett `clarity('consentv2', { ad_Storage, analytics_Storage: 'granted' })`-et hív (All Pages + Window Loaded + `cookieyes_consent_update` / `sbo_consent_update`). Eddig csak a visszavonás (denied) ment ki, így a Clarity EGT/UK-látogatónál consenttel is oldalnézetenként új azonosítót adott. A Clarity-loadert nem tölti be. A kliens-lib kódja nem változott (csak kommentek: az sbo az új site-ok alapja, a futásidejű default marad `cookieyes`), ezért nincs verzióemelés.
+
 ## 6.9.0 (2026-09-17)
 
 ### Hozzáadva — banner A/B teszt (b3: site-onkénti cím + balról beúszó kártya)

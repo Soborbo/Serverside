@@ -5,8 +5,8 @@
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "889d32fb04f76c41b4dfa87a1f30b41d2b9a443b793e19ff2477846aac9e3584",
-      "bytes": 4267,
+      "sha256": "581e1424848a514f4de6d43d039811d1790ae986d61e9aebaf625f0853f42cd8",
+      "bytes": 4422,
       "role": "browser"
     },
     "lib/consent-banner-a11y.ts": {
@@ -140,8 +140,8 @@
       "role": "browser"
     },
     "components/Tracking.astro": {
-      "sha256": "254fd75341eb1374e37315062eaf64c8221c7260246fc222275dbb99838973db",
-      "bytes": 8923,
+      "sha256": "0a65f6ffd197d07b007af848ce1dcfd3b23a2ef14e4eaa8f032e4f664725b582",
+      "bytes": 9063,
       "role": "browser"
     },
     "components/TrackingNoscript.astro": {

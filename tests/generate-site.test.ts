@@ -336,7 +336,7 @@ describe('generate-site.mjs — a generált checklist provider-aware (review #4)
     expect(md).not.toContain('CookieYes aktív');
   });
 
-  it('sbo config → a pilot-specifikus lépések MIND ott vannak', () => {
+  it('sbo config → az sbo-specifikus lépések MIND ott vannak', () => {
     const md = readFileSync(join(runGen(sboConfig()).out, 'INTEGRATION.md'), 'utf8');
     expect(md).toContain('PUBLIC_TRACKING_CONSENT_PROVIDER=sbo');
     expect(md).toContain('PUBLIC_TRACKING_POLICY_VERSION');
@@ -347,10 +347,43 @@ describe('generate-site.mjs — a generált checklist provider-aware (review #4)
     expect(md).not.toContain('<TrackingNoscript gtmId');
   });
 
-  it('sbo config → a checklist FIGYELMEZTET, hogy ez pilot, nem onboarding-lépés', () => {
+  it('sbo config → új site alapja, de MEGLÉVŐ CookieYes-site átállítását külön döntéshez köti', () => {
     const md = readFileSync(join(runGen(sboConfig()).out, 'INTEGRATION.md'), 'utf8');
-    expect(md).toContain('PILOT');
+    // L14: az sbo már nem „pilot" — új site-nál ez az alap telepítési út.
+    expect(md).toContain('új site alapja');
+    expect(md).not.toMatch(/PILOT/);
+    // A teszt eredeti célja megmarad: egy meglévő CookieYes-site átállítása
+    // NEM lehet regenerálás mellékhatása — a checklist a runbookra és a
+    // flip-readiness kapura küld, és megállásra szólít.
     expect(md).toContain('cmp-fazis2-pilot-runbook');
+    expect(md).toContain('check-cmp-flip-readiness');
+    expect(md).toContain('állj meg');
+  });
+
+  it('--new-site consent-blokk nélkül → warning az sbo-alapról, de NINCS csendes injektálás', () => {
+    const r = runGen(baseConfig(), ['--new-site']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('"consent": {"provider": "sbo", "mode": "basic"}');
+    // A futásidejű default változatlan: a generált KV-configba NEM kerül consent-blokk
+    // (egy már CookieYes-t futtató site első gateway-bekötése nem billenhet sbo-ra).
+    const cfg = JSON.parse(readFileSync(join(r.out, 'site-config.json'), 'utf8'));
+    expect(cfg.consent).toBeUndefined();
+  });
+
+  it('--new-site explicit consent-blokkal (sbo VAGY cookieyes) → nincs CMP-warning', () => {
+    const sbo = runGen(sboConfig(), ['--new-site']);
+    expect(sbo.status).toBe(0);
+    expect(sbo.stderr).not.toContain('nincs `consent` blokk');
+    const cy = runGen({ ...baseConfig(), consent: { provider: 'cookieyes' } }, ['--new-site']);
+    expect(cy.status).toBe(0);
+    expect(cy.stderr).not.toContain('nincs `consent` blokk');
+  });
+
+  it('cookieyes (default) config → ÁTMENETI-ként címkézve, új site-ot az sbo-ra küld', () => {
+    const md = readFileSync(join(runGen(baseConfig()).out, 'INTEGRATION.md'), 'utf8');
+    expect(md).toContain('ÁTMENETI');
+    expect(md).toContain('"consent": {"provider": "sbo", "mode": "basic"}');
+    expect(md).not.toContain('mai default');
   });
 
   it('provider nélküli (default) config → VÁLTOZATLANUL a CookieYes-ág', () => {

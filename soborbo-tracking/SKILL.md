@@ -8,8 +8,9 @@ description: >-
   Mode v2 or Microsoft Clarity on a site; when wiring a form, phone or
   callback click as a conversion; or when conversion numbers look wrong.
   Code and runbook live in Soborbo/Serverside soborbo-tracking/. Not for
-  changing the event-gateway worker itself (src/), ad-account or campaign
-  work, or non-Astro sites.
+  changing the event-gateway worker itself (src/), the gateway-side KV
+  site-config / route wiring (the repo's onboard-site skill), ad-account or
+  campaign work, or non-Astro sites.
 ---
 
 # Soborbo tracking
@@ -29,7 +30,8 @@ hol a forrás. Az útvonalak a `soborbo-tracking/` mappához képest értendők,
 
 | Feladat | Nyisd meg |
 |---|---|
-| Új site bekötése | `INSTALL.md` (egyetlen, számozott út, ellenőrző parancsokkal) |
+| Új site bekötése (site-kód) | `INSTALL.md` (egyetlen, számozott út, ellenőrző parancsokkal) |
+| Gateway-oldali bekötés: ID-gyűjtés MCP-ből, KV site-config, route (operátori lépés) | `../.claude/skills/onboard-site/SKILL.md` (a repó `onboard-site` skillje; ugyanazt a generátort futtatja, mint az `INSTALL.md`) |
 | Consent, CMP, Consent Mode, Clarity | `references/consent.md` |
 | Meta-dedup, fbc, Google Data Manager, click ID-k, Safari | `references/platform-contracts.md` |
 | Eseménynevek, GA4-nevek, ismert névütközések | `references/events.md` |

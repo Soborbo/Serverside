@@ -94,10 +94,16 @@ consent-parancs a default, az update utána jön.
 - A Clarity-projektben a cookie consent kötelező (Settings → Setup). A Clarity tag a
   GTM-ben **analytics consenthez** kötött (sbo-n a GTM akkor is betölt, ha csak
   marketinget fogadtak el).
-- Döntéskor a tag adja át az állapotot:
-  `window.clarity('consentv2', { ad_Storage: 'granted'|'denied', analytics_Storage: 'granted'|'denied' })`
-  (kis/nagybetű-érzékeny kulcsok). Visszavonáskor a kliens-lib már küld `denied`-et
-  és törli a `_clck`/`_clsk` sütit (`persistence.ts`).
+- API: `window.clarity('consentv2', { ad_Storage: 'granted'|'denied', analytics_Storage: 'granted'|'denied' })`
+  (kis/nagybetű-érzékeny kulcsok). Két fél, két gazda:
+  - **granted:** a kanonikus GTM-konténer `Clarity - Consent v2 (granted)` tagje
+    (`gtm/gen-container.mjs`). A dataLayer Consent Mode-parancsaiból számolja az
+    állapotot (mindkét CMP-n működik), és CSAK `analytics_storage=granted` mellett hív;
+    All Pages + Window Loaded + a `cookieyes_consent_update` / `sbo_consent_update`
+    DOM-eventekre szinkronizál. Consent-kapu nélküli tag, mert egy blokkolt tag
+    ugyanazon az oldalon később sem tüzelne; sütit nem ír.
+  - **denied:** visszavonáskor a kliens-lib küldi, és törli a `_clck`/`_clsk` sütit
+    (`persistence.ts`). Elutasításkor a Microsoft szerint nincs teendő.
 - Session-tagek (K14), csak PII nélküli értékkel:
   `window.clarity('set', 'page_type', 'calculator')`,
   `window.clarity('set', 'traffic_source', 'google_ads')`. Email, telefon, név,
