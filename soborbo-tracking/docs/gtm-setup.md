@@ -52,9 +52,11 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
   it *after* the container has loaded, so the default would land after tags have
   already had a chance to fire. `gen-container.mjs` therefore emits no such tag —
   do not add one by hand. Who then sends the *update*:
-  - **`cookieyes` sites** (today's default, every live site): the CookieYes script,
-    loaded from `Tracking.astro`.
-  - **`sbo` sites** (pilot only): the synchronous consent boot in `Tracking.astro`.
+  - **`cookieyes` sites** (transitional: existing sites until they are switched;
+    also the code default when no provider is set): the CookieYes script, loaded
+    from `Tracking.astro`.
+  - **`sbo` sites** (the default for every NEW site): the synchronous consent boot
+    in `Tracking.astro`.
     GTM is not loaded at all until a positive decision exists, so there is no
     pre-consent window to default into.
 - **Conversion Linker** — ad_storage, Initialization. Without it, Google Ads does not

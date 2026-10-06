@@ -39,18 +39,26 @@ export const SERVER_ONLY_EVENT_NAMES = INGRESS_EVENTS.filter((e) => e.server_ing
   (e) => e.name
 );
 
-/** A KV `consent.provider` — hiányzó blokk === 'cookieyes' (minden mai élő site). */
+/**
+ * A KV `consent.provider` — hiányzó blokk === 'cookieyes' (a meglévő CookieYes-site-ok
+ * biztonsága miatt ez a FUTÁSIDEJŰ default marad; új site-nál a generátor-input
+ * explicit `consent: { provider: 'sbo' }`-t visz).
+ */
 export function resolveConsentProvider(cfg) {
   return cfg?.consent?.provider === 'sbo' ? 'sbo' : 'cookieyes';
 }
 
 function consentSection(cfg, provider) {
   if (provider === 'sbo') {
-    return `## Consent — SABOR CMP (\`consent.provider: "sbo"\`) ⚠️ PILOT
+    return `## Consent — saját CMP (\`consent.provider: "sbo"\`) — ÚJ site alapértelmezése
 
-> Ez a config a SAJÁT CMP-t kapcsolja be. A flip **emberi, per-site pilot-döntés**,
-> saját runbookkal (\`docs/cmp-fazis2-pilot-runbook.md\`) — nem az onboarding része.
-> Ha ezt a szekciót látod, de nem tudtál róla, hogy pilot-site-ot kötsz be: **állj meg.**
+> Ez a config a SAJÁT CMP-t kapcsolja be (Consent Mode basic). **Új site-nál ez az
+> alap telepítési út** — a lépések a \`soborbo-tracking\` package \`INSTALL.md\`-jében.
+> Ha viszont egy MEGLÉVŐ, CookieYes-t futtató site-ot állítasz át, az **külön, emberi,
+> per-site döntés** saját runbookkal (\`docs/cmp-fazis2-pilot-runbook.md\`,
+> \`scripts/check-cmp-flip-readiness.mjs\` → \`CMP_FLIP_GATE_OK\`) — nem egy
+> regenerálás vagy package-frissítés mellékhatása. Ha meglévő CookieYes-site-ot
+> kötsz be, és nem tudtál az átállásról: **állj meg.**
 
 - [ ] Site env: \`PUBLIC_TRACKING_CONSENT_PROVIDER=sbo\`
 - [ ] Site env: \`PUBLIC_TRACKING_POLICY_VERSION=<adatvédelmi tájékoztató verziója>\`
@@ -64,10 +72,16 @@ function consentSection(cfg, provider) {
 - [ ] A backend-dispatch átadja a \`consentId\`-t
       (\`readSboConsentCookieHeader(cookieHeader)?.consentId\`) → az offline/replay láb
       így tudja feloldani a \`consent_log\` aktuális revisionjét
-- [ ] Migrációs döntés MEGVAN (\`migrate_if_equivalent\` VAGY \`reconsent_all\`) — flip után
-      a korábbi CookieYes-accept-ek NEM élnek tovább maguktól`;
+- [ ] (CSAK meglévő CookieYes-site átállításakor) Migrációs döntés MEGVAN
+      (\`migrate_if_equivalent\` VAGY \`reconsent_all\`) — átállás után a korábbi
+      CookieYes-accept-ek NEM élnek tovább maguktól`;
   }
-  return `## Consent — CookieYes (\`consent.provider\` hiányzik === "cookieyes", ez a mai default)
+  return `## Consent — CookieYes (\`consent.provider\` hiányzik === "cookieyes") — ÁTMENETI
+
+> A CookieYes a meglévő site-ok jelenlegi, átmeneti beállítása, amíg egyenként át
+> nem állnak a saját CMP-re. A kód alapértéke (hiányzó \`consent\` blokk) ezért marad
+> \`cookieyes\` — így egy meglévő site sosem vált magától. **ÚJ site-ot ne így köss be:**
+> a generátor-inputba \`"consent": {"provider": "sbo", "mode": "basic"}\` kell.
 
 - [ ] CookieYes aktív (a \`<Tracking cookieYesId="..." />\` tölti be) → a consent a
       \`cookieyes-consent\` sütiből jön, a gateway ezt olvassa
@@ -83,7 +97,9 @@ export function integrationChecklist(cfg) {
 
   return `# Integrációs ellenőrzőlista — ${cfg.site_id} (${host})
 
-**Consent-provider:** \`${provider}\`${provider === 'sbo' ? ' — ⚠️ PILOT' : ' (default)'} ·
+**Consent-provider:** \`${provider}\`${
+    provider === 'sbo' ? ' (saját CMP — új site alapja)' : ' (átmeneti — meglévő CookieYes-site)'
+  } ·
 **require_consent:** \`${consentRequired}\`
 
 ## Worker oldal

@@ -17,9 +17,11 @@ import { parseVendors } from './consent-vendors';
 export type Market = 'GB' | 'HU';
 
 /**
- * CMP Fázis 2: melyik CMP fut a site-on. A default MINDEN oldalon 'cookieyes' —
- * a `PUBLIC_TRACKING_CONSENT_PROVIDER=sbo` átállítása EMBERI, pilotonkénti
- * döntés (brief tiltólista #1). Bármely nem-'sbo' érték 'cookieyes'-ként
+ * CMP Fázis 2: melyik CMP fut a site-on. A FUTÁSIDEJŰ default 'cookieyes' marad,
+ * hogy egy meglévő CookieYes-site soha ne váltson magától. ÚJ site-nál a
+ * telepítés explicit `PUBLIC_TRACKING_CONSENT_PROVIDER=sbo`-t állít (ez az új
+ * site-ok alapja); egy MEGLÉVŐ site átállítása EMBERI, per-site döntés
+ * (brief tiltólista #1). Bármely nem-'sbo' érték 'cookieyes'-ként
  * értelmeződik: egy elgépelt env-érték ne kapcsolhassa ki a futó CMP-t.
  */
 export type ConsentProvider = 'cookieyes' | 'sbo';
@@ -32,7 +34,7 @@ export interface TrackingConfig {
   /**
    * A site adatkezelési tájékoztatójának verziója (consent_log.policy_version).
    * A site állítja be (PUBLIC_TRACKING_POLICY_VERSION); a default szándékosan
-   * kimondja, hogy NINCS beállítva — a pilot élesítési checklist része.
+   * kimondja, hogy NINCS beállítva — az sbo-telepítési checklist része.
    */
   policyVersion: string;
   /** A consent-szabályrendszer címkéje (consent_log.ruleset). */

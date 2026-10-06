@@ -1,11 +1,16 @@
 ---
 name: onboard-site
-description: Bind a new website to the event-gateway server-side tracking worker. Use when the user wants to "connect"/"onboard"/"bekötni" a site (Trapézlemez, Skinlab, fémkerítés, olcsó kerítés, stb.) to the Soborbo Tracking worker — gathers Meta/GA4/Google Ads IDs from the connected MCP connectors, generates the KV site-config + route + client snippet via scripts/generate-site.mjs, and prepares the deploy.
+description: Operator step that wires a site into the event-gateway worker on the Serverside side — builds the KV site-config with scripts/generate-site.mjs (Meta pixel + CAPI token, Google Ads customer_id + offline conversion actions, consent block), uploads it to SITE_CONFIG KV, adds the wrangler route, and prepares the PR/deploy. Use when the user wants to "onboard"/"bekötni" a site to the gateway or regenerate its KV config. NOT for installing tracking code in the site repo (Astro components, GTM, consent banner, form wiring) — that is the soborbo-tracking skill.
 ---
 
 # Onboard a site to the event-gateway worker
 
-Ez a skill egy új site-ot köt be a `event-gateway` workerhez. A repó a source of
+Ez a skill egy új site-ot köt be a `event-gateway` workerhez — a **gateway-oldali,
+operátori** lépés: KV site-config + route + generálás. A site repójában a
+tracking-kód telepítése (Astro komponensek, GTM-konténer, consent-banner, form- és
+backend-bekötés) NEM ez a skill, hanem a **`soborbo-tracking`** skill
+(`soborbo-tracking/SKILL.md` → `INSTALL.md`). A kettő sorrendje: itt a KV-config és a
+route, ott a site-kód; a generált `INTEGRATION.md` a kettő közti átadás. A repó a source of
 truth: a tényleges generálást a determinisztikus `scripts/generate-site.mjs`
 végzi — te (az agent) az ID-ket gyűjtöd össze az MCP-connectorokból, és levezényled
 a lépéseket. **Ne improvizáld a config-formátumot — mindig a scriptet futtasd.**
@@ -16,8 +21,9 @@ a lépéseket. **Ne improvizáld a config-formátumot — mindig a scriptet futt
 - A kliens-tracking lib a **`soborbo-tracking` package** — 2026-07-21 óta EBBEN a
   repóban, `soborbo-tracking/` (`lib/` + `components/`; telepítés a `soborbo-tracking/INSTALL.md`
   szerint). Korábban külön Soborbo/claudeskills skill volt; beolvadt, nincs több vendor-másolat.
-  Mindent automatikusan küld (consent CookieYes-ból, attribúció URL+cookie-ból) — a site-on
-  alig van egyedi kód. A régi `client-lib/worker-tracking.ts` TÖRÖLVE (lásd `client-lib/README.md`);
+  Mindent automatikusan küld (consent a site CMP-jéből — új site-on a saját sbo CMP,
+  meglévőn átmenetileg CookieYes —, attribúció URL+cookie-ból) — a site-on alig van egyedi
+  kód. A régi `client-lib/worker-tracking.ts` TÖRÖLVE (lásd `client-lib/README.md`);
   ne abból másolj. A backend event-szerződés és a kliens-lib így MOST EGY repóban: az egyetlen
   kanonikus event-forrás a `src/events.json`, amit a worker és a csomag közösen olvas.
 
@@ -30,10 +36,11 @@ Kérdezd meg a hostname-eket (apex + www) és a site_id-t, majd:
   található, kérd be az Events Managerből.
 - **Meta CAPI access_token** — NEM lekérhető API-ból. Kérd be a usertől (Events
   Manager → Settings → Conversions API → Generate access token). Ez secret.
-- **GA4 measurement_id (G-XXXX)** — GA4 connector: a property data stream-jéből
-  (web stream → Measurement ID). FIGYELEM: a property-szám (pl. 449987171) NEM ez.
-- **GA4 api_secret** — NEM lekérhető API-ból. Kérd be: GA4 Admin → Data Streams →
-  <stream> → Measurement Protocol API secrets → Create. Secret.
+- **GA4: itt NINCS mit gyűjteni.** Model 2 / Run 6: a GA4 kizárólag böngészőből megy
+  (GTM), a gateway semmilyen GA4-et nem küld — ezért **ne kérj be `api_secret`-et**, és ne
+  tegyél `ga4` blokkot az inputba (a generátor figyelmeztet, ha mégis). A GA4
+  measurement_id (G-XXXX) a GTM-konténer `Const - GA4 Measurement ID` változójába kell,
+  az a `soborbo-tracking` skill GTM-lépése.
 - **Google Ads customer_id** — Google Ads connector (`list_google_ads_customers`).
   10 számjegy KÖTŐJEL NÉLKÜL. login_customer_id csak ha MCC alatt van.
 - **Google Ads conversion_actions** — Model 2: a szerver Google Ads lába CSAK
@@ -45,7 +52,14 @@ Kérdezd meg a hostname-eket (apex + www) és a site_id-t, majd:
   böngésző/gtag tulajdona — ide NE tedd őket (a régi on-site nevek amúgy is elbuknának
   a kanonikus-validáción, 2026-07-13-i auditfix).
 - **country_code / currency** — a site piaca szerint (HU/HUF, GB/GBP, …).
-- **require_consent** — EEA (HU/EU/DE/FR/IT/ES) site-on állítsd `true`-ra.
+- **require_consent** — minden consent-köteles piacon `true`: HU/EU/DE/FR/IT/ES **és
+  GB is** (az UK nem EGT-tag, de a PECR + UK GDPR előzetes hozzájárulást kér a süti-alapú
+  marketing-trackinghez). Új site-nál a generátor HIBÁVAL áll meg nélküle.
+- **consent (CMP)** — ÚJ site: `{"provider": "sbo", "mode": "basic"}` (saját CMP, ez az
+  alap). Ha a site MÁR CookieYes-t futtat, és most kötöd először a gatewayre, hagyd
+  `cookieyes`-on (explicit `{"provider": "cookieyes"}`): egy meglévő site átállítása külön,
+  emberi döntés (`docs/cmp-fazis2-pilot-runbook.md`). A hiányzó blokk futásidőben
+  `cookieyes`-t jelent; `--new-site`-tal a generátor ilyenkor figyelmeztet.
 
 ### 2. Építsd meg az input JSON-t és futtasd a generátort
 Írd ki egy temp fájlba (NE a repóba a secretekkel), majd:
@@ -69,10 +83,10 @@ Az input alakja (lásd a validátort a scriptben):
   "country_code": "HU",
   "currency": "HUF",
   "require_consent": true,
+  "consent": { "provider": "sbo", "mode": "basic" },
   "meta": { "pixel_id": "...", "access_token": "..." },
-  "ga4": { "measurement_id": "G-XXXX", "api_secret": "..." },
   "gads": { "customer_id": "1234567890", "login_customer_id": null,
-            "conversion_actions": { "callback_conversion": "...", "phone_conversion": "..." } }
+            "conversion_actions": { "lead_qualified": "...", "booking_confirmed": "..." } }
 }
 ```
 A generátor validál (hibás ID → exit 1) és kiírja: `site-config.json`, `routes.toml`,
@@ -105,9 +119,11 @@ A user `wrangler deploy`-jal élesíti.
 Egyszer customer_id-nként: `GET /api/event/oauth-init` admin-tokennel (X-Admin-Token),
 hogy az OAUTH_TOKENS KV feltöltődjön. Enélkül a Google Ads upload elbukik.
 
-### 6. Astro site oldal
-Add át a usernek a generált `INTEGRATION.md` ellenőrzőlistát. A konverziók **két úton**
-mennek (Run 6, Model 2):
+### 6. Átadás a site-oldalnak (`soborbo-tracking` skill)
+Itt ennek a skillnek vége. Add át a usernek a generált `INTEGRATION.md` ellenőrzőlistát,
+és a site repójában a telepítést a **`soborbo-tracking`** skill vezeti
+(`soborbo-tracking/INSTALL.md`: komponensek, GTM, consent-banner, backend-dispatch). Amit
+az átadásnál érdemes kimondani — a konverziók **két úton** mennek (Run 6, Model 2):
 - **Böngésző-út** (kis kockázatú klikk-eventek: phone/email/whatsapp klikk, begin_checkout,
   video_play): `trackConversion('<event>', { value, currency, user_data })`. A gateway ezt
   **Origin allow-listtel** kapuzza — **Turnstile NEM kell** hozzá (a Run 6 kivette a
@@ -118,15 +134,19 @@ mennek (Run 6, Model 2):
   event_id-jét újrahasznosítva (Pixel↔CAPI dedup). Böngésző-úton ezek 403-at kapnak
   (TRK-400-017) — enélkül a gate-deploy némán vesztené a form-konverziókat (tanulság #4).
 
-A consent (CookieYes) és az attribúció (UTM/click ID) automatikus.
+A consent (új site-on sbo, meglévőn átmenetileg CookieYes) és az attribúció (UTM/click ID)
+automatikus.
 
 ### 7. Verifikáció
 A generált `INTEGRATION.md` "Ellenőrzés" szakasza szerint: health, Meta Test Events
-(dedup azonos event_id), GA4 DebugView, Google Ads Conversions, Workers Logs 24h.
+(dedup azonos event_id), Google Ads Conversions, Workers Logs 24h. (GA4 DebugView-ban
+a BÖNGÉSZŐ eseményét látod, nem a gateway-ét — az a site-oldali ellenőrzés része.)
 
 ## Fontos szabályok
-- A secrets (CAPI token, GA4 api_secret) NE kerüljenek be a git-be — csak KV-be.
-- EEA site-on `require_consent: true` + CookieYes bekötve.
+- A secretek (Meta CAPI token, a per-site CRM token) NE kerüljenek be a git-be — csak
+  KV-be (a CRM-tokenből csak a hash).
+- Consent-köteles piacon (GB-t is beleértve) `require_consent: true`; új site-on
+  `consent.provider: "sbo"`.
 - **test_event_code SOHA nem a KV-be.** A site-config edge-cache-elt (300s) → kétszer
   okozott éles Meta-leaket (Run 6). A proof-eventek **per-request** kapják a test-kódot a
   szerver-ingressen (a smoke-cron pont ezt teszi); a generátor default HIBÁT dob KV

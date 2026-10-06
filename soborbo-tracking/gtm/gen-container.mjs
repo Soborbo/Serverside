@@ -276,6 +276,80 @@ tag('Google Ads - Conversion', 'awct', [
   consentSettings: consent('ad_storage', 'ad_user_data'),
 });
 
+// ── Microsoft Clarity — consent signal (consentv2, GRANTED side) ─────
+// Since 2025-10-31 Clarity needs an explicit consent signal for EEA/UK/CH
+// visitors; without it every page view gets a fresh id and no cookie is used.
+// API (Microsoft Learn, "Clarity Consent API v2"):
+//   window.clarity('consentv2', { ad_Storage: 'granted'|'denied',
+//                                 analytics_Storage: 'granted'|'denied' })
+// Keys are case-sensitive.
+//
+// Division of labour: the client lib sends the DENIED side on withdrawal
+// (lib/persistence.ts purgeAnalyticsStorage, which also deletes _clck/_clsk).
+// Microsoft: on decline "no further action is required". This tag sends the
+// GRANTED side. It derives the state from the Consent Mode commands in the
+// dataLayer (default + updates, in order) — both CMPs (sbo boot/banner and
+// CookieYes) signal through `gtag('consent', …)`, so this is provider-neutral.
+//
+// It is deliberately NOT gated on analytics_storage: a consent-blocked tag never
+// re-fires when consent arrives later on the same page (CookieYes: the first
+// accept happens after gtm.js). It reads only the dataLayer and sets no cookie;
+// it calls Clarity ONLY when analytics_storage is granted. It also listens for
+// the CMP DOM events (`cookieyes_consent_update`, `sbo_consent_update`) and
+// re-syncs on Window Loaded (a CookieYes restore may land after gtm.js).
+// The queue stub is Clarity's own snippet pattern, so the order relative to the
+// Clarity loader tag does not matter, and on a site without Clarity it is inert.
+const CLARITY_CONSENT_TAG_NAME = 'Clarity - Consent v2 (granted)';
+const CLARITY_CONSENT_HTML =
+  '<script>\n' +
+  '(function (w, d) {\n' +
+  '  if (w.__sbClarityConsentSync) { w.__sbClarityConsentSync(); return; }\n' +
+  '  var last = null;\n' +
+  '  function state() {\n' +
+  '    var s = { ad: "denied", an: "denied" };\n' +
+  '    var dl = w.dataLayer || [];\n' +
+  '    for (var i = 0; i < dl.length; i++) {\n' +
+  '      var e = dl[i];\n' +
+  '      if (e && e[0] === "consent" && (e[1] === "default" || e[1] === "update") && e[2] && typeof e[2] === "object") {\n' +
+  '        if (e[2].ad_storage) s.ad = e[2].ad_storage;\n' +
+  '        if (e[2].analytics_storage) s.an = e[2].analytics_storage;\n' +
+  '      }\n' +
+  '    }\n' +
+  '    return s;\n' +
+  '  }\n' +
+  '  function sync() {\n' +
+  '    var s = state();\n' +
+  '    if (s.an !== "granted") { last = "denied"; return; }\n' +
+  '    var sig = { ad_Storage: s.ad === "granted" ? "granted" : "denied", analytics_Storage: "granted" };\n' +
+  '    var key = sig.ad_Storage + "|" + sig.analytics_Storage;\n' +
+  '    if (key === last) return;\n' +
+  '    last = key;\n' +
+  '    w.clarity = w.clarity || function () { (w.clarity.q = w.clarity.q || []).push(arguments); };\n' +
+  '    w.clarity("consentv2", sig);\n' +
+  '  }\n' +
+  '  w.__sbClarityConsentSync = sync;\n' +
+  '  function later() { setTimeout(sync, 0); }\n' +
+  '  d.addEventListener("cookieyes_consent_update", later);\n' +
+  '  d.addEventListener("sbo_consent_update", later);\n' +
+  '  sync();\n' +
+  '})(window, document);\n' +
+  '</script>';
+
+const T_WINDOW_LOADED = (() => {
+  const triggerId = nextTrig();
+  triggers.push({
+    accountId: ACC, containerId: CNT, triggerId,
+    name: 'Window Loaded - Clarity consent re-sync', type: 'WINDOW_LOADED',
+    fingerprint: '0',
+  });
+  return triggerId;
+})();
+
+tag(CLARITY_CONSENT_TAG_NAME, 'html', [
+  tmpl('html', CLARITY_CONSENT_HTML),
+  bool('supportDocumentWrite', false),
+], [ALL_PAGES, T_WINDOW_LOADED], { consentSettings: { consentStatus: 'NOT_NEEDED' } });
+
 // ── Assemble export ──────────────────────────────────────────────────
 const container = {
   exportFormatVersion: 2,

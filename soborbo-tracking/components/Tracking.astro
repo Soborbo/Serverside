@@ -3,10 +3,11 @@
  * <Tracking /> — Place in Layout <head>.
  *
  * Két mód (CMP Fázis 2):
- *  - consentProvider="cookieyes" (DEFAULT, minden mai site): CookieYes + Consent
- *    Mode v2 default + GTM azonnali betöltéssel (advanced mód, wait_for_update).
- *    Ez az ág BITRE a Fázis 2 előtti — a defaultot átállítani tilos.
- *  - consentProvider="sbo" (pilot): NINCS CookieYes-vezérlés. Inline, SZINKRON
+ *  - consentProvider="cookieyes" (KÓD-DEFAULT; átmeneti — a meglévő site-ok, amíg át
+ *    nem állnak): CookieYes + Consent Mode v2 default + GTM azonnali betöltéssel
+ *    (advanced mód, wait_for_update). Ez az ág BITRE a Fázis 2 előtti — a
+ *    futásidejű defaultot átállítani tilos (egy meglévő site sose váltson magától).
+ *  - consentProvider="sbo" (ÚJ site-ok alapja, env-ből explicit): NINCS CookieYes-vezérlés. Inline, SZINKRON
  *    consent-boot: default mind DENIED, majd a `sbo_consent` süti dönt — döntés
  *    (vagy reject) esetén a GTM EL SEM INDUL (basic mód, wait_for_update nélkül:
  *    nincs mire várni, a süti-olvasás szinkron). A banner/panel a
@@ -19,7 +20,7 @@
  *    saját consent-parancsot — ha igen, a szkriptet el kell hagyni, és az ablak
  *    a perzisztens sütiből mér.
  *
- * GTM noscript a <body> után — <TrackingNoscript /> (sbo-pilotnál NEM kell:
+ * GTM noscript a <body> után — <TrackingNoscript /> (sbo-site-on NEM kell:
  * noscript alatt consent-döntés sincs, tehát a GTM-iframe consent előtt futna).
  */
 import { trackingConfig, type ConsentProvider } from '../lib/config';

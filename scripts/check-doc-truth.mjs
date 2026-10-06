@@ -78,8 +78,9 @@ const FORBIDDEN = [
     id: 'cookieyes-called-legacy',
     pattern: /cookieyes[^\n]{0,30}\blegacy\b|\blegacy\b[^\n]{0,30}cookieyes/i,
     reason:
-      'A CookieYes MA a default, és minden élő site azt futtatja — a sbo saját CMP pilot-stádiumban van, ' +
-      'nulla flippelt site-tal. „Legacy"-ként leírni a célállapotot mondaná ki jelenként (vNext P0.5).'
+      'A CookieYes a meglévő site-ok MAI, átmeneti beállítása (és a kód futásidejű alapértéke) — amíg egy ' +
+      'site-ot emberi döntéssel át nem állítanak. Új site-nál a saját CMP (sbo) az alap, de a meglévők még ' +
+      'CookieYes-t futtatnak: „legacy"-ként leírni a célállapotot mondaná ki jelenként (vNext P0.5).'
   }
 ];
 
@@ -105,9 +106,11 @@ const ANCHORS = [
     reason: 'a Google offline út a Data Manager API; a legacy uploadClickConversions dormant'
   },
   {
-    id: 'cmp-default-cookieyes-sbo-is-pilot',
+    id: 'cmp-new-site-sbo-existing-cookieyes-transitional',
     file: 'soborbo-tracking/INSTALL.md',
-    reason: 'CMP: default cookieyes, sbo = pilot, per-site emberi döntés; célállapot sbo fleet-wide'
+    reason:
+      'CMP: új site = sbo (basic); meglévő CookieYes-site átmeneti, amíg külön emberi döntéssel át nem áll; ' +
+      'a KÓD futásidejű alapértéke cookieyes marad (hiányzó env / KV consent-blokk)'
   }
 ];
 
@@ -148,7 +151,7 @@ const GENERATED_CHECKLIST_RULES = [
       { re: /PUBLIC_TRACKING_CONSENT_PROVIDER=sbo/, why: 'a default (cookieyes) checklist nem kapcsolhat sbo-ra' }
     ],
     mustContain: [
-      { s: 'CookieYes aktív', why: 'a mai default provider tényleges bekötési lépése' },
+      { s: 'CookieYes aktív', why: 'a meglévő site-ok átmeneti providerének tényleges bekötési lépése' },
       { s: 'TrackingNoscript', why: 'cookieyes-ágon a noscript GTM-iframe kell' }
     ]
   }
