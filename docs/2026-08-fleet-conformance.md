@@ -561,7 +561,30 @@ setup → Manage events → szabályok törlése. Részletek az audit-doksi Head
 false, <pixel_id>)` MÁR NEM kapcsolja ki a Meta Event Setup Tool szabályokat — a
 signals/config autoConfig=false mellett is betölt és feltétel nélkül aktiválja az
 `est` plugint (beautyflow-n élő teszttel igazolva: a szabály-Lead a GTM 41-es
-verzió publikálása után is tüzelt). EST-duplázást csak az Events Manager-beli
-szabálytörlés szüntet meg; erre publikus API nincs. Az autoConfig=false az
+verzió publikálása után is tüzelt). Az autoConfig=false az
 automatikus gomb/microdata-gyűjtést tiltja — privacy-okból bent maradt a
 beautyflow Meta Pixel - Base tagben.
+
+**Korrekció + működő kliens-oldali kill switch (2026-09-08, flotta-szinten
+újrahasznosítható):** a fbevents.js forrásából kiderült, hogy az `autoConfig`
+kapcsoló csak az `AutomaticSetup` feature-t opt-out-olja; a `signals/config`
+betölt, és maga hívja `fbq.set("estRules", id, [...])` + `instance.optIn(id,
+"ESTRuleEngine", true)`-t. Az `estruleengine` plugin azonban kattintáskor
+olvassa a szabálylistát és ellenőrzi az opt-in-t, ezért a config UTÁN
+felülírható két publikus fbq-hívással:
+
+```js
+// a pixel base snippet után, az fbq('init') mellé:
+(function(){var id='<PIXEL_ID>',n=0,t=setInterval(function(){n++;var f=window.fbq;
+if(f&&f.instance&&f.instance.configsLoaded&&f.instance.configsLoaded[id]){clearInterval(t);
+try{f('set','estRules',id,[]);f.instance.optOut(id,'ESTRuleEngine');}catch(e){}}
+else if(n>600){clearInterval(t);}},50);})();
+```
+
+Beautyflow-n élő kontroll/hook teszttel igazolva, GTM 42-es verzió él
+2026-09-08 óta (kontroll: CTA-kattintásra `es=automatic` Lead; kill switch:
+semmi; szándékos eventID-s Lead változatlan). Tesztelni CSAK fejes böngészőben
+lehet — headless Chrome-ban a pixel `botblocking` pluginje minden `/tr`
+hívást elnyel. A kill switch a Meta belső API-jára (`fbq.instance`) támaszkodik,
+ezért az Events Manager-beli szabálytörlés marad a végleges fix; a `/tr`
+hívások `est_source` paraméterét negyedévente ellenőrizni kell.
