@@ -10,6 +10,8 @@
  * └─────────────────────┴────────────────────────────────────────────┘
  *
  * Every tracking function checks consent before doing anything.
+ * KIVÉTEL: sbo + advanced Consent Mode — a "No consent" sorban azonosító-mentes
+ * dataLayer-push megy (süti nélküli Google-pingek), lásd isCookielessPingAllowed().
  * If no CMP is detected in production → deny all (safe default).
  * Dev mode → allow all for testing convenience.
  */
@@ -122,6 +124,25 @@ export function hasAnalyticsConsent(): boolean {
   const c = getProviderConsent();
   if (!c) return allowOnUnknownConsent('analytics');
   return c.analytics === true;
+}
+
+/**
+ * Advanced Consent Mode — szabad-e a dataLayer-be AZONOSÍTÓ NÉLKÜLI eseményt
+ * tenni hozzájárulás hiányában is?
+ *
+ * CSAK sbo provider + `PUBLIC_TRACKING_CONSENT_MODE=advanced` mellett igaz. Ilyenkor
+ * a GTM a denied default alatt fut, és a Google-tagek (GA4, Ads) az eseményből
+ * SÜTI NÉLKÜLI pinget küldenek — ebből modellez a Google (GA4 viselkedés-
+ * modellezés, Ads konverzió-modellezés). A Meta és más nem-Google tagek a GTM-
+ * ben consent-kapusak, tehát nem futnak. Az azonosítók levágását az
+ * `events.ts` push()-ja végzi (session_id, klikk-ID-k, tárolt attribúció).
+ *
+ * A CookieYes-ág SZÁNDÉKOSAN kimarad: ott a viselkedés bitre a régi.
+ * NEM jelent hozzájárulást: tárolni, gatewaynek küldeni, PII-t átadni ettől
+ * továbbra sem szabad — arra a hasAnalyticsConsent / hasMarketingConsent való.
+ */
+export function isCookielessPingAllowed(): boolean {
+  return isSboConsentProvider() && trackingConfig.consentMode === 'advanced';
 }
 
 /** Any non-essential tracking allowed? */

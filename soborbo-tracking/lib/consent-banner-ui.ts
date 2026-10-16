@@ -43,9 +43,10 @@ export const SBO_BANNER_VERSION_B = '2026-09-a-b3';
  *
  * TUDATOS KIVÉTEL a fenti paritás-garancia alól: bekapcsolva az Elfogadom
  * eltérő színt és kicsit nagyobb méretet kap (a CookieYes alapbannerének
- * mintájára). A compliance-kockázatot (NAIH-3195/2022 osztály) a site-gazda
- * vállalja; az Elutasítom ugyanúgy első szintű, azonos magasságú, olvasható
- * kontrasztú gomb marad, ugyanabban a sorban.
+ * mintájára: csak az Elfogadom kitöltött, a többi keretes). A compliance-
+ * kockázatot (NAIH-3195/2022 osztály) a site-gazda vállalja; az Elutasítom
+ * ugyanúgy első szintű, azonos magasságú, olvasható kontrasztú gomb marad,
+ * ugyanabban a sorban.
  */
 export const SBO_BANNER_EMPHASIS_SUFFIX = '-e';
 
@@ -208,11 +209,20 @@ export function consentBannerCss(opts: BannerRenderOptions = {}): string {
 /** A kiemelt Elfogadom szabályai — a base UTÁN, így azonos specificitásnál nyer. */
 function acceptEmphasisCss(): string {
   return `
-/* Kiemelt Elfogadom (opt-in): más szín + szélesebb oszlop + nagyobb betű.
+/* Kiemelt Elfogadom (opt-in), a CookieYes alapbannerének mintájára: CSAK az
+   Elfogadom kitöltött színes gomb; minden más döntés-gomb (Elutasítom, panel
+   Mentés) üres hátterű, keretes — a Beállítások gombbal azonos stílusban.
+   Az Elfogadom ezen felül szélesebb oszlopot és nagyobb betűt kap.
    Márkázható: --sb-consent-accept-bg / --sb-consent-accept-fg. Az alapérték
-   (#1a7f37 / fehér) kontrasztja 5,1:1 (WCAG AA). */
+   (#1a7f37 / fehér) kontrasztja 5,1:1 (WCAG AA). A keretes gombok szövege a
+   banner előtérszíne a háttéren — ugyanaz a kontraszt, mint a törzsszövegé. */
+#sb-consent .sb-cbtn-choice {
+  background: transparent; color: var(--sb-consent-fg, #1c1c1e);
+  border: 1px solid currentColor;
+}
 #sb-consent .sb-cbtn-accept {
   background: var(--sb-consent-accept-bg, #1a7f37); color: var(--sb-consent-accept-fg, #ffffff);
+  border-color: var(--sb-consent-accept-bg, #1a7f37);
   font-size: 1rem; font-weight: 700;
 }
 #sb-consent .sb-consent-bar .sb-consent-actions { grid-template-columns: 1.3fr 1fr; }

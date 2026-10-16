@@ -23,7 +23,7 @@
  * a client-side token gate once silently dropped two weeks of click conversions).
  */
 
-export { hasMarketingConsent, hasAnalyticsConsent, hasAnyConsent, onConsentChange, waitForConsent, type ConsentCategory } from './consent';
+export { hasMarketingConsent, hasAnalyticsConsent, hasAnyConsent, onConsentChange, waitForConsent, isCookielessPingAllowed, type ConsentCategory } from './consent';
 // CMP Fázis 2 — a saját consent-modul (provider='sbo' site-ok; default: cookieyes).
 export {
   readSboConsent, sboConsentAgeSeconds,
@@ -111,7 +111,7 @@ export {
   TRACKING_CODES, type TrackingDiagnostic, type TrackingCode, type TrackingCodeKey,
 } from './observability';
 
-import { hasMarketingConsent, hasAnalyticsConsent, onConsentChange } from './consent';
+import { hasMarketingConsent, hasAnalyticsConsent, onConsentChange, isCookielessPingAllowed } from './consent';
 import {
   persistTrackingParams, captureUrlParams,
   getGclid, getFbclid, getSessionId, getSourceType, getAttribution, getAllTrackingData,
@@ -241,7 +241,19 @@ function dispatchToGateway(
  */
 export function trackLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
   const gclid = getGclid(), fbclid = getFbclid(), eventId = params.eventId || generateEventId();
-  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+  if (!hasMarketingConsent()) {
+    // Advanced mód: a konverzió AZONOSÍTÓ- és PII-MENTESEN megy a dataLayerbe →
+    // a Google Ads tag süti nélküli pinget küld (konverzió-modellezés). A
+    // visszatérés szerződése változatlan: a teljes (identitásos) konverzió
+    // továbbra is blokkolt, a szerver-láb a hozzájárulást maga olvassa.
+    if (isCookielessPingAllowed()) {
+      pushLeadConversion({
+        email: '', value: params.value,
+        currency: params.currency || trackingConfig.currency, eventId,
+      });
+    }
+    return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+  }
 
   const currency = params.currency || trackingConfig.currency;
 
@@ -264,6 +276,9 @@ export function trackLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
  * (TrackedForm) a rejtett mezőket VÁLTOZATLANUL töltse — a szerver lába, és vele
  * a Pixel↔CAPI dedup kulcsa, egy bitet sem mozdul.
  */
+// Advanced mód: a staging-ág hozzájárulás nélkül NEM küld süti nélküli
+// konverziót — a pending rekord sessionStorage-ba írna, amihez nincs jogalap.
+// A modellezéshez a közvetlen trackLeadSubmit/trackContactSubmit utat használd.
 export function stageLeadSubmit(params: LeadSubmitParams): LeadSubmitResult {
   const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
   if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
@@ -311,7 +326,11 @@ export function trackContactSubmit(
   params: Pick<LeadSubmitParams, 'email' | 'phone' | 'firstName' | 'lastName' | 'eventId'>,
 ): LeadSubmitResult {
   const gclid = getGclid(), fbclid = getFbclid(), eventId = params.eventId || generateEventId();
-  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+  if (!hasMarketingConsent()) {
+    // Advanced mód — lásd trackLeadSubmit.
+    if (isCookielessPingAllowed()) pushContactConversion({ email: '', eventId });
+    return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+  }
 
   pushContactConversion({
     email: params.email, phone: params.phone,
@@ -465,11 +484,14 @@ function trackClickConversion(
   const { dedupName, params = {} } = opts;
   const analytics = hasAnalyticsConsent();
   const marketing = hasMarketingConsent();
-  if (!analytics && !marketing) return null;             // nothing consented → no-op, no dedup mark
+  // Advanced mód: consent nélkül is megy egy azonosító-mentes dataLayer-esemény
+  // (süti nélküli Google-ping); a gateway-láb továbbra is marketing-kapus.
+  const cookieless = !analytics && isCookielessPingAllowed();
+  if (!analytics && !marketing && !cookieless) return null; // nothing consented → no-op, no dedup mark
   if (dedupName && hasClickFired(dedupName)) return null; // already fired this session (both channels)
 
   const eventId = generateEventId();
-  if (analytics) pushDataLayer(eventId);                  // browser GA4 (dataLayer)
+  if (analytics || cookieless) pushDataLayer(eventId);    // browser GA4/Ads (dataLayer)
   if (marketing && gatewayEvent) dispatchToGateway(gatewayEvent, eventId, params); // server Meta CAPI
   if (dedupName) markClickFired(dedupName);
   return eventId;

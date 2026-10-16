@@ -71,6 +71,17 @@ describe('kiemelt Elfogadom — bekapcsolva', () => {
     expect(css).toMatch(/\.sb-cbtn\s*{[^}]*min-height:\s*44px/);
   });
 
+  it('CookieYes-minta: a többi döntés-gomb üres hátterű és keretes, csak az Elfogadom kitöltött', () => {
+    const css = consentBannerCss({ acceptEmphasis: true });
+    const choiceRules = [...css.matchAll(/#sb-consent \.sb-cbtn-choice\s*{([^}]*)}/g)].map((m) => m[1]!);
+    // Az UTOLSÓ .sb-cbtn-choice szabály nyer (azonos specificitás) — az az üres hátterű.
+    const last = choiceRules[choiceRules.length - 1]!;
+    expect(last).toMatch(/background:\s*transparent/);
+    expect(last).toMatch(/border:\s*1px solid currentColor/);
+    // Az accept-szabály a choice UTÁN jön, így a kitöltött háttér nyer.
+    expect(css.lastIndexOf('.sb-cbtn-accept {')).toBeGreaterThan(css.lastIndexOf('.sb-cbtn-choice {'));
+  });
+
   it('a banner-verziók `-e` utótagot kapnak (A és B ág is)', () => {
     const root = render(true, true);
     expect(root.dataset.bannerVersion).toBe(SBO_BANNER_VERSION + SBO_BANNER_EMPHASIS_SUFFIX);
