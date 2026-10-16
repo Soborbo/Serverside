@@ -36,6 +36,24 @@ export const SBO_BANNER_VERSION = '2026-09-a-b2';
  */
 export const SBO_BANNER_VERSION_B = '2026-09-a-b3';
 
+/**
+ * Kiemelt Elfogadom (PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS=1) — a banner-verzió
+ * utótagja. A consent_log / consent_metrics így szétválasztja a paritásos és a
+ * kiemelt banner elfogadási arányát (consent-rate-report.mjs).
+ *
+ * TUDATOS KIVÉTEL a fenti paritás-garancia alól: bekapcsolva az Elfogadom
+ * eltérő színt és kicsit nagyobb méretet kap (a CookieYes alapbannerének
+ * mintájára: csak az Elfogadom kitöltött, a többi keretes). A compliance-
+ * kockázatot (NAIH-3195/2022 osztály) a site-gazda vállalja; az Elutasítom
+ * ugyanúgy első szintű, azonos magasságú, olvasható kontrasztú gomb marad,
+ * ugyanabban a sorban.
+ */
+export const SBO_BANNER_EMPHASIS_SUFFIX = '-e';
+
+export interface BannerRenderOptions {
+  acceptEmphasis?: boolean;
+}
+
 export interface BannerVariantB {
   /** A B-ág címe (a site adja, pl. PUBLIC_TRACKING_BANNER_B_TITLE). */
   title: string;
@@ -115,24 +133,27 @@ function esc(s: string): string {
 export function renderConsentBannerHtml(
   t: ConsentBannerTexts,
   policyHref: string,
-  variantB?: BannerVariantB
+  variantB?: BannerVariantB,
+  opts: BannerRenderOptions = {}
 ): string {
   const c = t.panel.categories;
+  const suffix = opts.acceptEmphasis ? SBO_BANNER_EMPHASIS_SUFFIX : '';
   const bAttrs = variantB
-    ? ` data-banner-version-b="${esc(SBO_BANNER_VERSION_B)}" data-text-version-b="${esc(variantB.textVersion)}"`
+    ? ` data-banner-version-b="${esc(SBO_BANNER_VERSION_B + suffix)}" data-text-version-b="${esc(variantB.textVersion)}"`
     : '';
   const bTitle = variantB
     ? `\n      <p class="sb-consent-title" data-sb-title="b" hidden>${esc(variantB.title)}</p>`
     : '';
+  const acceptCls = opts.acceptEmphasis ? 'sb-cbtn sb-cbtn-choice sb-cbtn-accept' : 'sb-cbtn sb-cbtn-choice';
   return `
-<div id="sb-consent" data-banner-version="${esc(SBO_BANNER_VERSION)}" data-text-version="${esc(t.version)}"${bAttrs} hidden>
+<div id="sb-consent" data-banner-version="${esc(SBO_BANNER_VERSION + suffix)}" data-text-version="${esc(t.version)}"${bAttrs} hidden>
   <div class="sb-consent-bar" role="region" aria-label="${esc(t.banner.title)}" data-sb-layer="banner">
     <div class="sb-consent-bar-text">
       <p class="sb-consent-title" data-sb-title="a">${esc(t.banner.title)}</p>${bTitle}
       <p class="sb-consent-body">${esc(t.banner.body)}</p>
     </div>
     <div class="sb-consent-actions">
-      <button type="button" class="sb-cbtn sb-cbtn-choice" data-sb-action="accept">${esc(t.banner.accept)}</button>
+      <button type="button" class="${acceptCls}" data-sb-action="accept">${esc(t.banner.accept)}</button>
       <button type="button" class="sb-cbtn sb-cbtn-choice" data-sb-action="reject">${esc(t.banner.reject)}</button>
       <button type="button" class="sb-cbtn sb-cbtn-settings" data-sb-action="settings">${esc(t.banner.settings)}</button>
     </div>
@@ -165,7 +186,7 @@ export function renderConsentBannerHtml(
       </li>
     </ul>
     <div class="sb-consent-actions">
-      <button type="button" class="sb-cbtn sb-cbtn-choice" data-sb-action="panel-accept-all">${esc(t.panel.accept_all)}</button>
+      <button type="button" class="${acceptCls}" data-sb-action="panel-accept-all">${esc(t.panel.accept_all)}</button>
       <button type="button" class="sb-cbtn sb-cbtn-choice" data-sb-action="panel-reject-all">${esc(t.panel.reject_all)}</button>
       <button type="button" class="sb-cbtn sb-cbtn-choice" data-sb-action="panel-save">${esc(t.panel.save)}</button>
     </div>
@@ -178,9 +199,40 @@ export function renderConsentBannerHtml(
  * A banner CSS-e. FIGYELEM (és a teszt ki is kényszeríti): a `.sb-cbtn-choice`
  * az EGYETLEN szelektor-szint, ami a döntés-gombokat formázza — data-sb-action
  * / :nth-* / id alapú megkülönböztetés TILOS, mert az a gombparitás megtörésének
- * nyelvi eszköze lenne.
+ * nyelvi eszköze lenne. EGYETLEN, opt-in kivétel: `acceptEmphasis` — akkor és
+ * csak akkor kerül be a `.sb-cbtn-accept` szabály (lásd SBO_BANNER_EMPHASIS_SUFFIX).
  */
-export function consentBannerCss(): string {
+export function consentBannerCss(opts: BannerRenderOptions = {}): string {
+  return baseConsentBannerCss() + (opts.acceptEmphasis ? acceptEmphasisCss() : '');
+}
+
+/** A kiemelt Elfogadom szabályai — a base UTÁN, így azonos specificitásnál nyer. */
+function acceptEmphasisCss(): string {
+  return `
+/* Kiemelt Elfogadom (opt-in), a CookieYes alapbannerének mintájára: CSAK az
+   Elfogadom kitöltött színes gomb; minden más döntés-gomb (Elutasítom, panel
+   Mentés) üres hátterű, keretes — a Beállítások gombbal azonos stílusban.
+   Az Elfogadom ezen felül szélesebb oszlopot és nagyobb betűt kap.
+   Márkázható: --sb-consent-accept-bg / --sb-consent-accept-fg. Az alapérték
+   (#1a7f37 / fehér) kontrasztja 5,1:1 (WCAG AA). A keretes gombok szövege a
+   banner előtérszíne a háttéren — ugyanaz a kontraszt, mint a törzsszövegé. */
+#sb-consent .sb-cbtn-choice {
+  background: transparent; color: var(--sb-consent-fg, #1c1c1e);
+  border: 1px solid currentColor;
+}
+#sb-consent .sb-cbtn-accept {
+  background: var(--sb-consent-accept-bg, #1a7f37); color: var(--sb-consent-accept-fg, #ffffff);
+  border-color: var(--sb-consent-accept-bg, #1a7f37);
+  font-size: 1rem; font-weight: 700;
+}
+#sb-consent .sb-consent-bar .sb-consent-actions { grid-template-columns: 1.3fr 1fr; }
+@media (min-width: 640px) {
+  #sb-consent .sb-consent-bar .sb-consent-actions { grid-template-columns: 1.3fr 1fr 1fr; }
+}
+`;
+}
+
+function baseConsentBannerCss(): string {
   return `
 /* Márkázás a site CSS-éből (pl. :root { --sb-consent-choice-bg: #28394b; }).
    Az alapérték a var() TARTALÉKA, nem #sb-consent-en deklarált változó —

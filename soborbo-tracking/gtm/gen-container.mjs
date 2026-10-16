@@ -140,6 +140,11 @@ const T_CALC_STEP = customEventTrigger('quote_calculator_step_completed');
 const T_CALC_OPT = customEventTrigger('quote_calculator_option_selected');
 const T_ABANDON = customEventTrigger('form_abandoned');
 const T_SCROLL = customEventTrigger('scroll_depth');
+// sbo CMP döntés-jel (6.10.0). Advanced Consent Mode alatt a GTM denied
+// állapotban indul, így a consent-kapus Meta Pixel base az ALL_PAGES-en
+// kimaradna — erre a triggerre ugyanazon az oldalon lefut. CookieYes-site-on
+// sosem tüzel (az esemény csak az sbo bannerből jön).
+const T_CONSENT_UPDATE = customEventTrigger('sbo_consent_update');
 
 // ── Base tags ────────────────────────────────────────────────────────
 // NOTE: the Consent Mode v2 DEFAULT (denied) is intentionally NOT shipped as a GTM
@@ -238,7 +243,13 @@ tag('Meta Pixel - Base', 'html', [
     "  fbq('track','PageView');\n" +
     '</script>'),
   bool('supportDocumentWrite', false),
-], [ALL_PAGES], { consentSettings: consent('ad_storage', 'ad_user_data') });
+], [ALL_PAGES, T_CONSENT_UPDATE], {
+  consentSettings: consent('ad_storage', 'ad_user_data'),
+  // Két trigger (ALL_PAGES + sbo_consent_update) ugyanazon az oldalon: egy
+  // betöltésre EGY PageView — basic módban a GTM a döntés UTÁN indul, és
+  // mindkét esemény a sorban vár.
+  tagFiringOption: 'ONCE_PER_LOAD',
+});
 
 tag('Meta Pixel - Lead', 'html', [
   tmpl('html',

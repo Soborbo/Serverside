@@ -43,8 +43,11 @@ const titleB = (import.meta.env.PUBLIC_TRACKING_BANNER_B_TITLE ?? '').trim();
 const variantB: BannerVariantB | undefined = titleB
   ? { title: titleB, textVersion: variantTextVersion(texts.version, titleB) }
   : undefined;
-const html = renderConsentBannerHtml(texts, policyHref, variantB);
-const css = consentBannerCss();
+// Kiemelt Elfogadom — opt-in (PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS=1), lásd
+// lib/consent-banner-ui.ts SBO_BANNER_EMPHASIS_SUFFIX.
+const renderOpts = { acceptEmphasis: trackingConfig.acceptEmphasis };
+const html = renderConsentBannerHtml(texts, policyHref, variantB, renderOpts);
+const css = consentBannerCss(renderOpts);
 ---
 
 <style is:global set:html={css}></style>
@@ -130,9 +133,21 @@ const css = consentBannerCss();
         ad_personalization: g(s.marketing),
         analytics_storage: g(s.analytics),
       });
+      // GTM-trigger horog (a CookieYes `cookie_consent_update` párja): advanced
+      // módban a GTM már az oldalbetöltéskor elindult, a consent-kapus tagek
+      // (pl. Meta Pixel base) az akkori denied állapot miatt kimaradtak, és a
+      // GTM magától nem indítja újra őket. Erre az eseményre kötve ugyanezen az
+      // oldalon lefutnak. PII nincs benne, csak a kategória-döntés.
+      w.dataLayer.push({
+        event: 'sbo_consent_update',
+        consent_analytics: s.analytics,
+        consent_marketing: s.marketing,
+      });
       // Basic mód: a GTM CSAK pozitív döntés után indul. reject_all/withdrawn
       // mellett el sem indul ezen az oldalletöltésen; ha egy KORÁBBI letöltésen
       // már betöltött, a consent update deny-ja fogja a tageket.
+      // Advanced mód: a GTM a <head>-ben már elindult — a hívás idempotens
+      // no-op, a fenti update élőben átállítja a futó tageket.
       if (s.analytics || s.marketing) window.__sboLoadGtm?.();
     }
 
