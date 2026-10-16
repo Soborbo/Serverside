@@ -20,6 +20,14 @@ Eddig az sbo CMP kizárólag basic módban futott: döntés előtt és elutasít
 
 Eltérő szín (`--sb-consent-accept-bg`, alap `#1a7f37`, 5,1:1 kontraszt), szélesebb oszlop, nagyobb betű — a CookieYes alapbannerének mintájára. A gombparitás TUDATOS, site-onkénti kivétele; kikapcsolva a markup és a CSS bitre a régi. A banner-verzió `-e` utótagot kap (`2026-09-a-b2-e`), így az elfogadási arány külön mérhető.
 
+### Hozzáadva — süti nélküli Google-pingek advanced módban (konverzió- és viselkedés-modellezés)
+
+sbo + `PUBLIC_TRACKING_CONSENT_MODE=advanced` mellett hozzájárulás NÉLKÜL is megy dataLayer-push a kalkulátor-, klikk-, görgetés-, elhagyás- és a lead/kapcsolat-konverzió eseményekre, de AZONOSÍTÓK nélkül (session_id, klikk-ID-k, first_/last_ attribúció levágva; PII az EC-csatornába sem). A GTM denied default alatt fut, így a GA4 és a Google Ads süti nélküli pinget küld — ebből modellez a Google. Meta és más nem-Google tag a GTM-ben consent-kapus marad. Tárolás, gateway-lábak és a staging-ág változatlanul consent-kapus. CookieYes alatt és basic módban bitre a régi. Kapu: `isCookielessPingAllowed()`.
+
+### Változott — kiemelt módban a nem-Elfogadom gombok keretesek
+
+A CookieYes mintájára csak az Elfogadom kitöltött színes gomb; az Elutasítom és a panel Mentés gombja üres hátterű, keretes (a Beállítások stílusa).
+
 ### Hozzáadva — `sbo_consent_update` dataLayer-esemény minden döntéskor
 
 `{event:'sbo_consent_update', consent_analytics, consent_marketing}` — a CookieYes `cookie_consent_update` párja. Advanced módban a GTM az oldalbetöltéskor denied állapotban indul, ezért a consent-kapus tagek (pl. Meta Pixel base) az első oldalon kimaradnak, és a GTM magától nem indítja újra őket. Erre az eseményre kötött triggerrel ugyanazon az oldalon lefutnak. Advanced módra váltáskor a GTM-ben ezt a triggert hozzá kell adni a consent-kapus betöltő tagekhez.

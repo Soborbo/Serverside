@@ -4,9 +4,14 @@
  * Every event checks consent before pushing.
  * Analytics events need analytics consent.
  * Conversion events need marketing consent (checked in index.ts).
+ *
+ * Advanced Consent Mode kivétel (isCookielessPingAllowed — csak sbo + advanced):
+ * hozzájárulás nélkül is megy push, de AZONOSÍTÓK NÉLKÜL (lásd
+ * stripIdentifiersWithoutConsent) — a Google-tagek ebből süti nélküli pinget
+ * küldenek a modellezéshez.
  */
 
-import { hasAnalyticsConsent, hasMarketingConsent } from './consent';
+import { hasAnalyticsConsent, hasMarketingConsent, isCookielessPingAllowed } from './consent';
 import { getSessionId, getDevice, getAttribution, getPageUrl, normalizeEmail, normalizePhone, sanitizeName, registerMarketingPurgeHook } from './persistence';
 import { report, redactPii, enableDiagDebug } from './observability';
 import { generateUUID } from './uuid';
@@ -23,7 +28,32 @@ let debugMode = false;
 
 export function enableDebug(): void { debugMode = true; enableDiagDebug(); }
 
-function push(data: Record<string, unknown>): void {
+/**
+ * Advanced módban, analytics-hozzájárulás NÉLKÜL a pushból kimarad minden, ami
+ * a látogatót eseményeken át összeköthetné: a saját session_id, a klikk-
+ * azonosítók és a tárolt (first_/last_) attribúció. Az event_id marad: az
+ * eseményenként új UUID, a Google Ads ebből deduplikál (orderId), nem köt
+ * össze semmit. Az oldal URL-jét és UTM-jeit a Google-tag a süti nélküli
+ * pingben amúgy is látja.
+ */
+const IDENTIFIER_KEY_RE = /^(session_id|client_id|user_id|external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
+
+function stripIdentifiersWithoutConsent(data: Record<string, unknown>): Record<string, unknown> {
+  if (hasAnalyticsConsent()) return data;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (!IDENTIFIER_KEY_RE.test(k)) out[k] = v;
+  }
+  return out;
+}
+
+/** dataLayer-push engedély: analytics-hozzájárulás, vagy advanced mód (azonosító nélkül). */
+function canPush(): boolean {
+  return hasAnalyticsConsent() || isCookielessPingAllowed();
+}
+
+function push(raw: Record<string, unknown>): void {
+  const data = stripIdentifiersWithoutConsent(raw);
   // Defense in depth: PII must never reach the dataLayer (it goes to the hidden
   // side-channel). If a future change leaks a PII-shaped key, strip it AND report
   // it (TRK-3001) so the regression is visible instead of becoming a GDPR incident.
@@ -73,24 +103,24 @@ export function generateEventId(): string {
 // ── Calculator / Quiz ──────────────────────────────────────────────
 
 export function trackCalculatorStart(name: string): void {
-  if (!hasAnalyticsConsent()) return;
+  if (!canPush()) return;
   push({ event: 'quote_calculator_opened', calculator_name: name, session_id: getSessionId(), device: getDevice() });
 }
 
 export function trackCalculatorStep(stepId: string, stepIndex: number, totalSteps?: number): void {
-  if (!hasAnalyticsConsent()) return;
+  if (!canPush()) return;
   push({ event: 'quote_calculator_step_completed', step_id: stepId, step_index: stepIndex,
     ...(totalSteps != null && { total_steps: totalSteps }), session_id: getSessionId() });
 }
 
 export function trackCalculatorOption(stepId: string, value: string | string[]): void {
-  if (!hasAnalyticsConsent()) return;
+  if (!canPush()) return;
   push({ event: 'quote_calculator_option_selected', step_id: stepId,
     option_value: Array.isArray(value) ? value.join(',') : value, session_id: getSessionId() });
 }
 
 export function trackCalculatorComplete(name: string): void {
-  if (!hasAnalyticsConsent()) return;
+  if (!canPush()) return;
   // Canonical: the calculator completion IS the quote conversion (quote_calculator_submitted).
   // NOTE: the conversion-grade emission (event_id + value + PII side-channel + gateway) comes
   // from trackLeadSubmit/trackServerEvent; this milestone shares the canonical name. Wire ONE
@@ -276,7 +306,7 @@ export function markClickFired(name: string): void {
  * also dispatch server-side.
  */
 export function trackPhoneClick(eventId?: string, dedup = true): boolean {
-  if (!hasAnalyticsConsent()) return false;
+  if (!canPush()) return false;
   // `dedup=false` is passed by the conversion layer (index.ts), which owns the
   // session dedup so it can cover BOTH channels even when analytics consent is off.
   if (dedup) {
@@ -288,19 +318,19 @@ export function trackPhoneClick(eventId?: string, dedup = true): boolean {
 }
 
 export function trackCallbackClick(eventId?: string): boolean {
-  if (!hasAnalyticsConsent()) return false;
+  if (!canPush()) return false;
   push({ event: 'callback_request_submitted', ...(eventId && { event_id: eventId }), session_id: getSessionId(), device: getDevice() });
   return true;
 }
 
 export function trackEmailClick(eventId?: string): boolean {
-  if (!hasAnalyticsConsent()) return false;
+  if (!canPush()) return false;
   push({ event: 'email_address_clicked', ...(eventId && { event_id: eventId }), session_id: getSessionId(), device: getDevice() });
   return true;
 }
 
 export function trackWhatsappClick(eventId?: string): boolean {
-  if (!hasAnalyticsConsent()) return false;
+  if (!canPush()) return false;
   push({ event: 'whatsapp_button_clicked', ...(eventId && { event_id: eventId }), session_id: getSessionId(), device: getDevice() });
   return true;
 }
@@ -315,7 +345,7 @@ export function initFormAbandonTracking(
   let started = false;
 
   const onFocus = (e: FocusEvent) => {
-    if (!hasAnalyticsConsent()) return;
+    if (!canPush()) return;
     const name = (e.target as HTMLElement).getAttribute('name');
     if (!name) return;
     lastField = name;
@@ -355,7 +385,7 @@ export function initScrollTracking(): void {
   const thresholds = [25, 50, 75, 100];
 
   const handler = () => {
-    if (!hasAnalyticsConsent()) return;
+    if (!canPush()) return;
     const h = document.documentElement.scrollHeight - window.innerHeight;
     if (h <= 0) return;
     const pct = Math.round((window.scrollY / h) * 100);

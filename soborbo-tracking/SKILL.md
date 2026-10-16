@@ -142,6 +142,17 @@ independently — keep them in sync with the `PUBLIC_TRACKING_*` values.
 | Backend gateway dispatch (forms → Meta CAPI) | ❌ | ❌ | ✅ (CookieYes cookie read server-side) |
 | Gateway OFFLINE (lead-status): Google Ads (Data Manager) | ❌ | ❌ | ✅ |
 
+**Advanced Consent Mode exception (sbo CMP + `PUBLIC_TRACKING_CONSENT_MODE=advanced` only).**
+In the "No consent" column the scroll / calculator / click / abandon and the
+lead/contact submit dataLayer pushes DO happen, but identifier-free: `session_id`,
+click IDs and stored first_/last_ attribution are stripped and no PII reaches the
+Enhanced Conversions side-channel. GTM runs under the denied default, so GA4 and
+Google Ads send cookieless pings (behavioural / conversion modelling); Meta and
+every other non-Google tag stay blocked by their GTM consent setting. Storage,
+the gateway legs and the staged (`stageLeadSubmit`) path are unchanged — they still
+need consent. CookieYes sites are untouched. Gate: `isCookielessPingAllowed()`;
+tests: `tests/consent-cookieless-ping.test.ts`.
+
 Every client function checks consent; the backend reads the SAME cookie
 (`readConsentFromCookie` — CookieYes cookie, or `sbo_consent` v2 on sites running
 our own CMP) so the two legs cannot disagree. That parity is enforced by
