@@ -304,8 +304,23 @@ flip day every previous CookieYes accept is gone and the banner returns for
 everyone until the `legacyConsentMigrationPolicy` decision is made. What the mode
 changes when set to `sbo`:
 
-- `<Tracking />` renders the synchronous consent-boot (all-denied default, GTM
-  loads ONLY after a positive decision) instead of the CookieYes+advanced flow.
+- `<Tracking />` renders the synchronous consent-boot (all-denied default)
+  instead of the CookieYes flow. `PUBLIC_TRACKING_CONSENT_MODE` picks the
+  Consent Mode: `basic` (default — GTM loads ONLY after a positive decision) or
+  `advanced` (GTM always loads under the denied default; Google tags send
+  cookieless pings for modelling, `ads_data_redaction` is on). Before switching a
+  site to `advanced`, check that EVERY non-Google tag in its GTM container
+  (Meta, Clarity, Custom HTML) has `consentStatus: needed` — in basic mode the
+  missing GTM load hid an ungated tag, in advanced mode nothing does.
+- **Gateway KV — hard check, not optional.** The gateway's `SITE_CONFIG` entry
+  for the host must carry `"consent": {"provider": "sbo", "mode": "<same mode>"}`
+  (`node scripts/patch-site-config.mjs`). Without it `/api/consent` answers 403,
+  the client drops the decision (TRK-4002) and NO consent proof is stored —
+  this is exactly what happened on skinlabhungary.hu between 2026-09-18 and
+  2026-10-16. Verify after deploy: `curl -s -o /dev/null -w '%{http_code}' -X POST
+  -H 'Origin: https://<host>' -H 'Content-Type: application/json'
+  --data '{"banner_version":"smoke"}' https://<host>/api/consent/shown` must be
+  `204`, not `403`.
 - `<ConsentBanner policyHref=... />` goes at the end of `<body>`; a footer link
   with `data-sb-consent-open` is the withdrawal path on every page.
 - Multi-language sites (one build, many locales): pass `lang="hu" | "en"` per
@@ -320,6 +335,12 @@ changes when set to `sbo`:
   can resolve the consent_log's current revision.
 - Set `PUBLIC_TRACKING_VENDORS` to exactly the tools the GTM container runs (e.g. `ga4,clarity,google_ec`; ids in `lib/consent-vendors.ts`). The banner copy and the cookie table are built from it — one line per site, no hand-written copy. Keep it in sync with GTM whenever a tag is added or removed.
 - Optional A/B test: `PUBLIC_TRACKING_BANNER_B_TITLE` gives half of the page views an alternative banner title with a slide-in card (banner `2026-09-a-b3`). Buttons stay identical; nothing is stored to assign the variant. Compare with `scripts/consent-rate-report.mjs`; remove the variable to end the test.
+- Optional accept emphasis: `PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS=1` gives the
+  Accept button its own colour (`--sb-consent-accept-bg`, default `#1a7f37`), a
+  wider column and a larger font, like the stock CookieYes banner. Reject stays a
+  first-level button in the same row. This deliberately gives up button parity
+  (NAIH-3195/2022 class risk) — a per-site owner decision, off by default. The
+  banner version gets a `-e` suffix so `consent-rate-report.mjs` separates it.
 - Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
   it is a mandatory field of every consent-log row.
 - `PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`) is the base of every consent URL; a trailing slash is honoured (`/api/consent/` → POST `/api/consent/`, shown ping `/api/consent/shown/`) for Astro `trailingSlash: 'always'` sites whose `/api/consent/*` proxy only matches slashed paths. Unset = today's URLs, byte for byte.

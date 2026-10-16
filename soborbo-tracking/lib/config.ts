@@ -24,11 +24,39 @@ export type Market = 'GB' | 'HU';
  */
 export type ConsentProvider = 'cookieyes' | 'sbo';
 
+/**
+ * Consent Mode v2 működési mód az sbo CMP alatt (PUBLIC_TRACKING_CONSENT_MODE).
+ *
+ *  - 'basic' (DEFAULT): a GTM CSAK pozitív döntés után töltődik. Döntés előtt
+ *    és elutasítás után a Google semmilyen jelet nem kap → nincs modellezett
+ *    konverzió és nincs cookieless ping.
+ *  - 'advanced': a GTM AZONNAL töltődik, minden tárolás denied defaulttal. A
+ *    Google-tagek döntés előtt / elutasítás után süti nélküli pingeket küldenek
+ *    (GA4 viselkedés-modellezés, Ads konverzió-modellezés). FELTÉTEL: a GTM
+ *    konténerben minden NEM-Google tag (Meta, Clarity, Custom HTML) consent-
+ *    kapus legyen (consentStatus: needed) — basic módban ezt a betöltés hiánya
+ *    takarta, advanced módban semmi más nem védi.
+ *
+ * Bármely más érték 'basic' — egy elgépelés ne kapcsolhassa be a pre-consent
+ * GTM-betöltést.
+ */
+export type ConsentModeKind = 'basic' | 'advanced';
+
 export interface TrackingConfig {
   country: Market;
   currency: string;
   locale: 'en' | 'hu';
   consentProvider: ConsentProvider;
+  /** Consent Mode v2 mód az sbo CMP alatt — lásd ConsentModeKind. */
+  consentMode: ConsentModeKind;
+  /**
+   * Kiemelt Elfogadom gomb (PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS=1): eltérő
+   * szín + kicsit nagyobb gomb, a CookieYes alapbannerének mintájára. Alapból
+   * KI — bekapcsolva a gombparitás (NAIH-3195/2022 osztály) TUDATOSAN megszűnik,
+   * ezért site-onkénti, emberi döntés. Az Elutasítom ugyanúgy első szintű,
+   * látható gomb marad.
+   */
+  acceptEmphasis: boolean;
   /**
    * A site adatkezelési tájékoztatójának verziója (consent_log.policy_version).
    * A site állítja be (PUBLIC_TRACKING_POLICY_VERSION); a default szándékosan
@@ -96,6 +124,8 @@ export const trackingConfig: TrackingConfig = {
   currency: readEnv('PUBLIC_TRACKING_CURRENCY') || 'GBP',
   locale: (readEnv('PUBLIC_TRACKING_LOCALE') as 'en' | 'hu') || 'en',
   consentProvider: readEnv('PUBLIC_TRACKING_CONSENT_PROVIDER') === 'sbo' ? 'sbo' : 'cookieyes',
+  consentMode: readEnv('PUBLIC_TRACKING_CONSENT_MODE') === 'advanced' ? 'advanced' : 'basic',
+  acceptEmphasis: readEnv('PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS') === '1',
   policyVersion: readEnv('PUBLIC_TRACKING_POLICY_VERSION') || 'policy-unset',
   ruleset: readEnv('PUBLIC_TRACKING_RULESET') || 'eea_uk',
   devConsentAllow: readEnv('PUBLIC_TRACKING_DEV_CONSENT_ALLOW') === '1',
