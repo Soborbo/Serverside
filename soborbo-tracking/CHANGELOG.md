@@ -20,6 +20,10 @@ Eddig az sbo CMP kizárólag basic módban futott: döntés előtt és elutasít
 
 Eltérő szín (`--sb-consent-accept-bg`, alap `#1a7f37`, 5,1:1 kontraszt), szélesebb oszlop, nagyobb betű — a CookieYes alapbannerének mintájára. A gombparitás TUDATOS, site-onkénti kivétele; kikapcsolva a markup és a CSS bitre a régi. A banner-verzió `-e` utótagot kap (`2026-09-a-b2-e`), így az elfogadási arány külön mérhető.
 
+### Hozzáadva — `sbo_consent_update` dataLayer-esemény minden döntéskor
+
+`{event:'sbo_consent_update', consent_analytics, consent_marketing}` — a CookieYes `cookie_consent_update` párja. Advanced módban a GTM az oldalbetöltéskor denied állapotban indul, ezért a consent-kapus tagek (pl. Meta Pixel base) az első oldalon kimaradnak, és a GTM magától nem indítja újra őket. Erre az eseményre kötött triggerrel ugyanazon az oldalon lefutnak. Advanced módra váltáskor a GTM-ben ezt a triggert hozzá kell adni a consent-kapus betöltő tagekhez.
+
 ### Dokumentáció — a gateway KV `consent.provider=sbo` kemény ellenőrzése
 
 Az INSTALL most kötelező, `curl`-lel ellenőrizhető lépésként írja elő. Hiánya miatt a skinlabhungary.hu 2026-09-18 óta egyetlen döntés-bizonyítékot sem tárolt (403 → TRK-4002 → eldobva).
