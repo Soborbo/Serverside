@@ -5,8 +5,8 @@
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "6ad71a944b737229807e31b5197b58f90167582c29e00d2bf48720b8be87358e",
-      "bytes": 4965,
+      "sha256": "3e538d9a986a9d45e23cc7aa65c7f168c4a01d155beab5fb6e63a4006bcb2318",
+      "bytes": 6594,
       "role": "browser"
     },
     "lib/consent-banner-a11y.ts": {
@@ -15,8 +15,8 @@
       "role": "browser"
     },
     "lib/consent-banner-ui.ts": {
-      "sha256": "236f2281b9a9d378f0ef4629d59003d108f9db4b41583df0ef5669589d09f97b",
-      "bytes": 12736,
+      "sha256": "802068cf392aee7e5b7725782a1e3ea1c44ba21c72c66b43631793d54e20a056",
+      "bytes": 15330,
       "role": "browser"
     },
     "lib/consent-migration.ts": {
@@ -30,8 +30,8 @@
       "role": "browser"
     },
     "lib/consent-sbo.ts": {
-      "sha256": "ca34a91178d85b5eeba3639aaea4fd5dd32af6fca5c9bef94be0dc9581ebc07c",
-      "bytes": 20283,
+      "sha256": "9d9c15625e94a88e917af180aa4c39770ee36d8103c3aa9615e4dfe28e0b6706",
+      "bytes": 20425,
       "role": "browser"
     },
     "lib/consent-vendors.ts": {
@@ -40,8 +40,8 @@
       "role": "browser"
     },
     "lib/consent.ts": {
-      "sha256": "8bfe9c961fef5306ff03646b69d9a0107f9fc291ad39644137e3c0fcfe596ac3",
-      "bytes": 6747,
+      "sha256": "859c0b914b8934d8272835f425bfceb7872aceab055a5ba07af259aef061ca8d",
+      "bytes": 7931,
       "role": "browser"
     },
     "lib/conversion-commit.ts": {
@@ -60,8 +60,8 @@
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "d2a2eaefb9e2106e47e5158d4b281f30ff40f6194c8d908d776828da12cc0e29",
-      "bytes": 17394,
+      "sha256": "7d071e9813c2fd00cda34f4574de4cd9090bdfb5904eeccc9b3121fa5316b8cd",
+      "bytes": 18723,
       "role": "browser"
     },
     "lib/gateway.ts": {
@@ -75,8 +75,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "ee2e328ca7330e46c2777d2e72f80fa27b50de535bfe502c31886e03c0500a56",
-      "bytes": 27732,
+      "sha256": "b26f180205bec291ae7b5ebacdebebcfdd6056b317a48f73ed6aeadab8d140a9",
+      "bytes": 28940,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -105,8 +105,8 @@
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
-      "sha256": "00cd40a8a1423ffa4b2d2dd5f12d9f64cd0dc46cd35e6e1273fa2461d3dd6791",
-      "bytes": 11646,
+      "sha256": "2f912410e1aca3d6d11ff99bc29a97e3a7d05b7882aabf364b71deeb821015ca",
+      "bytes": 12586,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
@@ -140,8 +140,8 @@
       "role": "browser"
     },
     "components/Tracking.astro": {
-      "sha256": "254fd75341eb1374e37315062eaf64c8221c7260246fc222275dbb99838973db",
-      "bytes": 8923,
+      "sha256": "9d240a903aa84e30a152edb4ba02d3cb5dc17733db56e5661ab7c0c9a296624a",
+      "bytes": 9739,
       "role": "browser"
     },
     "components/TrackingNoscript.astro": {
