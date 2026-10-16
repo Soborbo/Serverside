@@ -10,6 +10,22 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.10.0 (2026-10-16)
+
+### Hozzáadva — advanced Consent Mode az sbo CMP alatt (`PUBLIC_TRACKING_CONSENT_MODE`)
+
+Eddig az sbo CMP kizárólag basic módban futott: döntés előtt és elutasítás után a GTM be sem töltődött, így a Google semmilyen jelet nem kapott (nincs GA4-modellezés, nincs Ads konverzió-modellezés). `PUBLIC_TRACKING_CONSENT_MODE=advanced` mellett a boot a denied default (+ `ads_data_redaction`) után MINDIG betölti a GTM-et; egy érvényes korábbi döntés update-je szinkron, a GTM ELŐTT kerül a dataLayerbe. Default továbbra is `basic`; bármely más érték basic (elgépelés nem indíthat pre-consent GTM-et). A `consent_log.consent_mode` mostantól a ténylegesen futó módot rögzíti (eddig fixen `basic` volt). Feltétel: a GTM-konténerben minden nem-Google tag consent-kapus legyen.
+
+### Hozzáadva — opt-in kiemelt Elfogadom gomb (`PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS=1`)
+
+Eltérő szín (`--sb-consent-accept-bg`, alap `#1a7f37`, 5,1:1 kontraszt), szélesebb oszlop, nagyobb betű — a CookieYes alapbannerének mintájára. A gombparitás TUDATOS, site-onkénti kivétele; kikapcsolva a markup és a CSS bitre a régi. A banner-verzió `-e` utótagot kap (`2026-09-a-b2-e`), így az elfogadási arány külön mérhető.
+
+### Dokumentáció — a gateway KV `consent.provider=sbo` kemény ellenőrzése
+
+Az INSTALL most kötelező, `curl`-lel ellenőrizhető lépésként írja elő. Hiánya miatt a skinlabhungary.hu 2026-09-18 óta egyetlen döntés-bizonyítékot sem tárolt (403 → TRK-4002 → eldobva).
+
+---
+
 ## 6.9.0 (2026-09-17)
 
 ### Hozzáadva — banner A/B teszt (b3: site-onkénti cím + balról beúszó kártya)

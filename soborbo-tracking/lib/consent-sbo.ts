@@ -28,7 +28,7 @@ import {
   type SboConsentState,
   type SboDecisionKind
 } from './consent-sbo-state';
-import { trackingConfig, CLIENT_LIB_VERSION } from './config';
+import { trackingConfig, CLIENT_LIB_VERSION, type ConsentModeKind } from './config';
 import { generateUUID } from './uuid';
 import { report } from './observability';
 import { purgeMarketingStorage, purgeAnalyticsStorage } from './persistence';
@@ -61,7 +61,8 @@ export interface SboConsentWirePayload {
   decision: SboDecisionKind;
   cat_analytics: boolean;
   cat_marketing: boolean;
-  consent_mode: 'basic';
+  /** A ténylegesen futó mód (a boot ugyanebből a configból dönt) — bizonyíték. */
+  consent_mode: ConsentModeKind;
   policy_version: string;
   banner_version: string;
   consent_text_version: string;
@@ -263,7 +264,7 @@ export function applySboDecision(
     decision: state.decision,
     cat_analytics: state.analytics,
     cat_marketing: state.marketing,
-    consent_mode: 'basic',
+    consent_mode: trackingConfig.consentMode,
     policy_version: trackingConfig.policyVersion,
     banner_version: ctx.bannerVersion,
     consent_text_version: ctx.consentTextVersion,

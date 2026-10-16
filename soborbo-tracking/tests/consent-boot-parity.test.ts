@@ -50,7 +50,11 @@ interface BootResult {
  * A boot lefuttatása egy friss dataLayer-rel. A `define:vars` behelyettesítést
  * kézzel pótoljuk — az Astro fordításkor teszi ugyanezt.
  */
-function runBoot(cookie: string | null, policyVersion: string): BootResult {
+function runBoot(
+  cookie: string | null,
+  policyVersion: string,
+  consentMode?: 'basic' | 'advanced'
+): BootResult {
   document.cookie
     .split(';')
     .map((c) => c.split('=')[0]!.trim())
@@ -88,7 +92,7 @@ function runBoot(cookie: string | null, policyVersion: string): BootResult {
 
   try {
     // eslint-disable-next-line no-new-func
-    new Function('gtmId', 'policyVersion', BOOT)('GTM-TEST', policyVersion);
+    new Function('gtmId', 'policyVersion', 'consentMode', BOOT)('GTM-TEST', policyVersion, consentMode);
   } finally {
     (document as unknown as { createElement: typeof document.createElement }).createElement =
       realCreate;
@@ -221,5 +225,58 @@ describe('a boot alap-viselkedése', () => {
       .slice(before)
       .filter((e) => e && e['gtm.start'] !== undefined);
     expect(starts).toHaveLength(1);
+  });
+});
+
+describe('advanced mód (PUBLIC_TRACKING_CONSENT_MODE=advanced)', () => {
+  /** Az utolsó `consent default` és a `set ads_data_redaction` a dataLayerből. */
+  function dl(): Array<{ 0?: string; 1?: unknown; 2?: Record<string, string> }> {
+    return (window as unknown as { dataLayer: Array<{ 0?: string; 1?: unknown; 2?: Record<string, string> }> }).dataLayer;
+  }
+
+  it('döntés NÉLKÜL is betölti a GTM-et, minden jel denied, update nélkül', () => {
+    const r = runBoot(null, POLICY, 'advanced');
+    expect(r.gtmLoaded).toBe(true);
+    expect(r.update).toBeNull();
+    const def = dl().find((e) => e[0] === 'consent' && e[1] === 'default');
+    expect(def?.[2]?.ad_storage).toBe('denied');
+    expect(def?.[2]?.analytics_storage).toBe('denied');
+  });
+
+  it('reject_all után is betölt (süti nélküli pingek), de update NEM megy ki', () => {
+    const r = runBoot(cookieFor({ analytics: false, marketing: false, decision: 'reject_all' }), POLICY, 'advanced');
+    expect(r.gtmLoaded).toBe(true);
+    expect(r.update).toBeNull();
+  });
+
+  it('accept_all: az update a GTM-betöltés ELŐTT kerül a dataLayerbe', () => {
+    const r = runBoot(cookieFor(), POLICY, 'advanced');
+    expect(r.gtmLoaded).toBe(true);
+    expect(r.update?.analytics_storage).toBe('granted');
+    const idxUpdate = dl().findIndex((e) => e[0] === 'consent' && e[1] === 'update');
+    const idxGtm = dl().findIndex((e) => (e as { event?: string }).event === 'gtm.js');
+    expect(idxUpdate).toBeGreaterThan(-1);
+    expect(idxGtm).toBeGreaterThan(idxUpdate);
+  });
+
+  it('ads_data_redaction be van kapcsolva advanced alatt, basic alatt NINCS', () => {
+    runBoot(null, POLICY, 'advanced');
+    expect(dl().some((e) => e[0] === 'set' && e[1] === 'ads_data_redaction')).toBe(true);
+    runBoot(null, POLICY, 'basic');
+    expect(dl().some((e) => e[0] === 'set' && e[1] === 'ads_data_redaction')).toBe(false);
+  });
+
+  it('BIT-PARITÁS advanced alatt: az update pontosan akkor megy, amikor a parser érvényes engedélyt lát', () => {
+    for (const cookie of [null, cookieFor(), cookieFor({ policyVersion: '2026-09-b' }), 'szemét']) {
+      const parsed = parseSboConsentCookie(cookie, POLICY);
+      const r = runBoot(cookie, POLICY, 'advanced');
+      expect(r.gtmLoaded).toBe(true);
+      expect(!!r.update).toBe(!!parsed && (parsed.analytics || parsed.marketing));
+    }
+  });
+
+  it('ismeretlen mód-érték basic-ként viselkedik (elgépelés nem indíthat pre-consent GTM-et)', () => {
+    const r = runBoot(null, POLICY, 'advnaced' as 'advanced');
+    expect(r.gtmLoaded).toBe(false);
   });
 });
