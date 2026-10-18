@@ -23,6 +23,7 @@ import {
   readLatestConsentForLead,
   readConsentState,
   markDoNotReplay,
+  skipReasonFromErrorCode,
   type VendorResult
 } from '../lib/ledger';
 import type { HashedUserData } from '../lib/hash';
@@ -91,7 +92,7 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         await recordRetryDelivery(env, record, result);
         await deleteDeadLetter(env, key);
         succeeded++;
-      } else if (result.skipped && isTerminalSkip(result.skip_reason)) {
+      } else if (isTerminalRetrySkip(record, result)) {
         // TERMINÁLIS skip — UGYANAZ a szabály, mint a Queue-consumerben (worker.ts):
         // a consent-tiltás/-hiány, a nem-elvárt platform és a hiányzó azonosító
         // magától SOSEM javul meg, tehát a rekord óránkénti újra-skippelése a
@@ -259,6 +260,19 @@ export function logSkippedRetry(record: DeadLetterRecord): void {
     platform: record.platform,
     retry_count: record.retry_count
   });
+}
+
+/**
+ * Lezárható-e a DLQ-rekord egy skip-eredmény alapján — a cron ÉS a Queue-consumer
+ * KÖZÖS szabálya (worker.ts). A Data Manager config-skipje `skip_reason` nélkül,
+ * csak `error_code`-dal jön: az okot abból vezetjük le (skipReasonFromErrorCode),
+ * különben az `isTerminalSkip(undefined) === true` a 7 napos konfigurációs
+ * blokkot az első futáson törölné. A `blocked_configuration` rekord SOHA nem
+ * terminális skip: azt kifejezetten a config visszaírásáig őrizzük.
+ */
+export function isTerminalRetrySkip(record: DeadLetterRecord, result: VendorResult): boolean {
+  if (result.skipped !== true || record.blocked_configuration === true) return false;
+  return isTerminalSkip(result.skip_reason ?? skipReasonFromErrorCode(result.error_code));
 }
 
 /**

@@ -12,11 +12,11 @@ import { handleOAuthCallback } from './routes/oauth-callback';
 import { handleOAuthDebug } from './routes/oauth-debug';
 import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
-import { isTerminalSkip } from './lib/skip-reason';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import {
   handleScheduledRetry,
   retrySingle,
+  isTerminalRetrySkip,
   isRealRetrySuccess,
   recordRetryDelivery,
   logSkippedRetry
@@ -233,7 +233,7 @@ export default {
           // csinálja (markDoNotReplay + delete) — a Queue-ág most követi.
           // A RETRYABLE konfigurációs skip (`not_configured` / `invalid_identifier`)
           // marad a régi úton: azt a KV javítása után újra kell játszani.
-          if (isTerminalSkip(result.skip_reason)) {
+          if (isTerminalRetrySkip(record, result)) {
             msg.ack();
             continue;
           }

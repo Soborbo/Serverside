@@ -147,6 +147,46 @@ describe('A konfigurációs blokk külön retry-keretet kap', () => {
     expect(stored[0].last_attempted_at).not.toBe(record.last_attempted_at);
   });
 
+  it('Data Manager konfigurációs blokk (skip_reason NÉLKÜL, csak error_code): a cron NEM törli a rekordot', async () => {
+    // 2026-10-18 független utóellenőrzés: a cron terminális-skip ága az
+    // `isTerminalSkip(undefined) === true` miatt az ok nélküli Data Manager
+    // config-skipet terminálisnak vette, és az ELSŐ futáson törölte a 7 napos
+    // blocked_configuration rekordot.
+    const stored: DeadLetterRecord[] = [];
+    const deleted: string[] = [];
+    const record = base({
+      platform: 'gads',
+      site_id: 'cfg',
+      hostname: 'cfg.example',
+      lead_id: 'lead-12345678',
+      event_payload: { event_id: 'order-cfg', event_name: 'lead_qualified', event_time: Math.floor(Date.now() / 1000) - 3600 },
+      hashed_user_data: { em: 'a'.repeat(64) },
+      blocked_configuration: true,
+      retry_count: 0,
+      last_attempted_at: '2026-07-19T00:00:00.000Z'
+    });
+    const env: any = {
+      GADS_OAUTH_CLIENT_ID: 'c',
+      GADS_OAUTH_CLIENT_SECRET: 's',
+      SITE_CONFIG: {
+        get: async () => ({ site_id: 'cfg', country_code: 'GB', gads: { customer_id: '1234567890', conversion_actions: {} } })
+      },
+      DEAD_LETTER: {
+        list: async () => ({ objects: [{ key: 'cfg/gads/2026-10-18/r0.json' }], truncated: false }),
+        get: async () => ({ json: async () => record }),
+        put: async (_k: string, body: string) => stored.push(JSON.parse(body)),
+        delete: async (k: string) => deleted.push(k)
+      }
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+
+    await handleScheduledRetry({ scheduledTime: Date.now(), cron: '0 * * * *' } as unknown as ScheduledEvent, env);
+
+    expect(stored).toHaveLength(1);
+    expect(stored[0].blocked_configuration).toBe(true);
+    expect(stored[0].retry_count).toBe(0);
+  });
+
   it('valódi vendor-hiba UTÁN a retry_count normálisan nő', async () => {
     const stored: DeadLetterRecord[] = [];
     const record = base({ blocked_configuration: true, retry_count: 2 });
