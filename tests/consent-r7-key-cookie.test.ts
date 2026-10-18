@@ -392,3 +392,34 @@ describe('R7 — lánc-forgatás után a visszavonás a régi lánc eseményeit 
     expect((await stateOf(env))?.decision).toBe('reject_all');
   });
 });
+
+describe('R7 — a hamisított utód-kapcsolatot a tulajdonos felülírhatja (második utóellenőrzés)', () => {
+  it('támadó utód-láncot köt az áldozatéhoz és visszavon → tilt; a tulajdonos igazolt újraengedélye feloldja', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const ownerKey = issuedKey(await handleConsent(post(decision()), env));
+    const ATT = 'consent-r7-attacker1';
+    const attKey = issuedKey(await handleConsent(post(decision({ consent_id: ATT, ...REJECT, previous_consent_id: CID })), env));
+    expect(attKey).toBeDefined();
+    expect((await stateOf(env))?.ad_user_data).toBe('DENIED');
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await handleConsent(post(decision({ revision: 2 }), ownerKey), env)).status).toBe(204);
+    expect((await stateOf(env))?.decision).toBe('accept_all');
+  });
+});
+
+describe('R7 — párhuzamos „keep" írás sem fedi el a visszavonást (második utóellenőrzés)', () => {
+  it('egyszerre érkező igazolatlan visszavonás és változatlan engedély-írás: a végállapot tiltás, bármelyik sorrendben', async () => {
+    for (let round = 0; round < 4; round++) {
+      const db = freshDb();
+      seedLegacyChain(db);
+      const env = makeEnv(db);
+      const withdraw = handleConsent(post(decision({ ...WITHDRAW, revision: 2 })), env);
+      const keep = handleConsent(post(decision({ revision: 3 }), ATTACKER_KEY), env);
+      const [w, k] = round % 2 === 0 ? await Promise.all([withdraw, keep]) : (await Promise.all([keep, withdraw])).reverse();
+      expect(w.status).toBe(204);
+      expect([204, 403]).toContain(k.status);
+      expect((await stateOf(env))?.ad_user_data).toBe('DENIED');
+    }
+  });
+});

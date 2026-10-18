@@ -675,10 +675,18 @@ function isUniqueViolation(err: unknown): boolean {
 export async function recordConsentDecision(
   env: Env,
   entry: ConsentLogEntry,
-  bindKeyHash?: string
-): Promise<ConsentLogWriteResult | 'bind_conflict'> {
+  bindKeyHash?: string,
+  /**
+   * Igazolatlan (csak-szigorító) írásnál: a döntéskor látott legutolsó rowid. Ha
+   * azóta új sor érkezett a láncra, NEM írunk ('stale') — a hívó friss állapottal
+   * dönt újra. Enélkül egy párhuzamos, a visszavonás ELŐTT olvasó „keep" írás a
+   * visszavonás UTÁN szúródhatna be, és feloldaná azt (optimista egyidejűség).
+   */
+  expectSeq?: number
+): Promise<ConsentLogWriteResult | 'bind_conflict' | 'stale'> {
   if (!env.LEDGER) return 'failed';
   const nowIso = new Date().toISOString();
+  const guarded = expectSeq !== undefined && !bindKeyHash;
   const insert = env.LEDGER.prepare(
     `INSERT INTO consent_log
        (id, consent_id, consent_event_id, revision, site_id, decision,
@@ -688,7 +696,10 @@ export async function recordConsentDecision(
         lang, country, client_lib_version,
         cky_cookie_analytics, cky_cookie_marketing, cky_agreement,
         client_decided_at, server_received_at, verified)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?` +
+      (guarded
+        ? ` WHERE (SELECT COALESCE(MAX(rowid), 0) FROM consent_log WHERE site_id = ? AND consent_id = ?) = ?`
+        : '')
   ).bind(
     id(),
     entry.consent_id,
@@ -715,7 +726,8 @@ export async function recordConsentDecision(
     entry.cky_agreement ?? null,
     entry.client_decided_at,
     nowIso,
-    entry.verified === true ? 1 : 0
+    entry.verified === true ? 1 : 0,
+    ...(guarded ? [entry.site_id, entry.consent_id, expectSeq] : [])
   );
   try {
     if (bindKeyHash) {
@@ -727,7 +739,8 @@ export async function recordConsentDecision(
         insert
       ]);
     } else {
-      await insert.run();
+      const res = (await insert.run()) as { meta?: { changes?: number } } | undefined;
+      if (guarded && res?.meta?.changes === 0) return 'stale';
     }
     return 'stored';
   } catch (err) {
@@ -810,14 +823,24 @@ export async function readConsentState(
   let successors: string[];
   try {
     const res = await env.LEDGER.prepare(
+      // Egy utód CSAK akkor számít, ha az elődje UTOLSÓ igazolt döntése UTÁN
+      // kötődött: a kapcsolat hamisítható (bárki köthet saját láncot egy ismert
+      // consent_id mögé), ezért úgy viselkedik, mint egy igazolatlan szigorítás —
+      // a tulajdonos következő igazolt döntése felülírja. Kulcsvesztésnél (nincs
+      // több igazolt döntés a régi láncon) a kapcsolat érvényben marad. A fan-out
+      // korlátos (a legfrissebb 10 utód), a mélység is (10).
       `WITH RECURSIVE succ(cid, depth) AS (
-         SELECT consent_id, 1 FROM consent_chain WHERE site_id = ?1 AND predecessor_consent_id = ?2
+         SELECT ?2, 0
          UNION
-         SELECT c.consent_id, s.depth + 1 FROM consent_chain c JOIN succ s
+         SELECT c.consent_id, s.depth + 1 FROM succ s JOIN consent_chain c
            ON c.site_id = ?1 AND c.predecessor_consent_id = s.cid
           WHERE s.depth < 10
+            AND c.bound_at >= COALESCE((
+                  SELECT MAX(l.server_received_at) FROM consent_log l
+                   WHERE l.site_id = ?1 AND l.consent_id = s.cid AND l.verified = 1), '')
        )
-       SELECT DISTINCT cid FROM succ`
+       SELECT cid FROM succ WHERE depth > 0
+        GROUP BY cid ORDER BY MIN(depth) LIMIT 10`
     )
       .bind(siteId, consentId)
       .all<{ cid: string }>();
@@ -872,30 +895,29 @@ async function readOwnConsentState(
     // HOZOTT döntés, ennek egyezésekor a SZIGORÚBB (kevesebb engedélyezett kategória).
     const byRevision =
       'revision DESC, client_decided_at DESC, (cat_analytics + cat_marketing) ASC, server_received_at DESC, id DESC';
-    const [latestRow, verifiedRow, unverifiedRow] = await Promise.all([
+    const [latest, verified, unverifiedRows] = await Promise.all([
       one('', byRevision),
       one(' AND verified = 1', byRevision),
       // „Később beérkezett" = később BESZÚRT (rowid), nem időbélyeg: két sor
       // ugyanabban a milliszekundumban is érkezhet, és akkor a szigorítás elveszne.
-      one(' AND verified = 0', 'rowid DESC')
+      env.LEDGER.prepare(`SELECT ${cols} ${where} AND verified = 0 ORDER BY rowid DESC LIMIT 50`)
+        .bind(siteId, consentId)
+        .all<ConsentRow>()
     ]);
-    const by = new Map<string, ConsentRow>();
-    if (latestRow) by.set('latest', latestRow);
-    if (verifiedRow) by.set('verified', verifiedRow);
-    if (unverifiedRow) by.set('unverified', unverifiedRow);
-    const latest = by.get('latest');
     if (!latest) return { kind: 'missing' };
-    const verified = by.get('verified');
-    const unverified = by.get('unverified');
     // Az alap: védett láncon a legmagasabb revisionű IGAZOLT sor, régi láncon a
-    // legmagasabb revisionű sor. Egy UTÁNA beérkezett igazolatlan szigorítás
-    // MINDKÉT esetben felülírja — különben egy azonosítót ismerő harmadik fél a
-    // változatlan engedélyt magas revisionre tolva elfedhetné a tulajdonos
-    // későbbi (alacsonyabb revisionű) visszavonását.
+    // legmagasabb revisionű sor. Az UTÁNA beérkezett igazolatlan sorok MINDEGYIKE
+    // szigoríthat (metszet) — nem csak a legutolsó: egy párhuzamos, változatlan
+    // („keep") írás így sem fedheti el a közben beérkezett visszavonást, és a
+    // revision-felpumpálás sem.
     const baseRow = verified ?? latest;
-    const row: ConsentRow =
-      unverified && unverified.seq > baseRow.seq && narrowsOrKeeps(unverified, baseRow) ? unverified : baseRow;
-    return { kind: 'found', state: toConsentState(row) };
+    let state = toConsentState(baseRow);
+    const later = (unverifiedRows.results ?? []).filter((r) => r.seq > baseRow.seq).reverse();
+    for (const u of later) {
+      const next = toConsentState(u);
+      state = narrowsOrKeeps(u, state) ? next : intersectConsentState(state, next);
+    }
+    return { kind: 'found', state };
   } catch (err) {
     ledgerError('getConsentState', err, { site_id: siteId });
     return { kind: 'error' };
@@ -966,11 +988,18 @@ export async function readConsentChainAuth(
   siteId: string,
   consentId: string,
   consentEventId: string
-): Promise<{ exists: boolean; max_revision: number | null; key_hash: string | null; event_stored: boolean } | null> {
-  if (!env.LEDGER) return { exists: false, max_revision: null, key_hash: null, event_stored: false };
+): Promise<{
+  exists: boolean;
+  max_revision: number | null;
+  key_hash: string | null;
+  event_stored: boolean;
+  /** A lánc legutóbb beszúrt sorának rowid-ja (0 = nincs sor) — az igazolatlan írás versenyőre. */
+  max_seq: number;
+} | null> {
+  if (!env.LEDGER) return { exists: false, max_revision: null, key_hash: null, event_stored: false, max_seq: 0 };
   try {
     const row = await env.LEDGER.prepare(
-      `SELECT COUNT(*) AS n, MAX(revision) AS max_revision,
+      `SELECT COUNT(*) AS n, MAX(revision) AS max_revision, COALESCE(MAX(rowid), 0) AS max_seq,
               (SELECT key_hash FROM consent_chain WHERE site_id = ?1 AND consent_id = ?2) AS key_hash,
               (SELECT COUNT(*) FROM consent_log
                 WHERE site_id = ?1 AND consent_id = ?2 AND consent_event_id = ?3) AS event_stored
@@ -978,12 +1007,13 @@ export async function readConsentChainAuth(
         WHERE site_id = ?1 AND consent_id = ?2`
     )
       .bind(siteId, consentId, consentEventId)
-      .first<{ n: number; max_revision: number | null; key_hash: string | null; event_stored: number }>();
+      .first<{ n: number; max_revision: number | null; key_hash: string | null; event_stored: number; max_seq: number }>();
     return {
       exists: (row?.n ?? 0) > 0,
       max_revision: row?.max_revision ?? null,
       key_hash: row?.key_hash ?? null,
-      event_stored: (row?.event_stored ?? 0) > 0
+      event_stored: (row?.event_stored ?? 0) > 0,
+      max_seq: row?.max_seq ?? 0
     };
   } catch (err) {
     ledgerError('readConsentChainAuth', err, { site_id: siteId });

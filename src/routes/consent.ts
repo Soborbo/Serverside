@@ -393,6 +393,7 @@ async function handleDecision(
     narrows
   );
 
+  let seq = auth.max_seq;
   let result: Awaited<ReturnType<typeof recordConsentDecision>> = 'failed';
   for (let attempt = 0; attempt < 2; attempt++) {
     if (verdict === 'reject') {
@@ -428,16 +429,18 @@ async function handleDecision(
     result = await recordConsentDecision(
       env,
       { ...parsed.entry, verified: verdict !== 'unverified' },
-      verdict === 'bind' ? await keyHashOf(bindKey) : undefined
+      verdict === 'bind' ? await keyHashOf(bindKey) : undefined,
+      verdict === 'unverified' ? seq : undefined
     );
-    if (result !== 'bind_conflict') break;
-    // Egy párhuzamos kérés kötött kulcsot ehhez a lánchoz: a nyertes kulcs
-    // ismeretében EGYSZER újradöntünk (a mi kulcsunk nem nyert → igazolatlan).
+    if (result !== 'bind_conflict' && result !== 'stale') break;
+    // Párhuzamos írás: egy másik kérés kötött kulcsot ehhez a lánchoz, vagy az
+    // igazolatlan írásunk óta új sor érkezett. Friss állapottal EGYSZER újradöntünk.
     const after = await readConsentChainAuth(env, siteId, consentId, parsed.entry.consent_event_id);
     const afterState = await readConsentState(env, siteId, consentId);
     if (after === null || afterState.kind === 'error') {
       return new Response('storage_unavailable', { status: 503, headers: cors });
     }
+    seq = after.max_seq;
     verdict = authorizeConsentWrite(
       { exists: true, key_hash: after.key_hash },
       presentedKey ? await keyHashOf(presentedKey) : undefined,
@@ -447,6 +450,8 @@ async function handleDecision(
       )
     );
     if (verdict === 'bind') verdict = 'reject';
+    // Ha a második kör is ütközik, a ciklus 'failed'-del lép ki → 503, a kliens
+    // megőrzi és újraküldi (hamis 204 nincs).
     result = 'failed';
   }
 
