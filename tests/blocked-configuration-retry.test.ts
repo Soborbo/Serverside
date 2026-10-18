@@ -220,6 +220,33 @@ describe('A konfigurációs blokk külön retry-keretet kap', () => {
     expect(deleted).toEqual(['lomtalan/meta/2026-07-15/r0.json']);
   });
 
+  it('sbo, a consent-döntés még úton (consent_pending): a cron NEM növeli a retry_count-ot és NEM ír delivery-sort', async () => {
+    const stored: DeadLetterRecord[] = [];
+    const ledgerWrites: string[] = [];
+    const record = base({ consent_id: 'cid-0123456789abcdef', retry_count: 1, last_attempted_at: '2026-07-19T00:00:00.000Z' } as Partial<DeadLetterRecord>);
+    const stmt = (sql: string): any => ({
+      bind: () => stmt(sql),
+      first: async () => null,
+      all: async () => ({ results: [] }),
+      run: async () => { ledgerWrites.push(sql); return { meta: { changes: 1 } }; }
+    });
+    const env: any = {
+      SITE_CONFIG: { get: async () => ({ site_id: 'lomtalan', country_code: 'HU', consent: { provider: 'sbo' } }) },
+      LEDGER: { prepare: (sql: string) => stmt(sql), batch: async (l: any[]) => { ledgerWrites.push('batch'); return l; } },
+      DEAD_LETTER: {
+        list: async () => ({ objects: [{ key: 'lomtalan/meta/2026-07-15/r0.json' }], truncated: false }),
+        get: async () => ({ json: async () => record }),
+        put: async (_k: string, body: string) => stored.push(JSON.parse(body)),
+        delete: async () => {}
+      }
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    await handleScheduledRetry({ scheduledTime: Date.now(), cron: '0 * * * *' } as unknown as ScheduledEvent, env);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].retry_count).toBe(1);
+    expect(ledgerWrites.filter((w) => w === 'batch' || /deliveries/.test(w))).toHaveLength(0);
+  });
+
   it('valódi vendor-hiba UTÁN a retry_count normálisan nő', async () => {
     const stored: DeadLetterRecord[] = [];
     const record = base({ blocked_configuration: true, retry_count: 2 });

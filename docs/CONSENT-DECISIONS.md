@@ -10,7 +10,7 @@ közös függvényt hívja.
 |---|---|---|
 | engedélyezett | bizonyított döntés engedi a kategóriát | küldés, a bizonyított Consent Mode jelekkel |
 | tiltott | a döntés tiltja (vagy visszavonta) | `skipped` (`consent_denied` / `consent_withdrawn`), terminális |
-| új döntés szükséges | a site szabálya szerint nincs érvényes döntés | `skipped` (`consent_missing_failclosed`), terminális, nincs küldés |
+| új döntés szükséges | a site szabálya szerint nincs érvényes döntés | `skipped` (`consent_missing_failclosed`), terminális, nincs küldés. Újraküldésnél a capture után 20 óráig `consent_pending` (a döntés még úton lehet): retryable, nem kísérlet, nincs delivery-sor |
 | átmenetileg nem ellenőrizhető | D1-olvasási hiba | NINCS küldés és NINCS végleges kihagyás: 503 / újrapróbálható retry |
 
 Adatbázishiba soha nem válik engedéllyé, és nem okoz végleges eseményvesztést.

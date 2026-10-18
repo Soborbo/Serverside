@@ -197,8 +197,9 @@ describe('újraküldés (retrySingle) sbo-site-on', () => {
       rec({ consent_id: 'cid-0123456789abcdef', first_failed_at: new Date().toISOString() } as Partial<DeadLetterRecord>)
     );
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(result.success).toBe(false);
-    expect(result.skipped).toBeUndefined();
+    // NEM próbálkozás és NEM végleges: újrapróbálható skip (a cron nem növeli a
+    // retry_count-ot, nem ír 'rejected' sort; a Queue a cron R2-sorába adja át).
+    expect(result).toMatchObject({ success: true, skipped: true, skip_reason: 'consent_pending' });
   });
 
   it('GA4-replay: a capture-kori GRANTED jel helyett a consent_log AKTUÁLIS analitika-állapota dönt', async () => {

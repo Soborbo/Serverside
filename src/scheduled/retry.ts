@@ -148,7 +148,10 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         // hogy a hiányzó configot bárki visszaírná — vagyis a „tartós retry"
         // pontosan a lomtalan-forgatókönyvben mondana csődöt. Így a rekordot
         // egyedül a 7 napos ablak (retryWindowHoursFor) járatja le.
-        const configBlocked = record.blocked_configuration === true && result.skipped === true;
+        // A még úton lévő consent-döntés (consent_pending) sem kísérlet: hívás nem történt.
+        const configBlocked =
+          result.skipped === true &&
+          (record.blocked_configuration === true || result.skip_reason === 'consent_pending');
         const incremented = {
           ...record,
           retry_count: configBlocked ? record.retry_count : record.retry_count + 1,
@@ -290,7 +293,7 @@ export function isTerminalRetrySkip(record: DeadLetterRecord, result: VendorResu
  *  - tiltott (visszavont) → `skipped` + `consent_withdrawn` (terminális,
  *    do_not_replay + a rekord törlése);
  *  - új döntés szükséges (saját CMP, nincs consent_log-sor / consent_id) →
- *    24 óráig újrapróbálható (a döntés még úton lehet), utána `skipped` +
+ *    20 óráig `consent_pending` (retryable, nem kísérlet), utána `skipped` +
  *    `consent_missing_failclosed` (terminális) — a capture-kori engedélyre NEM
  *    esünk vissza;
  *  - nem ellenőrizhető (D1-hiba) → `success:false` + CONSENT_STATE_UNAVAILABLE:
@@ -299,8 +302,10 @@ export function isTerminalRetrySkip(record: DeadLetterRecord, result: VendorResu
  * CookieYes-site-on (nincs consent_log, nincs visszavonás-forrás) a capture-kori
  * kapu döntése áll — a mai viselkedés; a lead-olvasás hibája ott nem állít meg.
  */
-/** Ennyi ideig várunk egy még úton lévő consent-döntésre a replay-en (24 óra). */
-const NEEDS_DECISION_GRACE_MS = 24 * 60 * 60 * 1000;
+/** Ennyi ideig várunk egy még úton lévő consent-döntésre a replay-en. */
+// 20 óra: a 24 órás retry-ablak (deadletter.ts) lejárta ELŐTT a kapu még
+// terminálisan lezárja a rekordot, így az nem a dead-archívumba fut ki.
+const NEEDS_DECISION_GRACE_MS = 20 * 60 * 60 * 1000;
 
 export async function checkReplayConsent(
   env: Env,
@@ -329,15 +334,21 @@ export async function checkReplayConsent(
   // zárul terminális skippel — se engedély, se idő előtti végleges vesztés.
   const young =
     Date.now() - Date.parse(record.first_failed_at) < NEEDS_DECISION_GRACE_MS;
-  if (verdict.kind === 'unavailable' || (verdict.kind === 'needs_decision' && young)) {
+  if (verdict.kind === 'needs_decision' && young) {
+    return {
+      success: true,
+      skipped: true,
+      skip_reason: 'consent_pending',
+      error: `${record.platform} replay deferred: no consent decision on record yet (may still be in flight)`
+    };
+  }
+  if (verdict.kind === 'unavailable') {
     logStructured({
       level: 'warn',
       error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE],
       site_id: record.site_id,
       platform: record.platform,
-      // 'unavailable' = D1-hiba; 'needs_decision' = a döntés még nem érkezett meg.
-      reason: verdict.kind
     });
     return {
       success: false,

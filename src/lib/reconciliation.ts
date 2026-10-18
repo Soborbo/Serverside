@@ -276,6 +276,8 @@ const OFFLINE_SKIP_COUNTS_AS_LOSS: Record<SkipReason, boolean> = {
   dedup: false,
   // Üzleti tény, nem csővezeték-hiba: a konverzió kifutott a Google ablakából.
   conversion_window_expired: false,
+  // Átmeneti: a consent-döntés még úton (retry-only; delivery-sor nem is íródik).
+  consent_pending: false,
   // ── HIBA: a konverzió emiatt NEM ért célba ───────────────────────────────
   not_configured: true,
   invalid_identifier: true,

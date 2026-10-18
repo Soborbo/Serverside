@@ -237,6 +237,18 @@ export default {
             msg.ack();
             continue;
           }
+          // Saját CMP, a consent-döntés még úton: a Queue kísérlet-számlálója ~35
+          // perc után archiválna. A rekordot a cron R2-sorába adjuk át, ahol a
+          // consent_pending nem fogyaszt kísérletet (scheduled/retry.ts) — és csak
+          // sikeres írás után ack-olunk.
+          if (result.skip_reason === 'consent_pending') {
+            if (await writeDeadLetter(env, record)) {
+              msg.ack();
+            } else {
+              msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
+            }
+            continue;
+          }
         }
         // Valódi vendor-bukás → 'rejected' delivery a ledgerbe (a skip NEM az). Enélkül
         // a reconciliation vendor-hibarátája pont kiesés alatt mér alul (K2 / #17).

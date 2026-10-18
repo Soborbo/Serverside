@@ -107,7 +107,15 @@ export type SkipReason =
    * bevétel megmarad (lead_status); a hirdetési láb kifejezetten lejárt.
    * TERMINÁLIS — a retry ezen nem segít.
    */
-  | 'conversion_window_expired';
+  | 'conversion_window_expired'
+  /**
+   * Saját CMP: a replay pillanatában még nincs consent_log-sor, de a capture
+   * friss — a böngésző a 503-at kapott döntését a következő oldalletöltéskor
+   * küldi újra. RETRYABLE, és NEM vendor-kísérlet: nem fogyaszt retry_count-ot,
+   * nem ír delivery-sort. A türelmi idő után a kapu terminális
+   * `consent_missing_failclosed`-ot ad (scheduled/retry.ts checkReplayConsent).
+   */
+  | 'consent_pending';
 
 /**
  * A perzisztálható skip-okok teljes listája — a `deliveries.skip_reason` oszlop
@@ -127,7 +135,8 @@ export const SKIP_REASONS: readonly SkipReason[] = [
   'template_guard',
   'invalid_identifier',
   'consent_withdrawn',
-  'conversion_window_expired'
+  'conversion_window_expired',
+  'consent_pending'
 ];
 
 export function isSkipReason(v: unknown): v is SkipReason {
@@ -149,5 +158,5 @@ export function isSkipReason(v: unknown): v is SkipReason {
  * örökre a DLQ-ban keringjen.
  */
 export function isTerminalSkip(reason: SkipReason | undefined): boolean {
-  return reason !== 'not_configured' && reason !== 'invalid_identifier';
+  return reason !== 'not_configured' && reason !== 'invalid_identifier' && reason !== 'consent_pending';
 }
