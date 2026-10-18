@@ -285,14 +285,18 @@ export function isTerminalRetrySkip(record: DeadLetterRecord, result: VendorResu
  *  - tiltott (visszavont) → `skipped` + `consent_withdrawn` (terminális,
  *    do_not_replay + a rekord törlése);
  *  - új döntés szükséges (saját CMP, nincs consent_log-sor / consent_id) →
- *    `skipped` + `consent_missing_failclosed` (terminális) — a capture-kori
- *    engedélyre NEM esünk vissza;
+ *    24 óráig újrapróbálható (a döntés még úton lehet), utána `skipped` +
+ *    `consent_missing_failclosed` (terminális) — a capture-kori engedélyre NEM
+ *    esünk vissza;
  *  - nem ellenőrizhető (D1-hiba) → `success:false` + CONSENT_STATE_UNAVAILABLE:
  *    hívás nem történik, a rekord a normál retry-úton marad.
  *
  * CookieYes-site-on (nincs consent_log, nincs visszavonás-forrás) a capture-kori
  * kapu döntése áll — a mai viselkedés; a lead-olvasás hibája ott nem állít meg.
  */
+/** Ennyi ideig várunk egy még úton lévő consent-döntésre a replay-en (24 óra). */
+const NEEDS_DECISION_GRACE_MS = 24 * 60 * 60 * 1000;
+
 export async function checkReplayConsent(
   env: Env,
   siteConfig: SiteConfig,
@@ -314,13 +318,21 @@ export async function checkReplayConsent(
     passedCaptureGate: true
   });
   if (verdict.kind === 'allowed') return null;
-  if (verdict.kind === 'unavailable') {
+  // Az „új döntés szükséges" a capture után nem feltétlenül végleges: a böngésző
+  // a 503-at kapott döntését a következő oldalletöltéskor küldi újra. A rekord
+  // ezért NEEDS_DECISION_GRACE_MS-ig újrapróbálható (nincs küldés), csak utána
+  // zárul terminális skippel — se engedély, se idő előtti végleges vesztés.
+  const young =
+    Date.now() - Date.parse(record.first_failed_at) < NEEDS_DECISION_GRACE_MS;
+  if (verdict.kind === 'unavailable' || (verdict.kind === 'needs_decision' && young)) {
     logStructured({
       level: 'warn',
       error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE],
       site_id: record.site_id,
-      platform: record.platform
+      platform: record.platform,
+      // 'unavailable' = D1-hiba; 'needs_decision' = a döntés még nem érkezett meg.
+      reason: verdict.kind
     });
     return {
       success: false,

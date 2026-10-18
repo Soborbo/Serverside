@@ -188,6 +188,19 @@ describe('újraküldés (retrySingle) sbo-site-on', () => {
     expect(result).toMatchObject({ success: true, skipped: true, skip_reason: 'consent_missing_failclosed' });
   });
 
+  it('friss rekord, a döntés még úton lehet (a böngésző 503 után újraküldi) → NEM végleges, újrapróbálható', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { ledger } = makeLedger({});
+    const result = await retrySingle(
+      makeEnv(ledger),
+      rec({ consent_id: 'cid-0123456789abcdef', first_failed_at: new Date().toISOString() } as Partial<DeadLetterRecord>)
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.skipped).toBeUndefined();
+  });
+
   it('GA4-replay: a capture-kori GRANTED jel helyett a consent_log AKTUÁLIS analitika-állapota dönt', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
