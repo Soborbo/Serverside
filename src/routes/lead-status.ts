@@ -11,7 +11,7 @@ import {
   type PlainUserData
 } from '../lib/hash';
 import { type GAdsPayload } from '../lib/gads';
-import { sendToDataManager } from '../lib/datamanager';
+import { assessUploadWindow, sendToDataManager } from '../lib/datamanager';
 import { enqueueFailure } from '../lib/deadletter';
 import { sendAlert } from '../lib/notify';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
@@ -23,7 +23,6 @@ import {
   ADJUSTMENT_LEAD_STATUSES,
   readLatestConsentForLead,
   readConsentState,
-  getLeadFirstSeenAt,
   markDoNotReplay,
   recordLeadStatus,
   recordDeliveries,
@@ -108,79 +107,10 @@ interface LeadStatusBody {
   click_at?: string;
 }
 
-/**
- * A Google offline-feltöltés ablakai, a KATTINTÁSTÓL a FELTÖLTÉSIG (napokban):
- *  - kattintásazonosítós (gclid/gbraid/wbraid) feltöltés: 90 nap;
- *  - csak személyes adaton alapuló (Enhanced Conversions for Leads): 63 nap.
- * Forrás: Google Ads Help, „Offline conversion imports FAQs" (2026-10-18). A Google
- * a végső bíró: az ablakon belüli, mégis elutasított feltöltés 'rejected' sor.
- */
-export const OFFLINE_WINDOW_DAYS = { click_id: 90, user_data: 63 } as const;
-
-export type UploadWindowStatus = 'within' | 'expired' | 'unknown';
-export type UploadIdentification = keyof typeof OFFLINE_WINDOW_DAYS;
-
-export interface UploadWindowAssessment {
-  status: UploadWindowStatus;
-  identification: UploadIdentification;
-  limit_days: number;
-  /** Mihez mértünk; null, ha nem volt bizonyító viszonyítási pont. */
-  reference: 'click_at' | 'lead_first_seen' | 'occurred_at' | null;
-  /** A feltöltésig eltelt idő a viszonyítási ponttól (napok, lefelé kerekítve). */
-  age_days: number | null;
-}
-
-/**
- * Belefér-e a feltöltés a Google ablakába (pure). 2026-10-18 review R8.
- *
- * A viszonyítás a FELTÖLTÉS időpontja (`uploadAtIso`, alapból most), nem az
- * eseményé: egy kattintás után 10 nappal történt, de 100 nappal később feltöltött
- * konverzió kifutott. Az esemény ideje SOHA nem módosul (nincs visszadátumozás).
- *
- *  - Ismert kattintás (`click_at`) → pontos: within / expired.
- *  - Kattintás nélkül csak ALSÓ becslésünk van a kattintás korára (a lead első
- *    eseménye és maga a konverzió is a kattintás UTÁN van). Ha már az alsó becslés
- *    is túllépi az ablakot → expired (biztos). Ha nem → 'unknown': egy fiatal
- *    leadből NEM következik, hogy a kattintás is belefér. Az 'unknown' feltöltődik,
- *    a Google dönt.
- */
-export function assessUploadWindow(
-  occurredAtIso: string,
-  refs: {
-    clickAtIso?: string;
-    leadFirstSeenIso?: string | null;
-    uploadAtIso?: string;
-    hasClickId: boolean;
-  }
-): UploadWindowAssessment {
-  const identification: UploadIdentification = refs.hasClickId ? 'click_id' : 'user_data';
-  const limit = OFFLINE_WINDOW_DAYS[identification];
-  const upload = refs.uploadAtIso ? Date.parse(refs.uploadAtIso) : Date.now();
-  const ageOf = (iso: string | null | undefined): number | null => {
-    if (!iso) return null;
-    const t = Date.parse(iso);
-    return Number.isFinite(t) && Number.isFinite(upload) ? (upload - t) / 86_400_000 : null;
-  };
-  const base = { identification, limit_days: limit };
-
-  const clickAge = ageOf(refs.clickAtIso);
-  if (clickAge !== null) {
-    return { ...base, status: clickAge > limit ? 'expired' : 'within', reference: 'click_at', age_days: Math.floor(clickAge) };
-  }
-  // Alsó becslések: a legrégebbi bizonyított, kattintás UTÁNI pont.
-  const lowerBounds: Array<[UploadWindowAssessment['reference'], number | null]> = [
-    ['lead_first_seen', ageOf(refs.leadFirstSeenIso)],
-    ['occurred_at', ageOf(occurredAtIso)]
-  ];
-  let best: [UploadWindowAssessment['reference'], number] | null = null;
-  for (const [ref, age] of lowerBounds) {
-    if (age !== null && (best === null || age > best[1])) best = [ref, age];
-  }
-  if (best && best[1] > limit) {
-    return { ...base, status: 'expired', reference: best[0], age_days: Math.floor(best[1]) };
-  }
-  return { ...base, status: 'unknown', reference: null, age_days: null };
-}
+// A feltöltési határidő szabálya a célrendszer (Data Manager) modulában él — a
+// CRM-út és az újraküldés (scheduled/retry.ts) UGYANAZT hívja (review R8).
+export { assessUploadWindow, OFFLINE_WINDOW_DAYS } from '../lib/datamanager';
+export type { UploadWindowAssessment } from '../lib/datamanager';
 
 export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null {
   if (typeof payload !== 'object' || payload === null) return null;
@@ -496,9 +426,6 @@ export async function handleLeadStatus(
   const eventTimeSec = Math.floor(Date.parse(occurredAtIso) / 1000);
   const uploadWindow = assessUploadWindow(occurredAtIso, {
     clickAtIso: body.click_at,
-    leadFirstSeenIso: body.click_at
-      ? null
-      : await getLeadFirstSeenAt(env, siteConfig.site_id, body.lead_id),
     hasClickId: Boolean(body.gclid || body.gbraid || body.wbraid)
   });
 
@@ -668,7 +595,9 @@ export async function handleLeadStatus(
       consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined,
       gclid: body.gclid,
       gbraid: body.gbraid,
-      wbraid: body.wbraid
+      wbraid: body.wbraid,
+      // Nem megy a Google-nek: az újraküldéskori határidő-ellenőrzés bemenete.
+      click_at: body.click_at
     };
     const result = await sendToDataManager(siteConfig, env, gadsPayload, hashed);
     // `skipped` (nincs conversion action / nincs identifier) NEM upload — ha

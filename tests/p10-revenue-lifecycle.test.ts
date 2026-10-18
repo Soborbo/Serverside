@@ -22,7 +22,8 @@ vi.mock('../src/lib/notify', () => ({
 
 const capturedPayloads: Record<string, unknown>[] = [];
 
-vi.mock('../src/lib/datamanager', () => ({
+vi.mock('../src/lib/datamanager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/lib/datamanager')>()),
   sendToDataManager: async (_site: unknown, _env: unknown, payload: Record<string, unknown>) => {
     capturedPayloads.push(payload);
     return { success: true, skipped: false };
@@ -145,7 +146,7 @@ describe('§5.2 — a részfizetés saját jelet küld, és nem olvad össze', (
 //
 // A korábbi szabály (90 nap felett a `won_at`-ra visszadátumozni) megszűnt: a
 // platform a VALÓDI időpontot kapja, a viszonyítási pont a kattintás (`click_at`)
-// vagy a lead első ismert eseménye, és a kifutott esemény kifejezett
+// vagy maga a konverzió (az utolsó kattintás előtte volt), és a kifutott esemény kifejezett
 // `conversion_window_expired` skipet kap — az üzleti bevétel megmarad.
 
 describe('§5.4 — valódi eseményidő; az ablak a kattintástól a FELTÖLTÉSIG mér', () => {
@@ -167,23 +168,25 @@ describe('§5.4 — valódi eseményidő; az ablak a kattintástól a FELTÖLTÉ
     });
   });
 
-  it('kattintás nélkül: fiatal lead → unknown (nem következik, hogy belefér)', () => {
+  it('kattintás nélkül: friss konverzió → unknown (nem következik, hogy belefér)', () => {
     expect(
-      assessUploadWindow(plus(5), { leadFirstSeenIso: plus(3), uploadAtIso: plus(6), hasClickId: true })
+      assessUploadWindow(plus(5), { uploadAtIso: plus(6), hasClickId: true })
     ).toMatchObject({ status: 'unknown', reference: null });
   });
 
-  it('kattintás nélkül: ha már az alsó becslés is kifut → expired', () => {
+  it('kattintás nélkül: csak a KONVERZIÓ kora bizonyít lejáratot (a lead első eseménye nem)', () => {
+    // 2026-10-18 második utóellenőrzés: a korábbi elvárás (a lead első eseménye
+    // alsó becslés → expired) hibás volt — egy régi leadhez ÚJ kattintás is
+    // tartozhat. Lásd tests/upload-deadline-r8.test.ts.
     expect(
-      assessUploadWindow(plus(70), { leadFirstSeenIso: click, uploadAtIso: plus(70), hasClickId: false })
-    ).toMatchObject({ status: 'expired', reference: 'lead_first_seen', age_days: 70 });
-    // A konverzió saját kora is alsó becslés.
+      assessUploadWindow(plus(70), { uploadAtIso: plus(70), hasClickId: false })
+    ).toMatchObject({ status: 'unknown' });
     expect(assessUploadWindow(plus(0), { uploadAtIso: plus(95), hasClickId: true })).toMatchObject({
       status: 'expired', reference: 'occurred_at'
     });
   });
 
-  it('értelmezhetetlen click_at → a többi alsó becslésre esik vissza', () => {
+  it('értelmezhetetlen click_at → a konverzió korára esik vissza', () => {
     expect(assessUploadWindow(plus(1), { clickAtIso: 'nem-datum', uploadAtIso: plus(2), hasClickId: true }).status).toBe('unknown');
   });
 
@@ -198,9 +201,11 @@ describe('§5.4 — valódi eseményidő; az ablak a kattintástól a FELTÖLTÉ
     expect(capturedPayloads[0].event_time).toBe(Math.floor(Date.parse(occurred) / 1000));
   });
 
-  it('kifutott kattintás → nincs feltöltés, upload_window_expired, de 200 (az üzleti esemény rögzítve)', async () => {
+  it('kifutott (click ID-vel megnevezett) kattintás → nincs feltöltés, upload_window_expired, de 200 (az üzleti esemény rögzítve)', async () => {
+    // Click ID nélkül (csak személyes adat) egy régi ismert kattintás NEM bizonyít
+    // lejáratot — a Google a felhasználó újabb kattintásához is köthet (R8).
     const res = await handleLeadStatus(
-      request({ status: 'payment_received', value: 900, occurrence_id: 'pay-late', occurred_at: new Date().toISOString(), click_at: plus(-400) }),
+      request({ status: 'payment_received', value: 900, occurrence_id: 'pay-late', occurred_at: new Date().toISOString(), click_at: plus(-400), gclid: 'Cj0KCQjw-late-click' }),
       makeEnv(),
       ctx()
     );

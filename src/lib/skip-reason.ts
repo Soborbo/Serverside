@@ -101,8 +101,9 @@ export type SkipReason =
    */
   | 'consent_withdrawn'
   /**
-   * 2026-10-18 review R8: az offline konverzió a kattintáshoz (vagy a lead első
-   * eseményéhez) képest kifutott a Google feltöltési ablakából. Az üzleti
+   * 2026-10-18 review R8: az offline konverzió BIZONYÍTOTTAN kifutott a Google
+   * feltöltési határidejéből (a feltöltés — vagy újraküldés — pillanatában; lásd
+   * datamanager.ts assessUploadWindow). Az üzleti
    * bevétel megmarad (lead_status); a hirdetési láb kifejezetten lejárt.
    * TERMINÁLIS — a retry ezen nem segít.
    */

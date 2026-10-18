@@ -12,7 +12,7 @@ import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
 import { decideAdConsent, isConsentProviderSbo } from '../lib/consent-log';
 import { isTerminalSkip } from '../lib/skip-reason';
 import { type GAdsPayload } from '../lib/gads';
-import { sendToDataManager } from '../lib/datamanager';
+import { assessUploadWindow, sendToDataManager } from '../lib/datamanager';
 import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
@@ -370,12 +370,23 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
     // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager
     // API-n megy, NEM a sunset uploadClickConversions-ön (az új adopternek
     // CUSTOMER_NOT_ALLOWLISTED-et ad). A retry-nak UGYANAZT az utat kell használnia.
-    return sendToDataManager(
-      siteConfig,
-      env,
-      eventPayload as unknown as GAdsPayload,
-      hashedUserData
-    );
+    // A feltöltési határidőt az ÚJRAKÜLDÉS pillanatában ellenőrizzük (review R8):
+    // a határidő előtt sorba került, de utána újraküldött esemény kifutott. Az
+    // üzleti esemény és a bevétele (lead_status) ettől érintetlen.
+    const gadsPayload = eventPayload as unknown as GAdsPayload;
+    const window = assessUploadWindow(new Date(gadsPayload.event_time * 1000).toISOString(), {
+      clickAtIso: gadsPayload.click_at,
+      hasClickId: Boolean(gadsPayload.gclid || gadsPayload.gbraid || gadsPayload.wbraid)
+    });
+    if (window.status === 'expired') {
+      return {
+        success: true,
+        skipped: true,
+        skip_reason: 'conversion_window_expired',
+        error: `gads replay skipped: ${window.age_days} days since ${window.reference} > ${window.limit_days}-day upload limit (${window.identification})`
+      };
+    }
+    return sendToDataManager(siteConfig, env, gadsPayload, hashedUserData);
   }
   if (record.platform === 'tiktok') {
     return sendToTikTok(siteConfig, eventPayload as unknown as TikTokPayload, hashedUserData);

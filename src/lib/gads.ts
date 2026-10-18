@@ -47,6 +47,12 @@ export interface GAdsPayload {
   gclid?: string;
   gbraid?: string;
   wbraid?: string;
+  /**
+   * A kapcsolódó hirdetési kattintás ideje, ha a CRM ismeri (review R8). NEM megy
+   * a Google-nek: a DLQ-rekordban utazik, hogy az újraküldés az AKKORI időponttal
+   * ellenőrizhesse a feltöltési határidőt (datamanager.ts assessUploadWindow).
+   */
+  click_at?: string;
 }
 
 export interface GAdsResult {

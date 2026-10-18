@@ -305,7 +305,9 @@ describe('retrySingle — gads replay a consent_log aktuális állapota mögött
     event_payload: {
       event_name: 'lead_qualified',
       event_id: 'order-abc123',
-      event_time: 1756000000
+      // Friss esemény: a replay a feltöltési határidőt is ellenőrzi (R8), és ez a
+      // teszt a consent-kaput méri, nem a lejáratot.
+      event_time: Math.floor(Date.now() / 1000) - 86_400
     },
     hashed_user_data: { em: 'a'.repeat(64) },
     failure_reason: 'timeout',

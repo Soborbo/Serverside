@@ -1184,31 +1184,6 @@ export async function readLatestConsentForLead(
   }
 }
 
-/**
- * A lead legkorábbi ismert eseménye (events_raw) — a hirdetési kattintás UTÁNI
- * alsó becslés az offline-ablakhoz (lead-status assessUploadWindow, review R8).
- * null = nincs ilyen esemény, VAGY D1-hiba: a hívó ilyenkor 'unknown' ablakkal
- * feltölt (a Google dönt) — egy olvasási hiba nem dobhat el konverziót.
- */
-export async function getLeadFirstSeenAt(
-  env: Env,
-  siteId: string,
-  leadId: string
-): Promise<string | null> {
-  if (!env.LEDGER) return null;
-  try {
-    const row = await env.LEDGER.prepare(
-      `SELECT MIN(received_at) AS first_seen FROM events_raw WHERE site_id = ? AND lead_id = ?`
-    )
-      .bind(siteId, leadId)
-      .first<{ first_seen: string | null }>();
-    return row?.first_seen ?? null;
-  } catch (err) {
-    ledgerError('getLeadFirstSeenAt', err, { site_id: siteId });
-    return null;
-  }
-}
-
 export interface LeadTrail {
   events: unknown[];
   deliveries: unknown[];
