@@ -1,6 +1,6 @@
 {
   "_comment": "A KOZZETEENDO suti-/tarolo-tabla kanonikus forrasa (GDPR Art 13(1)(e), PECR reg. 6, NAIH). MIERT ITT: a jogi kotelezettseg az, hogy amit KIIRUNK, azt le is irjuk, es amit a visszavonaskor IGERUNK torolni, azt torolju is. Ezt a ket allitast a `tests/cookie-inventory-parity.test.ts` KETIRANYBAN meri a `lib/persistence.ts` VALODI purge-kodjahoz kepest — a tabla igy nem tud elcsuszni a kodtol. Kezzel irt suti-tabla mindig elcsuszik; ez a fajl a kod parja.",
-  "version": "2026-09-d",
+  "version": "2026-10-a",
   "_fields": {
     "name": "A suti/kulcs neve. `match: prefix` eseten nev-elotag (a per-property utotag miatt).",
     "storage": "cookie | localStorage | sessionStorage",
@@ -30,6 +30,44 @@
       "purpose": {
         "hu": "A sütikre vonatkozó döntésének tárolása (kategóriánként), hogy ne kérdezzük újra minden oldalbetöltéskor, és hogy a döntés bizonyítható legyen.",
         "en": "Stores your cookie choice per category so we do not ask again on every page load, and so the choice is provable."
+      }
+    },
+    {
+      "name": "sbo_consent_key",
+      "match": "exact",
+      "storage": "cookie",
+      "category": "necessary",
+      "issuer": "first_party",
+      "lifetime": {
+        "hu": "180 nap",
+        "en": "180 days"
+      },
+      "transfer": null,
+      "purged_on_withdrawal": false,
+      "why_not_purged": "A hozzajarulasi dontes hitelesseget vedi: e nelkul a visszavonas utan barki, aki a dontes azonositojat ismeri, a latogato neveben ujra engedelyt adhatna. A sutit a szerver allitja be (HttpOnly), csak a hozzajarulasi vegpontra kuldi vissza a bongeszo, es semmilyen meresre nem hasznaljuk.",
+      "provider": "sbo",
+      "purpose": {
+        "hu": "Véletlen biztonsági kulcs, amely igazolja, hogy a sütidöntés módosítását ugyanaz a böngésző küldi, amely az eredeti döntést hozta.",
+        "en": "A random security key proving that a change to your cookie choice comes from the same browser that made the original choice."
+      }
+    },
+    {
+      "name": "sbo_consent_pending",
+      "match": "exact",
+      "storage": "localStorage",
+      "category": "necessary",
+      "issuer": "first_party",
+      "lifetime": {
+        "hu": "a döntés szerverre érkezéséig",
+        "en": "until the choice reaches our server"
+      },
+      "transfer": null,
+      "purged_on_withdrawal": false,
+      "why_not_purged": "Maga a meg el nem kuldott dontes (a visszavonas is): ha torolnenk, a visszavonas nem jutna el a szerverhez.",
+      "provider": "sbo",
+      "purpose": {
+        "hu": "Átmenetileg őrzi a sütidöntését, ha azt hálózati hiba miatt még nem sikerült elküldeni, hogy a következő oldalbetöltéskor újra elküldhessük.",
+        "en": "Temporarily keeps your cookie choice if a network error prevented sending it, so it can be re-sent on the next page load."
       }
     },
     {

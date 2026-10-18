@@ -301,8 +301,11 @@ describe('süti-tábla ↔ purge-kód paritás', () => {
       it(`${p}: PONTOSAN EGY hozzájárulás-kezelő süti látszik`, () => {
         // Se nulla (a látogató nem tudja meg, mi tárolja a döntését), se kettő
         // (az egyik nem létezik az ő böngészőjében).
+        // A `sbo_consent_key` (2026-10-18 R7) NEM második döntés-süti, hanem a
+        // döntés-süti hitelességi párja (HttpOnly, csak a consent-végpontra megy):
+        // döntést nem tárol, ezért ebből a számlálásból kimarad.
         const cmpCookies = visibleFor(p).filter(
-          (e) => e.category === 'necessary' && e.storage === 'cookie'
+          (e) => e.category === 'necessary' && e.storage === 'cookie' && e.name !== 'sbo_consent_key'
         );
         expect(
           cmpCookies.map((e) => e.name),

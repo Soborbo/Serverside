@@ -77,6 +77,11 @@ function makeEnv(
       }
     },
     LEDGER: {
+      // D1-batch: az első lánc-döntés a kulcs-kötéssel EGY tranzakcióban (R7).
+      batch: async (list: Array<{ run: () => Promise<unknown> }>) => {
+        for (const s of list) await s.run();
+        return [];
+      },
       prepare: (sql: string) => ({
         bind: (...binds: unknown[]) => ({
           run: async () => {

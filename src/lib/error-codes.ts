@@ -568,7 +568,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]:
     'Current consent state could not be read before a replay — send withheld, record stays retryable',
   [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]:
-    'Unverified (no/wrong consent_key) restricting decision stored on a key-protected consent chain — a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look',
+    'Unverified (no/wrong sbo_consent_key cookie, or a legacy keyless chain) restricting decision stored — it can only narrow consent; a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look',
   [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]:
     'An EXPECTED platform has a config block, but its identifier is malformed (unfilled placeholder or typo) — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the identifier is fixed in KV',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:

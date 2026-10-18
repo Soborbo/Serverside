@@ -91,6 +91,61 @@ function readSboConsentIdFromCookie(cookieHeader: string | null): string | undef
   return undefined;
 }
 
+/** A szerver kiadta lánc-kulcs sütije (review R7). */
+export const CONSENT_KEY_COOKIE = 'sbo_consent_key';
+/** Egyezik az `sbo_consent` élettartamával (180 nap): a kettő együtt él és vész el. */
+const CONSENT_KEY_MAX_AGE_S = 180 * 24 * 60 * 60;
+const CONSENT_KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
+
+function readConsentKeyCookie(cookieHeader: string | null): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0 || part.slice(0, idx).trim() !== CONSENT_KEY_COOKIE) continue;
+    const v = part.slice(idx + 1).trim();
+    return CONSENT_KEY_RE.test(v) ? v : undefined;
+  }
+  return undefined;
+}
+
+function newConsentKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * HttpOnly (a kliens JS-e sem olvashatja), SameSite=Strict, és CSAK a consent-
+ * útvonalra megy — a site többi kérése nem hordozza.
+ */
+function consentKeyCookie(key: string, secure: boolean): string {
+  return (
+    `${CONSENT_KEY_COOKIE}=${key}; Path=/api/consent; Max-Age=${CONSENT_KEY_MAX_AGE_S}` +
+    `; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`
+  );
+}
+
+/**
+ * A lánc írási szabálya (review R7) — EGY helyen, pure:
+ *
+ *  - kötött kulcsú (védett) lánc: a jó kulcs → igazolt írás, bármilyen döntés;
+ *  - új lánc (még nincs sora): 'bind' → az első döntés a böngésző kulcsát köti;
+ *  - minden más (rossz/hiányzó kulcs, VAGY régi, kulcs nélküli lánc): igazolatlan
+ *    írás, ami CSAK szigoríthat. Engedély-bővítés → 'reject'.
+ *
+ * A régi lánc tulajdonosa a meglévő adatokból NEM igazolható (a consent_id és a
+ * süti is a küldő kezében van, titkot sosem kapott) — ezért ott sem köthető
+ * utólag kulcs, és bővítés csak új, kulcsos láncon történhet.
+ */
+export function authorizeConsentWrite(
+  chain: { exists: boolean; key_hash: string | null },
+  presentedHash: string | undefined,
+  narrows: boolean
+): 'verified' | 'bind' | 'unverified' | 'reject' {
+  if (chain.key_hash !== null && presentedHash === chain.key_hash) return 'verified';
+  if (chain.key_hash === null && !chain.exists) return 'bind';
+  return narrows ? 'unverified' : 'reject';
+}
+
 async function readBody(request: Request): Promise<unknown | undefined> {
   const declared = request.headers.get('Content-Length');
   if (declared) {
@@ -292,24 +347,22 @@ async function handleDecision(
     return new Response(parsed.reason, { status: 400, headers: cors });
   }
 
-  // ── TULAJDONLÁS + REVISION (2026-10-18 review R7, aszimmetrikus szabály) ──
+  // ── TULAJDONLÁS + REVISION (2026-10-18 review R7) ─────────────────────────
   // A süti-egyezés önmagában nem bizonyít semmit: a süti is a küldő kezében van.
-  //  - Új lánc kulccsal → a lánc ezzel a kulccsal indul (igazolt sor).
-  //  - Védett lánc (van igazolt kulcsa):
-  //      * jó kulcs → igazolt sor, bármilyen döntés;
-  //      * kulcs nélkül / rossz kulccsal → CSAK szigorítás (semmilyen kategóriát
-  //        nem bővít) írható, IGAZOLATLANKÉNT. Jogos visszavonás így kulcsvesztés
-  //        után sem vész el; engedélyt viszont kulcs nélkül senki nem adhat.
-  //  - Régi / kulcs nélküli lánc → a régi süti-egyezéses szabály, igazolatlan
-  //    sorral; utólag SENKI nem kötheti kulcshoz (a támadó sem).
-  // A revision ugrása a lánc ismert maximumához kötött. D1-hiba → 503.
+  // A bizonyíték a lánc KULCSA, amit a szerver ad ki HttpOnly sütiben (lásd
+  // authorizeConsentWrite). D1-hiba → 503, a kliens megőrzi és újraküldi.
   const consentId = parsed.entry.consent_id;
   const [auth, current] = await Promise.all([
-    readConsentChainAuth(env, siteId, consentId),
+    readConsentChainAuth(env, siteId, consentId, parsed.entry.consent_event_id),
     readConsentState(env, siteId, consentId)
   ]);
   if (auth === null || current.kind === 'error') {
     return new Response('storage_unavailable', { status: 503, headers: cors });
+  }
+  if (auth.event_stored) {
+    // A kliens retry-ja egy MÁR tárolt döntésre (pl. elveszett 204 után): idempotens
+    // 204, újra-engedélyezés nélkül — a döntés a tároláskor már átment a kapun.
+    return new Response(null, { status: 204, headers: { ...cors, ...RECEIVED_HEADER } });
   }
   if (parsed.entry.revision > (auth.max_revision ?? 0) + MAX_REVISION_STEP) {
     logStructured({
@@ -324,40 +377,42 @@ async function handleDecision(
     });
     return new Response('revision_out_of_range', { status: 400, headers: cors });
   }
-  const presentedHash = parsed.entry.consent_key
-    ? await sha256Hex(`${siteId}:${consentId}:${parsed.entry.consent_key}`)
-    : undefined;
-  const chainExists = current.kind === 'found';
-  let verified: boolean;
-  let keyHash: string | undefined;
-  if (auth.key_hash !== null) {
-    if (presentedHash === auth.key_hash) {
-      verified = true;
-      keyHash = auth.key_hash;
-    } else {
-      const currentState = current.kind === 'found' ? current.state : null;
-      const narrows = narrowsOrKeeps(
-        { cat_analytics: parsed.entry.cat_analytics, cat_marketing: parsed.entry.cat_marketing },
-        currentState
-      );
-      if (!narrows) {
-        logStructured({
-          level: 'warn',
-          error_code: TrackingErrorCode.ORIGIN_NOT_ALLOWED,
-          message:
-            'Consent decision rejected — a key-protected chain may only be WIDENED with its consent_key',
-          hostname,
-          site_id: siteId,
-          key_present: presentedHash !== undefined,
-          duration_ms: Date.now() - startedAt
-        });
-        return new Response('consent_key_mismatch', { status: 403, headers: cors });
-      }
+
+  const presentedKey = readConsentKeyCookie(request.headers.get('Cookie'));
+  const keyHashOf = (key: string) => sha256Hex(`${siteId}:${consentId}:${key}`);
+  const narrows = narrowsOrKeeps(
+    { cat_analytics: parsed.entry.cat_analytics, cat_marketing: parsed.entry.cat_marketing },
+    current.kind === 'found' ? current.state : null
+  );
+  // Új láncnál a böngésző meglévő kulcsa köt (egy kulcs böngészőnként, így egy
+  // lánc-forgatás után a RÉGI lánc is igazolható marad), ennek hiányában új kulcs.
+  const bindKey = presentedKey ?? newConsentKey();
+  let verdict = authorizeConsentWrite(
+    { exists: auth.exists, key_hash: auth.key_hash },
+    presentedKey ? await keyHashOf(presentedKey) : undefined,
+    narrows
+  );
+
+  let result: Awaited<ReturnType<typeof recordConsentDecision>> = 'failed';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (verdict === 'reject') {
+      logStructured({
+        level: 'warn',
+        error_code: TrackingErrorCode.ORIGIN_NOT_ALLOWED,
+        message:
+          'Consent decision rejected — an unproven write may only NARROW consent (widening needs the chain key; legacy chains cannot be claimed)',
+        hostname,
+        site_id: siteId,
+        chain_protected: auth.key_hash !== null,
+        key_present: presentedKey !== undefined,
+        duration_ms: Date.now() - startedAt
+      });
+      return new Response('consent_key_mismatch', { status: 403, headers: cors });
+    }
+    if (verdict === 'unverified') {
       // Igazolatlan szigorítás: tárolva és ÉRVÉNYES (privacy first), de jelezzük —
       // ez lehet kulcsvesztés UTÁNI jogos visszavonás, vagy egy azonosítót ismerő
-      // harmadik fél. A tulajdonos következő igazolt döntése felülírja.
-      verified = false;
-      keyHash = undefined;
+      // harmadik fél. Engedélyt NEM adhat; a tulajdonos igazolt döntése felülírja.
       logStructured({
         level: 'warn',
         error_code: TrackingErrorCode.CONSENT_UNVERIFIED_DECISION,
@@ -365,24 +420,35 @@ async function handleDecision(
         hostname,
         site_id: siteId,
         decision: parsed.entry.decision,
-        key_present: presentedHash !== undefined,
+        chain_protected: auth.key_hash !== null,
+        key_present: presentedKey !== undefined,
         duration_ms: Date.now() - startedAt
       });
     }
-  } else if (!chainExists && presentedHash) {
-    // Új lánc, kulccsal: a lánc ezzel a kulccsal INDUL — ez az egyetlen pont,
-    // ahol kulcs köthető (egy még nem létező lánchoz a támadó nem tud előbb írni,
-    // mert a consent_id-t a böngésző épp most generálta).
-    verified = true;
-    keyHash = presentedHash;
-  } else {
-    // Régi / kulcs nélküli lánc (vagy localStorage nélküli kliens): igazolatlan.
-    verified = false;
-    keyHash = undefined;
+    result = await recordConsentDecision(
+      env,
+      { ...parsed.entry, verified: verdict !== 'unverified' },
+      verdict === 'bind' ? await keyHashOf(bindKey) : undefined
+    );
+    if (result !== 'bind_conflict') break;
+    // Egy párhuzamos kérés kötött kulcsot ehhez a lánchoz: a nyertes kulcs
+    // ismeretében EGYSZER újradöntünk (a mi kulcsunk nem nyert → igazolatlan).
+    const after = await readConsentChainAuth(env, siteId, consentId, parsed.entry.consent_event_id);
+    const afterState = await readConsentState(env, siteId, consentId);
+    if (after === null || afterState.kind === 'error') {
+      return new Response('storage_unavailable', { status: 503, headers: cors });
+    }
+    verdict = authorizeConsentWrite(
+      { exists: true, key_hash: after.key_hash },
+      presentedKey ? await keyHashOf(presentedKey) : undefined,
+      narrowsOrKeeps(
+        { cat_analytics: parsed.entry.cat_analytics, cat_marketing: parsed.entry.cat_marketing },
+        afterState.kind === 'found' ? afterState.state : null
+      )
+    );
+    if (verdict === 'bind') verdict = 'reject';
+    result = 'failed';
   }
-  const entry = { ...parsed.entry, consent_key: undefined, key_hash: keyHash, verified };
-
-  const result = await recordConsentDecision(env, entry);
 
   if (result === 'failed') {
     // 503, NEM 204. A kliens `receipt_synced=false`-t tart és újraküldi ugyanazt a
@@ -413,7 +479,13 @@ async function handleDecision(
     duration_ms: Date.now() - startedAt
   });
 
-  return new Response(null, { status: 204, headers: { ...cors, ...RECEIVED_HEADER } });
+  // A kulcs-süti a sikeres igazolt / kötő írás után megy ki (és így a lejárata a
+  // hozzájárulási sütivel együtt frissül). 503-nál NEM: ott kötés sem történt.
+  const headers = new Headers({ ...(cors as Record<string, string>), ...RECEIVED_HEADER });
+  if (result === 'stored' && verdict !== 'unverified') {
+    headers.append('Set-Cookie', consentKeyCookie(bindKey, new URL(request.url).protocol === 'https:'));
+  }
+  return new Response(null, { status: 204, headers });
 }
 
 async function handleShown(
