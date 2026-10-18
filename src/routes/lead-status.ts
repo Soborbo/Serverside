@@ -22,14 +22,14 @@ import {
   VALID_LEAD_STATUSES,
   REPEATABLE_LEAD_STATUSES,
   ADJUSTMENT_LEAD_STATUSES,
-  getLatestConsentForLead,
-  getConsentState,
+  readLatestConsentForLead,
+  readConsentState,
   markDoNotReplay,
   recordLeadStatus,
   recordDeliveries,
   normalizeDelivery
 } from '../lib/ledger';
-import { isBlockedByConsentState } from '../lib/consent-log';
+import { isBlockedByConsentState, isConsentProviderSbo } from '../lib/consent-log';
 
 /**
  * CRM offline-loop endpoint (P0 üzleti érték). A CRM ide POST-olja a lead
@@ -448,7 +448,14 @@ export async function handleLeadStatus(
   //     manuális lead, vagy fail-open site consent-objektum nélküli receipttel).
   //  3. require_consent fail-closed: kötelező consent + semmilyen jel → tiltott.
   // A jel nélküli receipt ad_allowed=1-e NEM evidencia (fail-open default is adhatja).
-  const leadConsent = await getLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
+  const leadConsentRead = await readLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
+  // Saját CMP-s site-on egy D1-hiba elrejthetné a consent_log visszavonását
+  // (2026-10-18 review R2) → 503, a CRM újrapróbálja. CookieYes-site-on nincs
+  // consent_log, ott a mai fail-open viselkedés marad.
+  if (leadConsentRead.kind === 'error' && isConsentProviderSbo(siteConfig)) {
+    return consentStateUnavailable(hostname, siteConfig.site_id, startedAt);
+  }
+  const leadConsent = leadConsentRead.kind === 'found' ? leadConsentRead.record : null;
   const receiptSignal =
     leadConsent?.ad_user_data === 'GRANTED' || leadConsent?.ad_user_data === 'DENIED'
       ? leadConsent.ad_user_data
@@ -463,12 +470,18 @@ export async function handleLeadStatus(
   // Ha a lead receiptje consent_id-t hordoz (provider='sbo' site), az upload-
   // döntést NEM a capture-kori receipt adja, hanem a consent_log AKTUÁLIS
   // állapota (legmagasabb revision). A nap-1 GRANTED / nap-3 visszavonás /
-  // nap-10 revenue_confirmed eset csak így skippel helyesen. `null` (nincs
-  // consent_id — a teljes CookieYes-flotta —, ismeretlen consent_id, vagy
-  // D1-hiba) → a MAI precedencia-lánc változatlanul fut tovább.
-  const consentLogState = leadConsent?.consent_id
-    ? await getConsentState(env, siteConfig.site_id, leadConsent.consent_id)
+  // nap-10 revenue_confirmed eset csak így skippel helyesen. Nincs consent_id
+  // (a teljes CookieYes-flotta) vagy ismeretlen consent_id → a MAI precedencia-
+  // lánc változatlanul fut tovább. D1-hiba → 503 (lent).
+  const consentLogRead = leadConsent?.consent_id
+    ? await readConsentState(env, siteConfig.site_id, leadConsent.consent_id)
     : null;
+  // D1-hiba ≠ „nincs consent_id": a régi engedély nem érvényesülhet üzemzavar
+  // alatt (review R2). Mellékhatás eddig nem történt → a 503 tiszta retry.
+  if (consentLogRead?.kind === 'error') {
+    return consentStateUnavailable(hostname, siteConfig.site_id, startedAt);
+  }
+  const consentLogState = consentLogRead?.kind === 'found' ? consentLogRead.state : null;
 
   let consentBlocked: boolean;
   let consentSource: 'consent_log' | 'receipt' | 'crm' | 'fallback';
@@ -919,6 +932,18 @@ export async function handleLeadStatus(
     },
     200
   );
+}
+
+function consentStateUnavailable(hostname: string, siteId: string, startedAt: number): Response {
+  logStructured({
+    level: 'error',
+    error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
+    message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE],
+    hostname,
+    site_id: siteId,
+    duration_ms: Date.now() - startedAt
+  });
+  return json({ error: 'consent_state_unavailable', retryable: true }, 503);
 }
 
 function json(obj: unknown, status: number): Response {

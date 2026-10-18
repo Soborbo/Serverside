@@ -10,6 +10,22 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.10.0 (2026-10-18)
+
+A 2026-10-18-i kód-review P1-es, hozzájárulást érintő hibáinak javítása (R3, R9, R10). A worker-oldali párjuk (R1, R2: a replay-kapu) ugyanebben a változásban él.
+
+### Javítva — a szerveroldali consent-olvasó nem esik vissza a régi CookieYes-engedélyre (R3)
+
+`readConsentFromCookie` új, opcionális `provider` opciót kap (`GatewayEnv.TRACKING_CONSENT_PROVIDER`). `provider: 'sbo'` mellett KIZÁRÓLAG az `sbo_consent` dönt: hiányzó, lejárt vagy régi policy-verziójú süti → nincs döntés (a gateway `require_consent`-re esik), a CookieYes-„igen" nem helyettesíti. Megadás nélkül (régi másolatok) ha az `sbo_consent` süti jelen van, érvénytelensége esetén sincs CookieYes-visszaesés; sbo-süti nélkül a CookieYes-flotta viselkedése változatlan. **Site-teendő sbo-site-on:** `TRACKING_CONSENT_PROVIDER=sbo` a backend-envbe, és `provider: consentProviderFromEnv(env)` a `readConsentFromCookie` hívásba (lásd `server/backend/README.md`).
+
+### Javítva — függő fetch alatt a második submit nem csúszik át (R9)
+
+A `TrackedForm` két külön állapotot tart: a folyamatban lévő küldés alatt minden új submit `preventDefault`-ot kap (dupla klikk / Enter nem indít második kérést vagy navigációt); csak a saját, programozott `requestSubmit()` re-entry megy át natívan.
+
+### Javítva — tájékoztató-verzióváltás után újra megjelenik a banner (R10)
+
+A `ConsentBanner` megjelenítése, bezárása és a panel előtöltése az aktív `PUBLIC_TRACKING_POLICY_VERSION`-höz kötött — ugyanaz a kapu, mint a `<head>` consent-bootja és a mérés olvasói. Egy régi szövegre adott döntés többé nem rejti el a bannert. A `consent_id`/`revision` folytonossága (verziófüggetlen olvasás az `applySboDecision`-ben) változatlan.
+
 ## 6.9.0 (2026-09-17)
 
 ### Hozzáadva — banner A/B teszt (b3: site-onkénti cím + balról beúszó kártya)

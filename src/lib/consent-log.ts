@@ -410,8 +410,9 @@ export interface ConsentLogState {
 /**
  * Blokkolja-e az AKTUÁLIS consent-állapot az offline uploadot (pure).
  *
- * `null` (nincs ilyen consent_id, vagy D1-hiba) → a hívó a MEGLÉVŐ receipt-alapú
- * szabályra esik vissza (ledger.isOfflineUploadBlocked). Ez SZÁNDÉKOS: a Fázis 1
+ * `null` (nincs ilyen consent_id) → a hívó a MEGLÉVŐ receipt-alapú szabályra esik
+ * vissza (ledger.isOfflineUploadBlocked). A D1-HIBÁT a hívó külön kezeli
+ * (ledger.readConsentState `error` → nincs küldés, újrapróba). Ez SZÁNDÉKOS: a Fázis 1
  * inert, tehát a CookieYes-oldalak — ahol soha nem lesz consent_id — pontosan úgy
  * viselkednek, mint ma. Fail-closed viselkedést itt bevezetni néma
  * konverzió-vesztés lenne az egész flottán.

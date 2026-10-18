@@ -51,7 +51,7 @@ const css = consentBannerCss();
 <Fragment set:html={html} />
 
 <script>
-  import { isSboConsentProvider } from '../lib/config';
+  import { isSboConsentProvider, trackingConfig } from '../lib/config';
   import { readSboConsent, type SboConsentState } from '../lib/consent-sbo-state';
   import {
     applySboDecision,
@@ -70,6 +70,16 @@ const css = consentBannerCss();
       sboConsent?: { open: () => void };
       __sboLoadGtm?: () => void;
     }
+  }
+
+  // A banner láthatósága az AKTÍV tájékoztató-verzióhoz kötött — ugyanaz a kapu,
+  // mint a <head>-beli consent-boot és a mérés olvasói (lib/consent.ts). Verzió
+  // nélküli olvasással egy RÉGI szövegre adott döntés elrejtette a bannert, míg a
+  // mérés már nem fogadta el: a visszatérő látogató új kérdés nélkül esett ki
+  // (2026-10-18 review R10). A verziófüggetlen olvasás (consent_id/revision
+  // folytonosság) a lib/consent-sbo.ts applySboDecision-é marad.
+  function readCurrentDecision(): SboConsentState | null {
+    return readSboConsent(trackingConfig.policyVersion);
   }
 
   function qs<T extends HTMLElement>(sel: string): T | null {
@@ -163,7 +173,7 @@ const css = consentBannerCss();
 
     function openPanel(): void {
       lastFocused = document.activeElement;
-      const current = readSboConsent();
+      const current = readCurrentDecision();
       // A panel a JELENLEGI állapotot mutatja; döntés híján mindkettő OFF
       // (default: elutasítva — a kapcsolók alapból nem lehetnek bepipálva).
       catAnalytics.checked = current?.analytics === true;
@@ -183,7 +193,7 @@ const css = consentBannerCss();
       panel.hidden = true;
       overlay.hidden = true;
       document.removeEventListener('keydown', onPanelKeydown, true);
-      if (readSboConsent() === null) {
+      if (readCurrentDecision() === null) {
         showBanner();
       } else {
         root.hidden = true;
@@ -222,7 +232,7 @@ const css = consentBannerCss();
     // Nincs érvényes döntés → banner. Van → semmi dolgunk (a GTM-ről a
     // <head>-beli consent-boot már döntött, szinkron). A megjelenés-ping a
     // döntéskor vagy a pagehide-on megy el — egy megjelenés = egy sor.
-    if (readSboConsent() === null) showBanner();
+    if (readCurrentDecision() === null) showBanner();
   }
 
   document.addEventListener('astro:page-load', init);

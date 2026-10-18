@@ -8,11 +8,11 @@
 > vele" tudás van, amit generálni nem lehet. Ez a tábla a TELJESSÉGET garantálja —
 > azt, hogy egyetlen kód se maradjon dokumentálatlanul.
 
-**Kódok száma:** 153
+**Kódok száma:** 154
 
 | Retryability | Kódok | Jelentés |
 |---|---|---|
-| `RETRYABLE` | 47 | átmeneti — egy későbbi próbálkozás sikerülhet |
+| `RETRYABLE` | 48 | átmeneti — egy későbbi próbálkozás sikerülhet |
 | `OPERATOR_ACTION` | 47 | emberi beavatkozás kell |
 | `TERMINAL` | 25 | végleges — ugyanez a payload sosem megy át |
 | `CONFIG_BLOCKED` | 21 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
@@ -143,6 +143,7 @@
 | `TRK-910-006` | `CONSENT_CLIENT_LIB_OUTDATED` | consent | info | `OPERATOR_ACTION` | `lib/consent.ts` | Something went wrong on our side. Your request was not affected. | Reported client_lib_version is below the minimum that emits consent telemetry — warn now, block later | `consent-crosscheck.test.ts` |
 | `TRK-910-007` | `CONSENT_CROSS_CHECK_FAILED` | consent | warning | `RETRYABLE` | `lib/consent-crosscheck.ts`, `scheduled/consent-check.ts` | Something went wrong on our side. Your request was not affected. | Daily consent cross-check D1 query failed — that leg is dark for the day | — |
 | `TRK-910-008` | `CONSENT_GRANTED_BUT_SKIPPED` | consent | warning | `OPERATOR_ACTION` | `scheduled/consent-check.ts` | Something went wrong on our side. Your request was not affected. | A delivery was skipped while its consent receipt says GRANTED — the exact anomaly Phase D exists to explain; check the skip_reason breakdown | — |
+| `TRK-910-009` | `CONSENT_STATE_UNAVAILABLE` | consent | warning | `RETRYABLE` | `routes/lead-status.ts`, `scheduled/retry.ts` | Something went wrong on our side. Your request was not affected. | Current consent state could not be read before a replay — send withheld, record stays retryable | `replay-consent-gate.test.ts` |
 | `TRK-950-001` | `RECON_VENDOR_FAILURE_RATE` | reconciliation | warning | `OPERATOR_ACTION` | `scheduled/reconciliation.ts` | Something went wrong on our side. Your request was not affected. | Vendor delivery failure rate exceeded threshold (reconciliation) | — |
 | `TRK-950-002` | `RECON_COVERAGE_DRIFT` | reconciliation | warning | `OPERATOR_ACTION` | `scheduled/reconciliation.ts` | Something went wrong on our side. Your request was not affected. | Eligible events did not reach the platform — coverage drift (reconciliation) | — |
 | `TRK-950-003` | `RECON_QUERY_FAILED` | reconciliation | warning | `RETRYABLE` | `lib/business-counts.ts`, `lib/reconciliation.ts` +1 | Something went wrong on our side. Your request was not affected. | Reconciliation D1 query failed | — |

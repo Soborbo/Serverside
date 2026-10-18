@@ -9,18 +9,18 @@ import {
 } from '../lib/deadletter';
 import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
-import { isGa4AllowedForSite } from '../lib/consent-log';
+import { isGa4AllowedForSite, isConsentProviderSbo } from '../lib/consent-log';
 import { type GAdsPayload } from '../lib/gads';
 import { sendToDataManager } from '../lib/datamanager';
 import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
-import { lookupSiteConfig } from '../lib/config';
+import { lookupSiteConfig, type SiteConfig } from '../lib/config';
 import {
   recordDeliveries,
   normalizeDelivery,
-  getLatestConsentForLead,
-  getConsentState,
+  readLatestConsentForLead,
+  readConsentState,
   markDoNotReplay,
   type VendorResult
 } from '../lib/ledger';
@@ -256,6 +256,73 @@ export function logSkippedRetry(record: DeadLetterRecord): void {
 }
 
 /**
+ * CMP Fázis 2 (2.5) replay-kapu, CSATORNAFÜGGETLENÜL: MINDEN hirdetési replay
+ * előtt a consent_log AKTUÁLIS állapota (legmagasabb revision) dönt, nem a
+ * capture-kori jel. A retrySingle az EGYETLEN közös pontja mind a négy replay-
+ * útnak (cron, Queues consumer, admin single/bulk), ezért a kapu ide kerül.
+ *
+ * Korábban csak a gads-ágon futott — a Meta/TikTok/LinkedIn replay egy azóta
+ * VISSZAVONT engedéllyel is kiment (2026-10-18 review R1). A D1-hibát pedig a
+ * „nincs consent_id"-val azonos `null` jelezte, így üzemzavar alatt a régi
+ * engedély érvényesült (R2).
+ *
+ * Visszatérés: `null` = mehet a küldés; különben a hívónak visszaadandó eredmény:
+ *  - visszavont / nem GRANTED állapot → `skipped` + `consent_withdrawn`
+ *    (a hívók ezt terminálisan kezelik: do_not_replay + a rekord törlése);
+ *  - olvasási hiba → `success:false` + CONSENT_STATE_UNAVAILABLE: hívás NEM
+ *    történik, a rekord a normál retry-úton marad, és a helyreállás után az
+ *    AKKORI állapot dönt.
+ *
+ * A consent_id a DLQ-rekordból jön (a capture-kor tárolva, lead_id nélkül is),
+ * vagy a lead receiptjeiből. Egyik sincs (a teljes CookieYes-flotta) → a mai
+ * viselkedés bitre változatlan. Egy CookieYes-site lead-olvasási hibája sem
+ * állítja meg a küldést: ott consent_log nem létezik, nincs mit elmulasztani.
+ */
+export async function checkReplayConsent(
+  env: Env,
+  siteConfig: SiteConfig,
+  record: DeadLetterRecord
+): Promise<VendorResult | null> {
+  const unavailable = (): VendorResult => {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE],
+      site_id: record.site_id,
+      platform: record.platform
+    });
+    return {
+      success: false,
+      error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
+      error: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]
+    };
+  };
+
+  let consentId = typeof record.consent_id === 'string' && record.consent_id ? record.consent_id : null;
+  if (!consentId && record.lead_id) {
+    const lead = await readLatestConsentForLead(env, record.site_id, record.lead_id);
+    if (lead.kind === 'error') {
+      if (isConsentProviderSbo(siteConfig)) return unavailable();
+      return null;
+    }
+    if (lead.kind === 'found') consentId = lead.record.consent_id;
+  }
+  if (!consentId) return null;
+
+  const read = await readConsentState(env, record.site_id, consentId);
+  if (read.kind === 'error') return unavailable();
+  if (read.kind === 'found' && isBlockedByConsentState(read.state)) {
+    return {
+      success: true,
+      skipped: true,
+      skip_reason: 'consent_withdrawn',
+      error: `${record.platform} replay skipped: current consent state is ${read.state.decision} (revision ${read.state.revision})`
+    };
+  }
+  return null;
+}
+
+/**
  * Egyetlen DLQ-rekord újraküldése. A TELJES vendor-eredményt adja vissza (nem
  * csupasz boolean-t), hogy a hívók a ledger-könyvelést a normalizeDelivery-n
  * keresztül végezhessék: accepted CSAK valós vendor HTTP-státusszal íródhat,
@@ -280,6 +347,13 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
 
   const hashedUserData = (record.hashed_user_data || {}) as HashedUserData;
   const eventPayload = record.event_payload;
+
+  // A GA4-nek saját (analytics-) kapuja van lent; minden HIRDETÉSI csatorna
+  // ugyanazon az aktuális-consent kapun megy át.
+  if (record.platform !== 'ga4') {
+    const blocked = await checkReplayConsent(env, siteConfig, record);
+    if (blocked) return blocked;
+  }
 
   if (record.platform === 'meta') {
     return sendToMetaCAPI(
@@ -309,26 +383,6 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
     return sendToGA4MP(siteConfig, ga4Payload);
   }
   if (record.platform === 'gads') {
-    // CMP Fázis 2 (2.5): MINDEN replay előtt a consent_log AKTUÁLIS állapota
-    // (legmagasabb revision) dönt, nem a capture-kori jel. Ez a retrySingle az
-    // EGYETLEN közös pontja mind a négy replay-útnak (cron, Queues consumer,
-    // admin single/bulk), ezért a kapu ide kerül. lead_id vagy consent_id nélkül
-    // (a teljes CookieYes-flotta) az ág bitre a mai — a Fázis 2 szerveroldala
-    // inert marad, amíg egy site nem ír consent_id-s receiptet.
-    if (record.lead_id) {
-      const leadConsent = await getLatestConsentForLead(env, record.site_id, record.lead_id);
-      if (leadConsent?.consent_id) {
-        const state = await getConsentState(env, record.site_id, leadConsent.consent_id);
-        if (isBlockedByConsentState(state)) {
-          return {
-            success: true,
-            skipped: true,
-            skip_reason: 'consent_withdrawn',
-            error: `gads replay skipped: current consent state is ${state?.decision} (revision ${state?.revision})`
-          };
-        }
-      }
-    }
     // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager
     // API-n megy, NEM a sunset uploadClickConversions-ön (az új adopternek
     // CUSTOMER_NOT_ALLOWLISTED-et ad). A retry-nak UGYANAZT az utat kell használnia.

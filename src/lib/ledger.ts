@@ -751,25 +751,38 @@ export async function recordConsentMetric(env: Env, m: ConsentMetricEntry): Prom
 }
 
 /**
+ * Az AKTUÁLIS consent-állapot olvasásának eredménye — HÁROM állapot, nem kettő.
+ *
+ * A korábbi `ConsentLogState | null` ugyanazzal a `null`-lal jelezte a „nincs
+ * ilyen consent_id"-t és a D1-hibát. A replay-kapu a `null`-t „nincs tiltás"-nak
+ * olvasta, így PONT üzemzavar alatt veszett el a visszavonás érvényesítése
+ * (2026-10-18 review R2). A hívó most meg tudja különböztetni a kettőt.
+ */
+export type ConsentStateRead =
+  | { kind: 'found'; state: ConsentLogState }
+  | { kind: 'missing' }
+  | { kind: 'error' };
+
+/**
  * Az AKTUÁLIS consent-állapot egy `consent_id`-re: a LEGMAGASABB revision.
  *
- * Ezt hívja a `GET /api/consent/:consent_id`, és rajta keresztül minden offline
- * upload / retry / replay — NEM a capture-kori receiptet. A nap-1 GRANTED /
- * nap-3 visszavonás / nap-10 revenue_confirmed eset csak így skippel helyesen.
+ * Ezt hívja minden offline upload / retry / replay — NEM a capture-kori
+ * receiptet. A nap-1 GRANTED / nap-3 visszavonás / nap-10 revenue_confirmed eset
+ * csak így skippel helyesen.
  *
- * `null` = nincs ilyen consent_id, VAGY D1-hiba. A hívó ezt a mai, receipt-alapú
- * szabályra visszaesésként kezeli (consent-log.ts isBlockedByConsentState) — a
- * Fázis 1 inert, a CookieYes-oldalakon soha nincs consent_id.
+ * `missing` = nincs ilyen consent_id (vagy nincs LEDGER binding); `error` = a
+ * D1-olvasás elbukott. Egy kötelező consent-ellenőrzés `error`-nál NEM mehet
+ * tovább — az eventnek újrapróbálhatónak kell maradnia.
  *
  * A tenant-izolációhoz a `site_id` KÖTELEZŐ: egy consent_id ismerete nem adhat
  * betekintést egy másik site consent-rekordjába.
  */
-export async function getConsentState(
+export async function readConsentState(
   env: Env,
   siteId: string,
   consentId: string
-): Promise<ConsentLogState | null> {
-  if (!env.LEDGER) return null;
+): Promise<ConsentStateRead> {
+  if (!env.LEDGER) return { kind: 'missing' };
   try {
     const row = await env.LEDGER.prepare(
       `SELECT consent_id, revision, decision, cat_analytics, cat_marketing,
@@ -794,24 +807,41 @@ export async function getConsentState(
         client_decided_at: string;
         server_received_at: string;
       }>();
-    if (!row) return null;
+    if (!row) return { kind: 'missing' };
     return {
-      consent_id: row.consent_id,
-      revision: row.revision,
-      decision: row.decision as ConsentLogState['decision'],
-      cat_analytics: row.cat_analytics === 1,
-      cat_marketing: row.cat_marketing === 1,
-      ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
-      ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
-      ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
-      analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
-      client_decided_at: row.client_decided_at,
-      server_received_at: row.server_received_at
+      kind: 'found',
+      state: {
+        consent_id: row.consent_id,
+        revision: row.revision,
+        decision: row.decision as ConsentLogState['decision'],
+        cat_analytics: row.cat_analytics === 1,
+        cat_marketing: row.cat_marketing === 1,
+        ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
+        ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
+        ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
+        analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
+        client_decided_at: row.client_decided_at,
+        server_received_at: row.server_received_at
+      }
     };
   } catch (err) {
     ledgerError('getConsentState', err, { site_id: siteId });
-    return null;
+    return { kind: 'error' };
   }
+}
+
+/**
+ * `readConsentState` kétállapotú burkolója a `GET /api/consent/:consent_id`
+ * olvasó végpontnak: `null` = nincs ilyen consent_id VAGY D1-hiba. Kapu-döntéshez
+ * (upload / replay) NE ezt használd — ott a hibát külön kell kezelni.
+ */
+export async function getConsentState(
+  env: Env,
+  siteId: string,
+  consentId: string
+): Promise<ConsentLogState | null> {
+  const read = await readConsentState(env, siteId, consentId);
+  return read.kind === 'found' ? read.state : null;
 }
 
 export interface DeliveriesInput {
@@ -979,7 +1009,20 @@ export async function getLatestConsentForLead(
   siteId: string,
   leadId: string
 ): Promise<LeadConsentRecord | null> {
-  if (!env.LEDGER) return null;
+  const read = await readLatestConsentForLead(env, siteId, leadId);
+  return read.kind === 'found' ? read.record : null;
+}
+
+/**
+ * `getLatestConsentForLead` háromállapotú alakja: a replay-kapunak tudnia kell,
+ * hogy a lead receiptje HIÁNYZIK, vagy a D1-olvasás BUKOTT el (review R2).
+ */
+export async function readLatestConsentForLead(
+  env: Env,
+  siteId: string,
+  leadId: string
+): Promise<{ kind: 'found'; record: LeadConsentRecord } | { kind: 'missing' } | { kind: 'error' }> {
+  if (!env.LEDGER) return { kind: 'missing' };
   try {
     // A JEL-HORDOZÓ receipt megelőzi a puszta frissességet.
     //
@@ -1015,16 +1058,19 @@ export async function getLatestConsentForLead(
         ad_personalization: string | null;
         consent_id: string | null;
       }>();
-    if (!row) return null;
+    if (!row) return { kind: 'missing' };
     return {
-      ad_allowed: row.ad_allowed === 1,
-      ad_user_data: row.ad_user_data ?? null,
-      ad_personalization: row.ad_personalization ?? null,
-      consent_id: row.consent_id ?? null
+      kind: 'found',
+      record: {
+        ad_allowed: row.ad_allowed === 1,
+        ad_user_data: row.ad_user_data ?? null,
+        ad_personalization: row.ad_personalization ?? null,
+        consent_id: row.consent_id ?? null
+      }
     };
   } catch (err) {
     ledgerError('getLatestConsentForLead', err, { site_id: siteId });
-    return null;
+    return { kind: 'error' };
   }
 }
 

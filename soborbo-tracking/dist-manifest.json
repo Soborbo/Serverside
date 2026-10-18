@@ -1,12 +1,12 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.9.0",
+  "version": "6.10.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "889d32fb04f76c41b4dfa87a1f30b41d2b9a443b793e19ff2477846aac9e3584",
-      "bytes": 4267,
+      "sha256": "a6713476afa6b9114a53d7bd616e39257167aed4881d4037be8ebb05e0c407d1",
+      "bytes": 4268,
       "role": "browser"
     },
     "lib/consent-banner-a11y.ts": {
@@ -105,8 +105,8 @@
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
-      "sha256": "07b0980906e4070afd692b173eb63c4b7ecfcb44569330cef957cb7846b02eee",
-      "bytes": 10125,
+      "sha256": "95b3edb57ffe3d90ff746b0ff84d9a456af551277361669b9fdd2c34688351d0",
+      "bytes": 10787,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
@@ -135,8 +135,8 @@
       "role": "browser"
     },
     "components/TrackedForm.astro": {
-      "sha256": "bff662e73b6d87bfaa5a4ba001c8d4deaba4a85d0bf5804d7dc30ff92282b4c7",
-      "bytes": 10692,
+      "sha256": "f664a1156ad145fa7d0fdbb172ef751e7afcd60383a8353bb6ea5a2e5d1fb80b",
+      "bytes": 11550,
       "role": "browser"
     },
     "components/Tracking.astro": {
@@ -150,8 +150,8 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "91fa4197ed28b8f229b98119a8f779965452a00432c10b4fb7f37ada7d7086b2",
-      "bytes": 34260,
+      "sha256": "2587b987b6495a2239a35dda08b124ceac432ae554db46e49af29b2ea3234e53",
+      "bytes": 36402,
       "role": "backend"
     },
     "server/backend/smoke.ts": {

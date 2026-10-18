@@ -839,6 +839,9 @@ function fanOut(
   // — a telemetria csak akkor írja felül, ha a site explicit strict módban van
   // ÉS a consent bizonyítottan bizonytalan (TRK-910-002/003/005).
   const adAllowed = consentTelemetry.adAllowed;
+  // A DLQ-rekordba is bekerül, hogy a replay-kapu lead_id NÉLKÜL is a consent_log
+  // aktuális állapotát nézze (review R1). Formahibás érték → undefined.
+  const consentIdForDlq = parseConsentId(payload.consent_id);
 
   // Meta fbc: a kliens _fbc cookie-ja elsődleges; ha nincs, fbclid-ből építjük.
   const fbc = payload.fbc || buildFbcFromFbclid(attribution?.fbclid, payload.event_time);
@@ -916,7 +919,7 @@ function fanOut(
       // Soborbo CMP: a saját CMP döntésének azonosítója, ha a site azzal fut.
       // CookieYes-oldalon undefined → a receipten NULL, ami NEM hiba. Formahibás
       // érték is CSAK kimarad: egy consent-KÖTÉS soha nem buktathat konverziót.
-      consent_id: parseConsentId(payload.consent_id)
+      consent_id: consentIdForDlq
     })
   );
 
@@ -1148,6 +1151,7 @@ function fanOut(
               site_id: siteConfig.site_id,
               hostname,
               lead_id: leadId,
+              consent_id: consentIdForDlq,
               event_payload: platformPayload,
               hashed_user_data: includeUserData
                 ? (hashedUserData as unknown as Record<string, unknown>)
@@ -1175,6 +1179,7 @@ function fanOut(
             site_id: siteConfig.site_id,
             hostname,
             lead_id: leadId,
+            consent_id: consentIdForDlq,
             event_payload: platformPayload,
             hashed_user_data: includeUserData
               ? (hashedUserData as unknown as Record<string, unknown>)

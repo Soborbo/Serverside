@@ -265,6 +265,12 @@ export enum TrackingErrorCode {
    * darab rejtély, amiért a Fázis D létezik. Nem szabadna léteznie.
    */
   CONSENT_GRANTED_BUT_SKIPPED = 'TRK-910-008',
+  /**
+   * Replay előtt a consent AKTUÁLIS állapotát (consent_log / a lead receiptje)
+   * nem sikerült kiolvasni. A küldés ELMARAD, a rekord újrapróbálható marad —
+   * egy D1-kiesés nem érvényesítheti a régi engedélyt (2026-10-18 review R2).
+   */
+  CONSENT_STATE_UNAVAILABLE = 'TRK-910-009',
 
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
@@ -549,6 +555,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Daily consent cross-check D1 query failed — that leg is dark for the day',
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]:
     'A delivery was skipped while its consent receipt says GRANTED — the exact anomaly Phase D exists to explain; check the skip_reason breakdown',
+  [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]:
+    'Current consent state could not be read before a replay — send withheld, record stays retryable',
   [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]:
     'An EXPECTED platform has a config block, but its identifier is malformed (unfilled placeholder or typo) — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the identifier is fixed in KV',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
@@ -766,6 +774,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // Ez viszont NEM zaj: GRANTED consent mellett keletkezett skip. Nem szabadna
   // léteznie — a napi ellenőrzés ezen riaszt, ha nem nulla.
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'warning',
+  [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]: 'warning',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',
@@ -972,6 +981,7 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.CONSENT_CLIENT_LIB_OUTDATED]: 'OPERATOR_ACTION',
   [TrackingErrorCode.CONSENT_CROSS_CHECK_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]: 'RETRYABLE',
 
   // 950 — reconciliation. A findingek definíció szerint emberi döntést kérnek;
   // a „query failed" ágak viszont átmenetiek.

@@ -150,7 +150,9 @@ copy of the browser one (the module is vendored per-site and cannot import it),
 and it silently drifted once already — the browser moved to the v2 cookie while
 the backend still demanded v1, which on an `sbo` site would have made every
 server-side read return "no decision". On such sites pass
-`{ expectedPolicyVersion: env.TRACKING_POLICY_VERSION }`. The gateway re-checks
+`{ expectedPolicyVersion: env.TRACKING_POLICY_VERSION, provider: consentProviderFromEnv(env) }`
+and set `TRACKING_CONSENT_PROVIDER=sbo`: with it, a missing or stale `sbo_consent`
+never falls back to an old CookieYes grant. The gateway re-checks
 server-side (`require_consent` for EEA) — defense in depth. Click-ID capture is
 gated on ad consent, and consent is THREE-state (granted/denied/unknown — see
 INVARIANTS #11).

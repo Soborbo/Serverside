@@ -69,6 +69,13 @@ export interface GatewayEnv {
    * site-on nyitva hagy egy csendes eltérést.
    */
   TRACKING_POLICY_VERSION?: string;
+  /**
+   * A site aktív CMP-je (`sbo` | `cookieyes`) — a böngésző-oldali
+   * `PUBLIC_TRACKING_CONSENT_PROVIDER` párja. `readConsentFromCookie`-nak
+   * `provider`-ként add át: `sbo` mellett egy régi CookieYes-„igen" nem
+   * helyettesítheti a hiányzó vagy elavult saját döntést.
+   */
+  TRACKING_CONSENT_PROVIDER?: string;
   /** Synthetic-lead smoke test — see `resolveTestEventCode` + smoke.ts. */
   TRACKING_TEST_LEAD_EMAIL?: string;
   TRACKING_TEST_EVENT_CODE?: string;
@@ -262,10 +269,19 @@ export function isGatewayConfigured(env: GatewayEnv): boolean {
  * Returns undefined when the cookie is absent or is not a CookieYes cookie — we do
  * NOT guess. The gateway then applies `require_consent` and fails closed, which is
  * the correct GDPR posture.
+ *
+ * CMP-választás (`opts.provider`, a site `TRACKING_CONSENT_PROVIDER`-e):
+ *  - `'sbo'` → KIZÁRÓLAG az `sbo_consent` dönt. Hiányzó, lejárt vagy RÉGI
+ *    policy-verziójú süti → undefined, és SOHA nem esünk vissza a CookieYes-re:
+ *    az új tájékoztatóhoz új döntés kell (2026-10-18 review R3).
+ *  - `'cookieyes'` → kizárólag a CookieYes-süti.
+ *  - nincs megadva (régi másolatok) → ha az `sbo_consent` süti JELEN VAN, a site
+ *    a saját CMP-t futtatja: érvénytelensége esetén sincs CookieYes-visszaesés.
+ *    Csak sbo-süti nélkül olvassuk a CookieYes-t (a mai CookieYes-flotta).
  */
 export function readConsentFromCookie(
   cookieHeader: string | null,
-  opts: SboCookieReadOptions = {}
+  opts: ConsentCookieReadOptions = {}
 ): ConsentState | undefined {
   if (!cookieHeader) return undefined;
 
@@ -273,15 +289,18 @@ export function readConsentFromCookie(
   // site), az a döntés forrása — a párhuzamos mérési ablakban a CookieYes sütije
   // is jelen lehet, de a site-ot már a saját CMP hajtja. CookieYes-site-okon a
   // süti nem létezik → az ág bitre a mai.
-  const sbo = readSboConsentCookieHeader(cookieHeader, opts);
-  if (sbo) {
-    const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
-    return {
-      ad_user_data: sig(sbo.marketing),
-      ad_personalization: sig(sbo.marketing),
-      ad_storage: sig(sbo.marketing),
-      analytics_storage: sig(sbo.analytics),
-    };
+  if (opts.provider !== 'cookieyes') {
+    const sbo = readSboConsentCookieHeader(cookieHeader, opts);
+    if (sbo) {
+      const sig = (yes: boolean): ConsentSignal => (yes ? 'GRANTED' : 'DENIED');
+      return {
+        ad_user_data: sig(sbo.marketing),
+        ad_personalization: sig(sbo.marketing),
+        ad_storage: sig(sbo.marketing),
+        analytics_storage: sig(sbo.analytics),
+      };
+    }
+    if (opts.provider === 'sbo' || hasCookie(cookieHeader, 'sbo_consent')) return undefined;
   }
 
   let raw: string | undefined;
@@ -335,6 +354,32 @@ export interface SboCookieConsent {
  * visszaírt vagy átvitt süti attól még „frissnek" látszana a szerveren.
  */
 export const SBO_CONSENT_MAX_AGE_S = 180 * 24 * 60 * 60;
+
+export interface ConsentCookieReadOptions extends SboCookieReadOptions {
+  /**
+   * A site AKTÍV CMP-je (`GatewayEnv.TRACKING_CONSENT_PROVIDER`). `'sbo'` mellett
+   * a CookieYes-süti SOHA nem dönt — lásd `readConsentFromCookie`.
+   */
+  provider?: 'sbo' | 'cookieyes';
+}
+
+/**
+ * A `TRACKING_CONSENT_PROVIDER` env értéke a `readConsentFromCookie` `provider`
+ * opciójához. Ismeretlen / hiányzó érték → undefined (a süti-jelenlét alapú
+ * alapviselkedés).
+ */
+export function consentProviderFromEnv(env: GatewayEnv): 'sbo' | 'cookieyes' | undefined {
+  const v = env.TRACKING_CONSENT_PROVIDER?.trim().toLowerCase();
+  return v === 'sbo' || v === 'cookieyes' ? v : undefined;
+}
+
+/** Jelen van-e a megnevezett süti a Cookie headerben (az értékétől függetlenül). */
+function hasCookie(cookieHeader: string, name: string): boolean {
+  return cookieHeader.split(';').some((part) => {
+    const idx = part.indexOf('=');
+    return idx > 0 && part.slice(0, idx).trim() === name;
+  });
+}
 
 export interface SboCookieReadOptions {
   /**
@@ -435,7 +480,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.9.0';
+export const BACKEND_LIB_VERSION = '6.10.0';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;

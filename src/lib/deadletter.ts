@@ -57,6 +57,10 @@ export interface DeadLetterRecord {
   // kézbesítés deliveries-sora lead_id=NULL lenne, és a lead-trail sosem
   // mutatná, hogy a platform végül megkapta az eventet.
   lead_id?: string;
+  // A capture-kori consent-döntés azonosítója (saját CMP, provider='sbo'). A
+  // replay-kapu ezzel olvassa a consent_log AKTUÁLIS állapotát akkor is, ha az
+  // eventnek nincs lead_id-ja (2026-10-18 review R1). CookieYes-site-on hiányzik.
+  consent_id?: string;
   event_payload: Record<string, unknown>;
   hashed_user_data?: Record<string, unknown>;
   failure_reason: string;
