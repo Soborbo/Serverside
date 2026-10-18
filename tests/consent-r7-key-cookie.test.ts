@@ -336,3 +336,25 @@ describe('R7 — „később érkezett" a beszúrási sorrend, nem az időbélye
     expect((await stateOf(env))?.decision).toBe('withdrawn');
   });
 });
+
+describe('R7 — revision-felpumpálás nem fedheti el a visszavonást (független utóellenőrzés)', () => {
+  it('régi lánc: a támadó a változatlan engedélyt magas revisionre tolja, a tulajdonos visszavonása mégis érvényes', async () => {
+    const db = freshDb();
+    seedLegacyChain(db);
+    const env = makeEnv(db);
+    for (const rev of [21, 41, 61]) {
+      expect((await handleConsent(post(decision({ revision: rev }), ATTACKER_KEY), env)).status).toBe(204);
+    }
+    expect((await handleConsent(post(decision({ ...WITHDRAW, revision: 2 })), env)).status).toBe(204);
+    expect((await stateOf(env))?.decision).toBe('withdrawn');
+  });
+
+  it('védett lánc: ugyanez a kulcs elvesztése után', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    await handleConsent(post(decision()), env);
+    for (const rev of [21, 41]) await handleConsent(post(decision({ revision: rev }), ATTACKER_KEY), env);
+    expect((await handleConsent(post(decision({ ...WITHDRAW, revision: 2 })), env)).status).toBe(204);
+    expect((await stateOf(env))?.decision).toBe('withdrawn');
+  });
+});

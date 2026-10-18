@@ -804,7 +804,7 @@ export async function readConsentState(
 ): Promise<ConsentStateRead> {
   if (!env.LEDGER) return { kind: 'missing' };
   // Három jelölt (review R7, aszimmetrikus szabály):
-  //  latest   — a legmagasabb revision (régi / kulcs nélküli láncok: ez dönt);
+  //  latest   — a legmagasabb revision (régi / kulcs nélküli láncok alapja);
   //  verified — a legmagasabb revisionű IGAZOLT sor (védett lánc alapállapota);
   //  unverif  — a legutóbb BEÉRKEZETT igazolatlan sor (szigorítás a védett láncon).
   const cols = `consent_id, revision, decision, cat_analytics, cat_marketing,
@@ -835,15 +835,14 @@ export async function readConsentState(
     if (!latest) return { kind: 'missing' };
     const verified = by.get('verified');
     const unverified = by.get('unverified');
-    let row: ConsentRow = latest;
-    if (verified) {
-      row =
-        unverified &&
-        unverified.seq > verified.seq &&
-        narrowsOrKeeps(unverified, verified)
-          ? unverified
-          : verified;
-    }
+    // Az alap: védett láncon a legmagasabb revisionű IGAZOLT sor, régi láncon a
+    // legmagasabb revisionű sor. Egy UTÁNA beérkezett igazolatlan szigorítás
+    // MINDKÉT esetben felülírja — különben egy azonosítót ismerő harmadik fél a
+    // változatlan engedélyt magas revisionre tolva elfedhetné a tulajdonos
+    // későbbi (alacsonyabb revisionű) visszavonását.
+    const baseRow = verified ?? latest;
+    const row: ConsentRow =
+      unverified && unverified.seq > baseRow.seq && narrowsOrKeeps(unverified, baseRow) ? unverified : baseRow;
     return { kind: 'found', state: toConsentState(row) };
   } catch (err) {
     ledgerError('getConsentState', err, { site_id: siteId });
