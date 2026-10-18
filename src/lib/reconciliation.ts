@@ -26,6 +26,30 @@ export interface PlatformCounts {
   accepted: number;
   rejected: number;
   skipped: number;
+  /**
+   * Eseményazonosság-alapú lefedettség (2026-10-18 review R4) — CSAK a
+   * coverage-platformokon (Meta). Ha jelen van, a coverage EZ alapján számol, nem
+   * a fenti kézbesítési SOR-számokból. Lásd `MetaCoverageRow`.
+   */
+  coverage?: EventCoverage;
+}
+
+/**
+ * Az ablak ad-jogosult eventjei EGYEDI event_id szerint. Egy event egyszer
+ * számít, akárhány fan-out/retry sora van — így az ismételt kézbesítés nem
+ * tolhatja 100% fölé a lefedettséget.
+ */
+export interface EventCoverage {
+  /** Egyedi ad-jogosult event (events_raw ad_allowed=1). */
+  eligible: number;
+  /** Ebből legalább egy 'accepted' kézbesítéssel (fanout vagy retry). */
+  delivered: number;
+  /**
+   * Ebből szándékos POLICY-skippel (pl. not_expected, consent) maradt ki, és
+   * accepted sora nincs. A config-hiba (not_configured / invalid_identifier) NEM
+   * ilyen: az elvárt, de hibásan konfigurált láb kiesése nem tűnhet el az alapból.
+   */
+  excused: number;
 }
 
 export interface SiteReconInput {
@@ -161,18 +185,27 @@ export function computeSiteDrift(
     // 2. Coverage drift — a jogosult eventek mekkora hányada ért el a platformra.
     // null → ezen a platformon nincs értelmes coverage-alap (forwarder/offline).
     //
-    // A SZÁNDÉKOS kihagyások (deliveries.status='skipped': nincs meta config a
-    // site-on, vagy consent-tiltás) NEM elvárt kézbesítések — kivonjuk őket az
-    // alapból. Enélkül egy szándékosan meta-nélküli site (lomtalan, amíg nincs
-    // CAPI token) minden nap hamis coverage_drift CRITICAL-t adna 0% lefedettségre
-    // — pont a Run 6 Fix 1 után, ami a korábbi hamis-'accepted' sorokat őszinte
-    // 'skipped'-re váltotta. A kivonás konzervatív: konfigurált site-on a skip
-    // ritka (consent-tiltás), így az érzékenység alig csökken; teljesen skip-elt
-    // lábon az alap 0 alá esne → clamp + a minSample-őr elnémítja.
+    // Az alap az ad-jogosult eventek EGYEDI halmaza (`coverage`), amiből CSAK a
+    // jogosult eventekre eső POLICY-skipek vonódnak le. Korábban az `ad_eligible`-
+    // ből MINDEN skipped SORT kivontunk — a nem jogosult eventek consent-skipjeit
+    // is, amiket az `ad_eligible` már eleve kizárt. Ugyanaz a kizárás kétszer
+    // csökkentette az alapot: 100 eventből 80 tiltott + 20 jogosult, 0 kézbesítés
+    // mellett az alap 20−80 → 0 lett, és a TELJES kiesés néma maradt (2026-10-18
+    // review R4). `coverage` nélkül (régi hívó) az alap a nyers `ad_eligible`.
     const expectedRaw = coverageExpectedFor(p.platform, input);
-    const expected = expectedRaw === null ? null : Math.max(0, expectedRaw - p.skipped);
+    let expected: number | null = null;
+    let delivered = p.accepted;
+    if (expectedRaw !== null) {
+      if (p.coverage) {
+        delivered = p.coverage.delivered;
+        expected = Math.max(delivered, p.coverage.eligible - p.coverage.excused);
+      } else {
+        expected = expectedRaw;
+        delivered = Math.min(p.accepted, expectedRaw);
+      }
+    }
     if (expected !== null && expected >= t.minSample) {
-      const coverage = p.accepted / expected;
+      const coverage = delivered / expected;
       const shortfall = 1 - coverage;
       if (shortfall >= t.coverageShortfallCrit) {
         findings.push({
@@ -241,6 +274,8 @@ const OFFLINE_SKIP_COUNTS_AS_LOSS: Record<SkipReason, boolean> = {
   not_expected: false,
   eea_rule: false,
   dedup: false,
+  // Üzleti tény, nem csővezeték-hiba: a konverzió kifutott a Google ablakából.
+  conversion_window_expired: false,
   // ── HIBA: a konverzió emiatt NEM ért célba ───────────────────────────────
   not_configured: true,
   invalid_identifier: true,
@@ -512,6 +547,13 @@ export interface LeadCountRow {
   site_id: string;
   total: number;
 }
+/** Meta-lefedettség site-onként, egyedi event_id szerint (lásd `EventCoverage`). */
+export interface MetaCoverageRow {
+  site_id: string;
+  eligible: number;
+  delivered: number;
+  excused: number;
+}
 
 // ── P1.1 offline-láb sorok ────────────────────────────────────────────────────
 /** lead_status beérkezés site × event_name bontásban (az ELVÁRT alap). */
@@ -644,8 +686,10 @@ export function assembleReconInputs(
   eventRows: EventCountRow[],
   deliveryRows: DeliveryCountRow[],
   leadRows: LeadCountRow[],
-  offlineLegs: Map<string, OfflineLegInput[]> = new Map()
+  offlineLegs: Map<string, OfflineLegInput[]> = new Map(),
+  metaCoverageRows: MetaCoverageRow[] = []
 ): SiteReconInput[] {
+  const coverageBySite = new Map(metaCoverageRows.map((r) => [r.site_id, r]));
   const byDelivery = new Map<string, Map<string, DeliveryCountRow>>();
   for (const d of deliveryRows) {
     if (!byDelivery.has(d.site_id)) byDelivery.set(d.site_id, new Map());
@@ -658,12 +702,15 @@ export function assembleReconInputs(
     const dmap = byDelivery.get(e.site_id);
     const platforms: PlatformCounts[] = PLATFORMS.map((platform) => {
       const row = dmap?.get(platform);
-      return {
+      const counts: PlatformCounts = {
         platform,
         accepted: row?.accepted ?? 0,
         rejected: row?.rejected ?? 0,
         skipped: row?.skipped ?? 0
       };
+      const cov = platform === 'meta' ? coverageBySite.get(e.site_id) : undefined;
+      if (cov) counts.coverage = { eligible: cov.eligible, delivered: cov.delivered, excused: cov.excused };
+      return counts;
     });
     return {
       site_id: e.site_id,
@@ -747,6 +794,66 @@ const NOT_SYNTHETIC_DELIVERY = notSyntheticSql('event_id');
 const OFFLINE_ABSOLUTE_WINDOW_DAYS = 7;
 
 /**
+ * Az offline Google-láb kézbesítései EGYEDI eseményenként, a VÉGSŐ állapot
+ * szerint (2026-10-18 review R5).
+ *
+ * Korábban csak `origin='offline'` sorokat számoltunk: a DLQ-ból visszanyert
+ * feltöltés (`origin='retry'`) láthatatlan maradt — sikeres helyreállás mellett
+ * is accepted=0 és hamis kiesés-riasztás. Most mindkét origin számít, de
+ * eseményenként (event_id = a determinisztikus orderId) EGYSZER:
+ *  - accepted: volt legalább egy elfogadott kísérlete (offline vagy retry);
+ *  - rejected: elutasították, és SOHA nem fogadták el;
+ *  - skipped: se accepted, se rejected — a skip oka szerint csoportosítva.
+ * Így egy bukott első küldés + sikeres retry EGY elfogadott esemény, és a
+ * többszöri retry sem számol többszörös konverziót.
+ */
+const OFFLINE_FINAL_STATE_SQL = `WITH ev AS (
+           SELECT site_id, event_name, event_id,
+                  MAX(status = 'accepted') AS acc,
+                  MAX(status = 'rejected') AS rej,
+                  MAX(status = 'skipped') AS skp,
+                  MAX(CASE WHEN status = 'skipped' THEN skip_reason END) AS reason
+           FROM deliveries
+           WHERE created_at >= ?1 AND origin IN ('offline', 'retry') AND platform = 'gads'
+             AND ${NOT_SYNTHETIC_DELIVERY}
+           GROUP BY site_id, event_name, event_id
+         )
+         SELECT site_id, event_name,
+                CASE WHEN acc = 1 OR rej = 1 THEN NULL ELSE reason END AS skip_reason,
+                COALESCE(SUM(acc), 0) AS accepted,
+                COALESCE(SUM(acc = 0 AND rej = 1), 0) AS rejected,
+                COALESCE(SUM(acc = 0 AND rej = 0 AND skp = 1), 0) AS skipped
+         FROM ev
+         GROUP BY site_id, event_name, CASE WHEN acc = 1 OR rej = 1 THEN NULL ELSE reason END`;
+
+/** Policy-skipek (nem veszteség) — a Meta-lefedettség `excused` halmazához. */
+const POLICY_SKIP_SQL_LIST = SKIP_REASONS.filter((r) => !OFFLINE_SKIP_COUNTS_AS_LOSS[r])
+  .map((r) => `'${r}'`)
+  .join(', ');
+
+/**
+ * Meta-lefedettség egyedi event_id szerint (R4). Az alap az ablak ad-jogosult
+ * eventjei; a kézbesítés bármely fanout/retry sora (a retry az ablak után is
+ * íródhat). `excused` = jogosult event, aminek CSAK policy-skipje van.
+ */
+const META_COVERAGE_SQL = `SELECT e.site_id,
+            COUNT(DISTINCT e.event_id) AS eligible,
+            COUNT(DISTINCT CASE WHEN d.status = 'accepted' THEN e.event_id END) AS delivered,
+            COUNT(DISTINCT CASE WHEN d.status = 'skipped' AND d.skip_reason IN (${POLICY_SKIP_SQL_LIST})
+                                     AND NOT EXISTS (
+                                       SELECT 1 FROM deliveries a
+                                        WHERE a.site_id = e.site_id AND a.event_id = e.event_id
+                                          AND a.platform = 'meta' AND a.status = 'accepted'
+                                          AND a.origin IN ('fanout', 'retry'))
+                                THEN e.event_id END) AS excused
+         FROM events_raw e
+         LEFT JOIN deliveries d
+           ON d.site_id = e.site_id AND d.event_id = e.event_id
+          AND d.platform = 'meta' AND d.origin IN ('fanout', 'retry')
+         WHERE e.received_at >= ?1 AND e.ad_allowed = 1
+         GROUP BY e.site_id`;
+
+/**
  * Előfeltétel-feloldó a `blocked_by`-hoz: config (KV) + OAuth-token (KV) állapot.
  * Site-onként EGYSZER olvas configot és tokent, nem lábanként.
  */
@@ -824,25 +931,13 @@ async function fetchOfflineLegs(
       .all<OfflineReceivedRow>(),
     ledger
       .prepare(
-        `SELECT site_id, event_name, skip_reason,
-            COALESCE(SUM(status = 'accepted'), 0) AS accepted,
-            COALESCE(SUM(status = 'rejected'), 0) AS rejected,
-            COALESCE(SUM(status = 'skipped'),  0) AS skipped
-         FROM deliveries
-         WHERE created_at >= ?1 AND origin = 'offline' AND platform = 'gads' AND ${NOT_SYNTHETIC_DELIVERY}
-         GROUP BY site_id, event_name, skip_reason`
+`${OFFLINE_FINAL_STATE_SQL}`
       )
       .bind(sinceIso)
       .all<OfflineDeliveryRow>(),
     ledger
       .prepare(
-        `SELECT site_id, event_name, skip_reason,
-            COALESCE(SUM(status = 'accepted'), 0) AS accepted,
-            COALESCE(SUM(status = 'rejected'), 0) AS rejected,
-            COALESCE(SUM(status = 'skipped'),  0) AS skipped
-         FROM deliveries
-         WHERE created_at >= ?1 AND origin = 'offline' AND platform = 'gads' AND ${NOT_SYNTHETIC_DELIVERY}
-         GROUP BY site_id, event_name, skip_reason`
+`${OFFLINE_FINAL_STATE_SQL}`
       )
       .bind(since7d)
       .all<OfflineDeliveryRow>(),
@@ -853,7 +948,7 @@ async function fetchOfflineLegs(
       .prepare(
         `SELECT site_id, event_name, MAX(created_at) AS last_accepted_at
          FROM deliveries
-         WHERE origin = 'offline' AND platform = 'gads' AND status = 'accepted'
+         WHERE origin IN ('offline', 'retry') AND platform = 'gads' AND status = 'accepted'
            AND http_status IS NOT NULL AND ${NOT_SYNTHETIC_DELIVERY}
          GROUP BY site_id, event_name`
       )
@@ -909,7 +1004,7 @@ export async function fetchReconInputs(
 ): Promise<SiteReconInput[] | null> {
   if (!env.LEDGER) return null;
   try {
-    const [events, deliveries, leads] = await Promise.all([
+    const [events, deliveries, leads, metaCoverage] = await Promise.all([
       env.LEDGER.prepare(
         `SELECT site_id, COUNT(*) AS total, COALESCE(SUM(ad_allowed), 0) AS ad_eligible
          FROM events_raw WHERE received_at >= ?1 GROUP BY site_id`
@@ -931,7 +1026,8 @@ export async function fetchReconInputs(
          FROM lead_status WHERE created_at >= ?1 GROUP BY site_id`
       )
         .bind(sinceIso)
-        .all<LeadCountRow>()
+        .all<LeadCountRow>(),
+      env.LEDGER.prepare(META_COVERAGE_SQL).bind(sinceIso).all<MetaCoverageRow>()
     ]);
     // P1.1 — az offline láb SAJÁT lekérdezései. Külön try-blokk NÉLKÜL: ha ezek
     // elbuknak, a teljes recon `null`-t ad (már logolva), és a cron nem dől el —
@@ -944,7 +1040,8 @@ export async function fetchReconInputs(
         events.results ?? [],
         deliveries.results ?? [],
         leads.results ?? [],
-        offlineLegs
+        offlineLegs,
+        metaCoverage.results ?? []
       ),
       offlineLegs
     );

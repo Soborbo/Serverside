@@ -1,0 +1,16 @@
+-- 0011 — a consent-lánc TULAJDONLÁSI bizonyítéka (2026-10-18 review R7).
+--
+-- ── MIÉRT ───────────────────────────────────────────────────────────────────
+-- A `POST /api/consent` eddig csak azt nézte, hogy a body `consent_id`-je
+-- egyezik-e a kérés `sbo_consent` sütijével. Mindkettőt a KÉRÉS KÜLDŐJE
+-- választja: egy ismert consent_id mellé kézzel gyártott süti elég volt egy
+-- hamis `withdrawn` döntéshez (akár revision=10000-rel, ami a későbbi jogos
+-- döntéseket is háttérbe szorította).
+--
+-- ── A BIZONYÍTÉK ────────────────────────────────────────────────────────────
+-- A kliens a lánc indulásakor véletlen titkot (`consent_key`) generál, és
+-- minden döntéssel elküldi. A szerver CSAK a SHA-256 hash-ét tárolja itt. Ha egy
+-- láncnak van key_hash-e, további döntés csak a hozzá illő kulccsal írható — a
+-- consent_id ismerete már nem elég. A régi (kulcs nélküli) láncok az első
+-- kulcsos döntéskor kapnak hash-t; addig a süti-egyezés szabálya érvényes.
+ALTER TABLE consent_log ADD COLUMN key_hash TEXT;

@@ -10,6 +10,16 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.11.0 (2026-10-18)
+
+### Biztonság — a consent-lánc tulajdonlási kulcsa (review R7)
+
+A kliens a consent-lánc indulásakor véletlen titkot generál (`localStorage` `sbo_consent_key`, a `consent_id`-hez kötve), és minden döntéssel elküldi (`consent_key`). A gateway csak a SHA-256 hash-ét tárolja (`consent_log.key_hash`, 0011 migráció), és a védett láncra kulcs nélkül nem fogad el döntést (403 `consent_key_mismatch`) — egy `consent_id` ismerete és egy hamisított süti már nem elég egy hamis visszavonáshoz. A revision a lánc ismert maximumánál legfeljebb 20-szal lehet nagyobb (400 `revision_out_of_range`). A 6.11 előtti láncok az első kulcsos döntéskor válnak védetté.
+
+**Ismert korlát:** ha egy látogató a `localStorage`-t törli, de az `sbo_consent` sütit nem, a védett lánc további döntéseit a gateway elutasítja (a kliens hangosan jelzi, TRK-4002); a döntés a böngészőben ettől még érvényes.
+
+**Deploy-sorrend:** előbb a 0011 migráció, aztán a worker, végül a site-ok csomagja.
+
 ## 6.10.0 (2026-10-18)
 
 A 2026-10-18-i kód-review P1-es, hozzájárulást érintő hibáinak javítása (R3, R9, R10). A worker-oldali párjuk (R1, R2: a replay-kapu) ugyanebben a változásban él.

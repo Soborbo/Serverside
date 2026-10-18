@@ -8,14 +8,14 @@
 > vele" tudás van, amit generálni nem lehet. Ez a tábla a TELJESSÉGET garantálja —
 > azt, hogy egyetlen kód se maradjon dokumentálatlanul.
 
-**Kódok száma:** 154
+**Kódok száma:** 155
 
 | Retryability | Kódok | Jelentés |
 |---|---|---|
 | `RETRYABLE` | 48 | átmeneti — egy későbbi próbálkozás sikerülhet |
 | `OPERATOR_ACTION` | 47 | emberi beavatkozás kell |
 | `TERMINAL` | 25 | végleges — ugyanez a payload sosem megy át |
-| `CONFIG_BLOCKED` | 21 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
+| `CONFIG_BLOCKED` | 22 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
 | `POLICY_SKIP` | 9 | szándékos kihagyás vagy informatív jel — nincs mit újrapróbálni |
 | `UNKNOWN` | 4 | az eredmény ismeretlen — nem „valószínűleg jó" |
 
@@ -122,10 +122,11 @@
 | `TRK-850-015` | `GTM_CONFORMANCE_UNAVAILABLE` | gtm-conformance | critical | `RETRYABLE` | `lib/gtm-conformance.ts` | Something went wrong on our side. Your request was not affected. | The GTM conformance check could not read the live container — this is DEGRADED, not zero findings | `gtm-conformance.test.ts` |
 | `TRK-810-001` | `MSADS_DISPATCH_FAILED` | microsoft-ads | warning | `RETRYABLE` | *alvó* | Something went wrong on our side. Your request was not affected. | Microsoft Ads offline conversion upload failed | *alvó* |
 | `TRK-810-002` | `MSADS_API_TIMEOUT` | microsoft-ads | warning | `RETRYABLE` | *alvó* | Something went wrong on our side. Your request was not affected. | Microsoft Ads API call exceeded timeout | *alvó* |
-| `TRK-820-001` | `TIKTOK_DISPATCH_FAILED` | tiktok | warning | `RETRYABLE` | `lib/tiktok.ts` | Something went wrong on our side. Your request was not affected. | TikTok Events API call failed | `forwarders.test.ts` |
+| `TRK-820-001` | `TIKTOK_DISPATCH_FAILED` | tiktok | warning | `RETRYABLE` | `lib/tiktok.ts` | Something went wrong on our side. Your request was not affected. | TikTok Events API call failed | `forwarder-response-and-version.test.ts`, `forwarders.test.ts` |
 | `TRK-820-002` | `TIKTOK_API_TIMEOUT` | tiktok | warning | `RETRYABLE` | `lib/tiktok.ts` | Something went wrong on our side. Your request was not affected. | TikTok Events API call exceeded timeout | — |
 | `TRK-830-001` | `LINKEDIN_DISPATCH_FAILED` | linkedin | warning | `RETRYABLE` | `lib/linkedin.ts` | Something went wrong on our side. Your request was not affected. | LinkedIn Conversions API call failed | `forwarders.test.ts` |
 | `TRK-830-002` | `LINKEDIN_API_TIMEOUT` | linkedin | warning | `RETRYABLE` | `lib/linkedin.ts` | Something went wrong on our side. Your request was not affected. | LinkedIn Conversions API call exceeded timeout | — |
+| `TRK-830-003` | `LINKEDIN_API_VERSION_UNSUPPORTED` | linkedin | warning | `CONFIG_BLOCKED` | `lib/linkedin.ts` | Something went wrong on our side. Your request was not affected. | LinkedIn-Version header is expired, about to expire (<2 months) or malformed — bump DEFAULT_VERSION / the site api_version | `forwarder-response-and-version.test.ts` |
 | `TRK-900-001` | `DLQ_WRITE_FAILED` | dlq-retry | critical | `RETRYABLE` | `lib/deadletter.ts`, `scheduled/retry.ts` | Something went wrong on our side. Your request was not affected. | Failed to write event to R2 dead letter queue | — |
 | `TRK-900-002` | `DLQ_LIST_FAILED` | dlq-retry | warning | `RETRYABLE` | `routes/admin.ts`, `scheduled/retry.ts` +1 | Something went wrong on our side. Your request was not affected. | Failed to list pending DLQ records | — |
 | `TRK-900-003` | `DLQ_DELETE_FAILED` | dlq-retry | warning | `RETRYABLE` | `lib/deadletter.ts` | Something went wrong on our side. Your request was not affected. | Failed to delete DLQ record after successful retry | — |

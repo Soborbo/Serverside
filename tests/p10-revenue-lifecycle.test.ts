@@ -29,7 +29,7 @@ vi.mock('../src/lib/datamanager', () => ({
   }
 }));
 
-import { handleLeadStatus, resolveConversionTimeIso, OFFLINE_WINDOW_DAYS, validateLeadStatusBody } from '../src/routes/lead-status';
+import { handleLeadStatus, assessUploadWindow, OFFLINE_WINDOW_DAYS, validateLeadStatusBody } from '../src/routes/lead-status';
 import { REPEATABLE_LEAD_STATUSES, ADJUSTMENT_LEAD_STATUSES, VALID_LEAD_STATUSES } from '../src/lib/ledger';
 import { TrackingErrorCode } from '../src/lib/error-codes';
 import { sha256Hex } from '../src/lib/hash';
@@ -141,45 +141,66 @@ describe('§5.2 — a részfizetés saját jelet küld, és nem olvad össze', (
   });
 });
 
-// ── §5.4 · melyik időpont legyen a konverzió ideje ───────────────────────────
+// ── §5.4 · a konverzió ideje és a feltöltési ablak (2026-10-18 review R8) ─────
+//
+// A korábbi szabály (90 nap felett a `won_at`-ra visszadátumozni) megszűnt: a
+// platform a VALÓDI időpontot kapja, a viszonyítási pont a kattintás (`click_at`)
+// vagy a lead első ismert eseménye, és a kifutott esemény kifejezett
+// `conversion_window_expired` skipet kap — az üzleti bevétel megmarad.
 
-describe('§5.4 — ablakon belül a fizetés ideje, azon túl a won_at', () => {
-  const won = '2026-01-01T00:00:00.000Z';
+describe('§5.4 — valódi eseményidő, kattintás-alapú ablak, nincs visszadátumozás', () => {
+  const click = '2026-07-01T10:00:00.000Z';
   const dayMs = 86_400_000;
-  const plus = (days: number) => new Date(Date.parse(won) + days * dayMs).toISOString();
+  const plus = (days: number) => new Date(Date.parse(click) + days * dayMs).toISOString();
 
-  it('won_at nélkül a fizetés ideje marad', () => {
-    expect(resolveConversionTimeIso(plus(400))).toBe(plus(400));
+  it('ismert kattintás, ablakon belül → within', () => {
+    expect(assessUploadWindow(plus(OFFLINE_WINDOW_DAYS), { clickAtIso: click })).toMatchObject({
+      status: 'within', reference: 'click_at'
+    });
   });
 
-  it('az ablakon BELÜL a fizetés ideje marad', () => {
-    expect(resolveConversionTimeIso(plus(OFFLINE_WINDOW_DAYS - 1), won)).toBe(plus(OFFLINE_WINDOW_DAYS - 1));
+  it('július 1-i kattintás, október 1-i nyerés, október 18-i fizetés → expired (109 nap)', () => {
+    expect(assessUploadWindow('2026-10-18T10:00:00.000Z', { clickAtIso: click })).toEqual({
+      status: 'expired', reference: 'click_at', age_days: 109
+    });
   });
 
-  it('pontosan az ablak határán MÉG a fizetés ideje marad', () => {
-    expect(resolveConversionTimeIso(plus(OFFLINE_WINDOW_DAYS), won)).toBe(plus(OFFLINE_WINDOW_DAYS));
+  it('kattintás nélkül a lead első eseménye az alsó becslés', () => {
+    expect(assessUploadWindow(plus(120), { leadFirstSeenIso: click })).toMatchObject({
+      status: 'expired', reference: 'lead_first_seen'
+    });
   });
 
-  it('az ablakon TÚL a won_at lesz a konverzió ideje', () => {
-    expect(resolveConversionTimeIso(plus(OFFLINE_WINDOW_DAYS + 1), won)).toBe(won);
+  it('semmilyen viszonyítási pont → unknown (feltöltünk, a Google dönt)', () => {
+    expect(assessUploadWindow(plus(400), {})).toEqual({ status: 'unknown', reference: null, age_days: null });
+    expect(assessUploadWindow(plus(400), { clickAtIso: 'nem-datum' }).status).toBe('unknown');
   });
 
-  it('értelmezhetetlen dátumra a fizetés ideje marad (nem dobunk el konverziót)', () => {
-    expect(resolveConversionTimeIso(plus(400), 'nem-datum')).toBe(plus(400));
-  });
-
-  it('a szabály a HANDLER-en át is érvényes: a kifutott fizetés a won_at-tal megy fel', async () => {
+  it('a handler a VALÓDI fizetési időt küldi, a won_at nem írja át', async () => {
+    const won = plus(0);
     await handleLeadStatus(
-      request({ status: 'payment_received', value: 900, occurrence_id: 'pay-late', occurred_at: plus(200), won_at: won }),
+      request({ status: 'payment_received', value: 900, occurrence_id: 'pay-1', occurred_at: plus(200), won_at: won }),
       makeEnv(),
       ctx()
     );
     expect(capturedPayloads).toHaveLength(1);
-    expect(capturedPayloads[0].event_time).toBe(Math.floor(Date.parse(won) / 1000));
+    expect(capturedPayloads[0].event_time).toBe(Math.floor(Date.parse(plus(200)) / 1000));
   });
 
-  it('a won_at érvénytelen alakja 400 — nem némán eldobva', () => {
+  it('kifutott kattintás → nincs feltöltés, upload_window_expired, de 200 (az üzleti esemény rögzítve)', async () => {
+    const res = await handleLeadStatus(
+      request({ status: 'payment_received', value: 900, occurrence_id: 'pay-late', occurred_at: '2026-10-18T10:00:00.000Z', click_at: click }),
+      makeEnv(),
+      ctx()
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, uploaded_to_gads: false, upload_window_expired: true });
+    expect(capturedPayloads).toHaveLength(0);
+  });
+
+  it('a won_at / click_at érvénytelen alakja 400 — nem némán eldobva', () => {
     expect(validateLeadStatusBody({ lead_id: LEAD, status: 'payment_received', won_at: 'tegnap' })).toBeNull();
+    expect(validateLeadStatusBody({ lead_id: LEAD, status: 'payment_received', click_at: 'tegnap' })).toBeNull();
   });
 });
 

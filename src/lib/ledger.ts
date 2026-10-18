@@ -681,8 +681,8 @@ export async function recordConsentDecision(
           consent_mode, policy_version, banner_version, consent_text_version, ruleset,
           lang, country, client_lib_version,
           cky_cookie_analytics, cky_cookie_marketing, cky_agreement,
-          client_decided_at, server_received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          client_decided_at, server_received_at, key_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -709,7 +709,8 @@ export async function recordConsentDecision(
         entry.cky_cookie_marketing ?? null,
         entry.cky_agreement ?? null,
         entry.client_decided_at,
-        new Date().toISOString()
+        new Date().toISOString(),
+        entry.key_hash ?? null
       )
       .run();
     return 'stored';
@@ -827,6 +828,35 @@ export async function readConsentState(
   } catch (err) {
     ledgerError('getConsentState', err, { site_id: siteId });
     return { kind: 'error' };
+  }
+}
+
+/**
+ * Egy consent-lánc írási jogosultságának állapota (review R7): a legmagasabb
+ * eddigi revision és a lánc tulajdonlási hash-e (a LEGELSŐ tárolt, hogy egy
+ * később becsempészett hash ne írhassa felül). `null` = D1-hiba.
+ */
+export async function readConsentChainAuth(
+  env: Env,
+  siteId: string,
+  consentId: string
+): Promise<{ max_revision: number | null; key_hash: string | null } | null> {
+  if (!env.LEDGER) return { max_revision: null, key_hash: null };
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT MAX(revision) AS max_revision,
+              (SELECT key_hash FROM consent_log
+                WHERE site_id = ?1 AND consent_id = ?2 AND key_hash IS NOT NULL
+                ORDER BY server_received_at ASC, revision ASC LIMIT 1) AS key_hash
+         FROM consent_log
+        WHERE site_id = ?1 AND consent_id = ?2`
+    )
+      .bind(siteId, consentId)
+      .first<{ max_revision: number | null; key_hash: string | null }>();
+    return { max_revision: row?.max_revision ?? null, key_hash: row?.key_hash ?? null };
+  } catch (err) {
+    ledgerError('readConsentChainAuth', err, { site_id: siteId });
+    return null;
   }
 }
 
@@ -1071,6 +1101,31 @@ export async function readLatestConsentForLead(
   } catch (err) {
     ledgerError('getLatestConsentForLead', err, { site_id: siteId });
     return { kind: 'error' };
+  }
+}
+
+/**
+ * A lead legkorábbi ismert eseménye (events_raw) — a hirdetési kattintás UTÁNI
+ * alsó becslés az offline-ablakhoz (lead-status assessUploadWindow, review R8).
+ * null = nincs ilyen esemény, VAGY D1-hiba: a hívó ilyenkor 'unknown' ablakkal
+ * feltölt (a Google dönt) — egy olvasási hiba nem dobhat el konverziót.
+ */
+export async function getLeadFirstSeenAt(
+  env: Env,
+  siteId: string,
+  leadId: string
+): Promise<string | null> {
+  if (!env.LEDGER) return null;
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT MIN(received_at) AS first_seen FROM events_raw WHERE site_id = ? AND lead_id = ?`
+    )
+      .bind(siteId, leadId)
+      .first<{ first_seen: string | null }>();
+    return row?.first_seen ?? null;
+  } catch (err) {
+    ledgerError('getLeadFirstSeenAt', err, { site_id: siteId });
+    return null;
   }
 }
 

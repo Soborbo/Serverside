@@ -207,6 +207,8 @@ export enum TrackingErrorCode {
   TIKTOK_API_TIMEOUT = 'TRK-820-002',
   LINKEDIN_DISPATCH_FAILED = 'TRK-830-001',
   LINKEDIN_API_TIMEOUT = 'TRK-830-002',
+  /** A használt LinkedIn-Version lejárt / 2 hónapon belül lejár / érvénytelen alakú. */
+  LINKEDIN_API_VERSION_UNSUPPORTED = 'TRK-830-003',
 
   DLQ_WRITE_FAILED = 'TRK-900-001',
   DLQ_LIST_FAILED = 'TRK-900-002',
@@ -529,6 +531,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.TIKTOK_API_TIMEOUT]: 'TikTok Events API call exceeded timeout',
   [TrackingErrorCode.LINKEDIN_DISPATCH_FAILED]: 'LinkedIn Conversions API call failed',
   [TrackingErrorCode.LINKEDIN_API_TIMEOUT]: 'LinkedIn Conversions API call exceeded timeout',
+  [TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED]:
+    'LinkedIn-Version header is expired, about to expire (<2 months) or malformed — bump DEFAULT_VERSION / the site api_version',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'Failed to write event to R2 dead letter queue',
   [TrackingErrorCode.DLQ_LIST_FAILED]: 'Failed to list pending DLQ records',
   [TrackingErrorCode.DLQ_DELETE_FAILED]: 'Failed to delete DLQ record after successful retry',
@@ -686,6 +690,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.TIKTOK_API_TIMEOUT]: 'warning',
   [TrackingErrorCode.LINKEDIN_DISPATCH_FAILED]: 'warning',
   [TrackingErrorCode.LINKEDIN_API_TIMEOUT]: 'warning',
+  [TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED]: 'warning',
   [TrackingErrorCode.MAX_RETRIES_EXCEEDED]: 'warning',
   [TrackingErrorCode.NO_SITE_CONFIG]: 'warning',
   [TrackingErrorCode.MISSING_CONVERSION_ACTION]: 'warning',
@@ -938,6 +943,7 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.TIKTOK_API_TIMEOUT]: 'RETRYABLE',
   [TrackingErrorCode.LINKEDIN_DISPATCH_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.LINKEDIN_API_TIMEOUT]: 'RETRYABLE',
+  [TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED]: 'CONFIG_BLOCKED',
 
   // 840 — Google Data Manager (a jelenlegi Google money-path).
   [TrackingErrorCode.DATAMANAGER_API_TIMEOUT]: 'RETRYABLE',

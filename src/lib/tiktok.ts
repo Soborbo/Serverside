@@ -124,10 +124,29 @@ export async function sendToTikTok(
     });
     clearTimeout(timeoutId);
 
-    const json = (await response.json().catch(() => ({}))) as { code?: number; message?: string };
-    // TikTok: code === 0 → success.
-    if (!response.ok || (json.code !== undefined && json.code !== 0)) {
-      const msg = sanitizeErrorMessage(json.message);
+    // TikTok: CSAK érvényes JSON + `code === 0` a siker. Korábban a JSON-hiba
+    // üres objektummá vált, és a hiányzó `code` nem számított hibának — egy
+    // HTTP 200 + HTML (proxy-/hibaoldal) sikerként könyvelődött, retry nélkül
+    // (2026-10-18 review R6). Az ismeretlen válasz bukás: a retry biztonságos,
+    // mert a TikTok az event_id-n dedup-ol.
+    const text = await response.text().catch(() => '');
+    type TikTokResponse = { code?: unknown; message?: unknown };
+    let json: TikTokResponse | null = null;
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) json = parsed as TikTokResponse;
+    } catch {
+      json = null;
+    }
+    const confirmed = response.ok && json !== null && json.code === 0;
+    if (!confirmed) {
+      const msg = sanitizeErrorMessage(
+        typeof json?.message === 'string'
+          ? json.message
+          : json === null
+            ? `unparseable TikTok response (HTTP ${response.status})`
+            : `TikTok response without success code (code=${String(json.code)})`
+      );
       logStructured({
         level: 'warn',
         error_code: TrackingErrorCode.TIKTOK_DISPATCH_FAILED,
@@ -135,7 +154,7 @@ export async function sendToTikTok(
         site_id: siteConfig.site_id,
         event_name: payload.event_name,
         status: response.status,
-        tiktok_code: json.code,
+        tiktok_code: typeof json?.code === 'number' ? json.code : undefined,
         tiktok_error: msg,
         duration_ms: Date.now() - startedAt
       });

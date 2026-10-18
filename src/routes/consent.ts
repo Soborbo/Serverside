@@ -8,7 +8,13 @@ import {
   parseConsentMetricPayload,
   isConsentProviderSbo
 } from '../lib/consent-log';
-import { recordConsentDecision, recordConsentMetric, getConsentState } from '../lib/ledger';
+import {
+  recordConsentDecision,
+  recordConsentMetric,
+  getConsentState,
+  readConsentChainAuth
+} from '../lib/ledger';
+import { sha256Hex } from '../lib/hash';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 
 /**
@@ -38,6 +44,14 @@ import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
  */
 
 const MAX_BODY_BYTES = 4 * 1024;
+
+/**
+ * Egy döntés legfeljebb ennyivel ugorhat a lánc eddigi legmagasabb revisionje
+ * fölé (új láncnál 0 fölé). A valódi kliens +1-et lép; a tartalék a 503 után
+ * függőben maradt, még be nem érkezett döntéseknek szól. Enélkül egy
+ * revision=10000-es sor minden későbbi jogos döntést háttérbe szorítana (R7).
+ */
+export const MAX_REVISION_STEP = 20;
 
 /** A 204-en visszaadott fejléc — a kliens ebből tudja, hogy TÉNYLEG tárolva van. */
 const RECEIVED_HEADER = { 'X-Consent-Received': '1' } as const;
@@ -276,7 +290,49 @@ async function handleDecision(
     return new Response(parsed.reason, { status: 400, headers: cors });
   }
 
-  const result = await recordConsentDecision(env, parsed.entry);
+  // ── TULAJDONLÁS + REVISION (2026-10-18 review R7) ─────────────────────────
+  // A fenti süti-egyezés önmagában nem bizonyít semmit: a süti is a küldő
+  // kezében van. A szerveroldali bizonyíték a lánc `key_hash`-e: ha van, csak a
+  // hozzá illő `consent_key` írhat. A revision ugrása a lánc ismert maximumához
+  // kötött. D1-hiba → 503 (a kliens megőrzi és újraküldi), NEM vakon elfogadás.
+  const auth = await readConsentChainAuth(env, siteId, parsed.entry.consent_id);
+  if (auth === null) {
+    return new Response('storage_unavailable', { status: 503, headers: cors });
+  }
+  const presentedHash = parsed.entry.consent_key
+    ? await sha256Hex(`${siteId}:${parsed.entry.consent_id}:${parsed.entry.consent_key}`)
+    : undefined;
+  if (auth.key_hash !== null && presentedHash !== auth.key_hash) {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.ORIGIN_NOT_ALLOWED,
+      message:
+        'Consent decision rejected — the chain is key-protected and the request does not carry its consent_key',
+      hostname,
+      site_id: siteId,
+      key_present: presentedHash !== undefined,
+      duration_ms: Date.now() - startedAt
+    });
+    return new Response('consent_key_mismatch', { status: 403, headers: cors });
+  }
+  if (parsed.entry.revision > (auth.max_revision ?? 0) + MAX_REVISION_STEP) {
+    logStructured({
+      level: 'warn',
+      message: 'Consent payload rejected',
+      hostname,
+      site_id: siteId,
+      reason: 'revision_out_of_range',
+      revision: parsed.entry.revision,
+      max_revision: auth.max_revision,
+      duration_ms: Date.now() - startedAt
+    });
+    return new Response('revision_out_of_range', { status: 400, headers: cors });
+  }
+  // A lánc hash-e ÁLLANDÓ: a már védett lánc a sajátját kapja, a régi (kulcs
+  // nélküli) lánc az első kulcsos döntéskor kap egyet. A nyers kulcs nem íródik.
+  const entry = { ...parsed.entry, consent_key: undefined, key_hash: auth.key_hash ?? presentedHash };
+
+  const result = await recordConsentDecision(env, entry);
 
   if (result === 'failed') {
     // 503, NEM 204. A kliens `receipt_synced=false`-t tart és újraküldi ugyanazt a

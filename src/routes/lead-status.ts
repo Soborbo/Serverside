@@ -24,6 +24,7 @@ import {
   ADJUSTMENT_LEAD_STATUSES,
   readLatestConsentForLead,
   readConsentState,
+  getLeadFirstSeenAt,
   markDoNotReplay,
   recordLeadStatus,
   recordDeliveries,
@@ -100,31 +101,69 @@ interface LeadStatusBody {
    * helyes értékkel. Hiánya nem hiba: akkor a fizetés ideje marad.
    */
   won_at?: string;
+  /**
+   * 2026-10-18 review R8 — a hirdetési KATTINTÁS (vagy első érintés) ideje, ha a
+   * CRM ismeri. Ez az offline-ablak valódi viszonyítási pontja; hiányában a lead
+   * első ismert eseménye (events_raw) az alsó becslés.
+   */
+  click_at?: string;
 }
 
 /**
- * P10 §5.4 — meddig fogadjuk el a fizetés saját dátumát konverzió-időpontnak.
- *
- * A Google offline feltöltésnek ablaka van a kattintástól számítva; egy hónapokkal
- * későbbi fizetés már nem köthető a kattintáshoz. A `won_at`-hoz mérünk, mert a
- * kattintás idejét a gateway nem ismeri — a megnyerés viszont mindig a kattintás
- * UTÁN van, tehát ez KONZERVATÍV becslés: ha a `won_at`-tól számítva még belefér,
- * a kattintástól számítva is belefért.
+ * A Google offline-feltöltés ablaka a KATTINTÁSTÓL számítva (napokban). Felső
+ * korlát: a Google a végső bíró (az ablakon belüli, de mégis elutasított
+ * feltöltés 'rejected' delivery-sorként látszik).
  */
 export const OFFLINE_WINDOW_DAYS = 90;
 
+export type UploadWindowStatus = 'within' | 'expired' | 'unknown';
+
+export interface UploadWindowAssessment {
+  status: UploadWindowStatus;
+  /** Mihez mértünk: a kattintáshoz (pontos) vagy a lead első eseményéhez (alsó becslés). */
+  reference: 'click_at' | 'lead_first_seen' | null;
+  age_days: number | null;
+}
+
 /**
- * Melyik időpont legyen a konverzió ideje. A user döntése (2026-09-09):
- * ablakon belül a fizetés ideje, azon túl a `won_at` — mert egy elveszett
- * konverzió rosszabb, mint egy pontatlan időbélyeg.
+ * Belefér-e a konverzió a feltöltési ablakba (pure). 2026-10-18 review R8.
+ *
+ * KORÁBBAN (P10 §5.4, 2026-09-09) a kód a fizetés és a `won_at` különbségéből
+ * következtetett, és 90 nap felett a VALÓDI eseményidőt `won_at`-ra cserélte. Ez
+ * két hibát hordozott: (1) a platform hamis időbélyeget kapott — egy október 18-i
+ * fizetés július 1-jére dátumozva; (2) a feltöltés jogosultságát mégsem
+ * biztosította, mert a kattintás kora ismeretlen maradt (július 1-i kattintás,
+ * október 1-i nyerés, október 18-i fizetés: a régi kód 17 napot látott, a
+ * kattintás 109 napos).
+ *
+ * MOST: az esemény ideje SOHA nem módosul. A viszonyítási pont a kattintás
+ * (`click_at`), ha a CRM ismeri — különben a lead első ismert eseménye, ami a
+ * kattintás UTÁN van, tehát ha AHHOZ képest is kifut, a kattintáshoz képest
+ * biztosan kifutott. Egyik sincs → 'unknown': feltöltünk, a Google dönt.
  */
-export function resolveConversionTimeIso(occurredAtIso: string, wonAtIso?: string): string {
-  if (!wonAtIso) return occurredAtIso;
+export function assessUploadWindow(
+  occurredAtIso: string,
+  refs: { clickAtIso?: string; leadFirstSeenIso?: string | null }
+): UploadWindowAssessment {
   const occurred = Date.parse(occurredAtIso);
-  const won = Date.parse(wonAtIso);
-  if (!Number.isFinite(occurred) || !Number.isFinite(won)) return occurredAtIso;
-  const days = (occurred - won) / 86_400_000;
-  return days > OFFLINE_WINDOW_DAYS ? wonAtIso : occurredAtIso;
+  const pick = (
+    iso: string | null | undefined,
+    reference: 'click_at' | 'lead_first_seen'
+  ): UploadWindowAssessment | null => {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t) || !Number.isFinite(occurred)) return null;
+    const age = (occurred - t) / 86_400_000;
+    return {
+      status: age > OFFLINE_WINDOW_DAYS ? 'expired' : 'within',
+      reference,
+      age_days: Math.floor(age)
+    };
+  };
+  return (
+    pick(refs.clickAtIso, 'click_at') ??
+    pick(refs.leadFirstSeenIso, 'lead_first_seen') ?? { status: 'unknown', reference: null, age_days: null }
+  );
 }
 
 export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null {
@@ -171,6 +210,9 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
   if (p.won_at !== undefined) {
     if (typeof p.won_at !== 'string' || Number.isNaN(Date.parse(p.won_at))) return null;
   }
+  if (p.click_at !== undefined) {
+    if (typeof p.click_at !== 'string' || Number.isNaN(Date.parse(p.click_at))) return null;
+  }
 
   // user_data_hashed: objektum, de NEM tömb (a mező-tartalmi hash-validáció a
   // handlerben, mapPrehashedUserData-val — az fail-loud hibás mezőnévvel).
@@ -203,6 +245,7 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
     ad_allowed: p.ad_allowed as boolean | undefined,
     occurrence_id: p.occurrence_id as string | undefined,
     won_at: typeof p.won_at === 'string' ? new Date(p.won_at).toISOString() : undefined,
+    click_at: typeof p.click_at === 'string' ? new Date(p.click_at).toISOString() : undefined,
     gclid: clickId(p.gclid),
     gbraid: clickId(p.gbraid),
     wbraid: clickId(p.wbraid)
@@ -430,12 +473,17 @@ export async function handleLeadStatus(
   }
 
   const occurredAtIso = body.occurred_at ?? new Date().toISOString();
-  // P10 §5.4: ablakon belül a fizetés ideje, azon túl a `won_at` — egy elveszett
-  // konverzió rosszabb, mint egy pontatlan időbélyeg. A ledger továbbra is a
-  // VALÓDI `occurred_at`-et őrzi (lásd lentebb): a helyesbítés a platformnak
-  // szól, nem a saját könyvelésünknek.
-  const conversionTimeIso = resolveConversionTimeIso(occurredAtIso, body.won_at);
-  const eventTimeSec = Math.floor(Date.parse(conversionTimeIso) / 1000);
+  // A konverzió ideje a VALÓDI üzleti időpont — nincs automatikus visszadátumozás
+  // (2026-10-18 review R8; a `won_at` csak informatív). Az ablakon kifutott
+  // esemény üzleti bevétel marad (lead_status), a hirdetési láb pedig kifejezett
+  // `conversion_window_expired` skipet kap.
+  const eventTimeSec = Math.floor(Date.parse(occurredAtIso) / 1000);
+  const uploadWindow = assessUploadWindow(occurredAtIso, {
+    clickAtIso: body.click_at,
+    leadFirstSeenIso: body.click_at
+      ? null
+      : await getLeadFirstSeenAt(env, siteConfig.site_id, body.lead_id)
+  });
 
   // GDPR-kapu, precedencia szerint (2026-07-17 consent-audit):
   //  1. A Worker SAJÁT consent-receiptje, ha EXPLICIT capture-kori jelet hordoz
@@ -514,6 +562,7 @@ export async function handleLeadStatus(
   const orderId = (await sha256Hex(orderIdSeed)).slice(0, 32);
 
   let uploadedToGads = false;
+  let windowExpired = false;
   let gadsErrorCode: string | undefined;
   let gadsRetryQueued = false;
   let deliveryNotDurable = false;
@@ -609,6 +658,32 @@ export async function handleLeadStatus(
           normalizeDelivery('gads', {
             status: 'fulfilled',
             value: { success: true, skipped: true, skip_reason: consentSkipReason }
+          })
+        ]
+      })
+    );
+  } else if (uploadWindow.status === 'expired' && siteConfig.gads?.customer_id) {
+    windowExpired = true;
+    logStructured({
+      level: 'info',
+      message: 'Offline conversion skipped — outside the Google upload window (kept as business revenue)',
+      site_id: siteConfig.site_id,
+      event_name: eventName,
+      window_reference: uploadWindow.reference,
+      age_days: uploadWindow.age_days,
+      window_days: OFFLINE_WINDOW_DAYS
+    });
+    ctx.waitUntil(
+      recordDeliveries(env, {
+        event_id: orderId,
+        lead_id: body.lead_id,
+        site_id: siteConfig.site_id,
+        event_name: eventName,
+        origin: 'offline',
+        records: [
+          normalizeDelivery('gads', {
+            status: 'fulfilled',
+            value: { success: true, skipped: true, skip_reason: 'conversion_window_expired' }
           })
         ]
       })
@@ -928,7 +1003,8 @@ export async function handleLeadStatus(
       ok: true,
       uploaded_to_gads: uploadedToGads,
       uploaded_to_ga4: false,
-      consent_blocked: consentBlocked
+      consent_blocked: consentBlocked,
+      ...(windowExpired ? { upload_window_expired: true } : {})
     },
     200
   );

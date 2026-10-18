@@ -23,7 +23,37 @@ import { sanitizeErrorMessage } from './log-sanitize';
 
 const LINKEDIN_URL = 'https://api.linkedin.com/rest/conversionEvents';
 const LINKEDIN_TIMEOUT_MS = 5000;
-const DEFAULT_VERSION = '202401';
+/**
+ * A LinkedIn `YYYYMM` verziói KB. 12 hónapig támogatottak. A korábbi '202401'
+ * 2025-01-22-én megszűnt, és minden config nélküli kapcsolat azzal indult
+ * (2026-10-18 review R11). 202609: a hivatalos verziózási oldal szerint a
+ * legfrissebb ellenőrzött verzió (2026-10-18); várható megszűnése 2027-09.
+ * Frissítsd, mielőtt `linkedInVersionStatus` 'expiring'-et jelez.
+ */
+export const DEFAULT_VERSION = '202609';
+/** A LinkedIn által vállalt minimális támogatási idő hónapokban. */
+const VERSION_SUPPORT_MONTHS = 12;
+/** Ennyi hónappal a megszűnés előtt kezdünk figyelmeztetni. */
+const VERSION_WARN_MONTHS_BEFORE = 2;
+
+/**
+ * Egy `YYYYMM` LinkedIn-verzió állapota adott időpontban (pure).
+ * 'invalid' = nem YYYYMM alak; 'expired' = a 12 hónapos támogatás letelt;
+ * 'expiring' = 2 hónapon belül lejár.
+ */
+export function linkedInVersionStatus(
+  version: string,
+  now: Date = new Date()
+): 'ok' | 'expiring' | 'expired' | 'invalid' {
+  const m = /^(\d{4})(0[1-9]|1[0-2])$/.exec(version);
+  if (!m) return 'invalid';
+  const released = Number(m[1]) * 12 + (Number(m[2]) - 1);
+  const current = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  const age = current - released;
+  if (age >= VERSION_SUPPORT_MONTHS) return 'expired';
+  if (age >= VERSION_SUPPORT_MONTHS - VERSION_WARN_MONTHS_BEFORE) return 'expiring';
+  return 'ok';
+}
 
 export interface LinkedInPayload {
   event_name: string;
@@ -80,6 +110,19 @@ export async function sendToLinkedIn(
     body.conversionValue = { currencyCode: payload.currency, amount: payload.value.toFixed(2) };
   }
 
+  const version = cfg.api_version || DEFAULT_VERSION;
+  const versionStatus = linkedInVersionStatus(version);
+  if (versionStatus !== 'ok') {
+    logStructured({
+      level: versionStatus === 'expiring' ? 'warn' : 'error',
+      error_code: TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED],
+      site_id: siteConfig.site_id,
+      api_version: version,
+      version_status: versionStatus
+    });
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), LINKEDIN_TIMEOUT_MS);
   const startedAt = Date.now();
@@ -89,7 +132,7 @@ export async function sendToLinkedIn(
       method: 'POST',
       headers: {
         Authorization: `Bearer ${cfg.access_token}`,
-        'LinkedIn-Version': cfg.api_version || DEFAULT_VERSION,
+        'LinkedIn-Version': version,
         'X-Restli-Protocol-Version': '2.0.0',
         'Content-Type': 'application/json'
       },

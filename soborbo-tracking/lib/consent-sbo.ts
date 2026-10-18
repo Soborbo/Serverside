@@ -41,6 +41,14 @@ import { purgeMarketingStorage, purgeAnalyticsStorage } from './persistence';
 const PENDING_KEY = 'sbo_consent_pending';
 /** Elszabadult kliens-ciklus ne növelhesse korlátlanul. */
 const PENDING_MAX = 10;
+/**
+ * A consent-lánc tulajdonlási titka (2026-10-18 review R7). A lánc indulásakor
+ * generált véletlen érték; minden döntéssel elmegy, a szerver CSAK a hash-ét
+ * tárolja, és a védett láncra kulcs nélkül nem fogad el döntést — így egy
+ * consent_id ismerete már nem elég egy hamis visszavonáshoz. Ugyanaz a
+ * MŰKÖDÉSHEZ SZÜKSÉGES jogalap, mint a pending sor: a döntés hitelességét védi.
+ */
+const CONSENT_KEY_STORAGE = 'sbo_consent_key';
 
 export interface SboDecisionInput {
   analytics: boolean;
@@ -71,6 +79,8 @@ export interface SboConsentWirePayload {
   cky_cookie_analytics?: boolean;
   cky_cookie_marketing?: boolean;
   client_decided_at: string;
+  /** A lánc tulajdonlási titka; hiányzik, ha a localStorage nem elérhető. */
+  consent_key?: string;
 }
 
 // ── CookieYes párhuzamos ablak (2.4) ────────────────────────────────────────
@@ -119,6 +129,29 @@ function writeSboConsentCookie(state: SboConsentState): void {
       `; path=/; max-age=${SBO_CONSENT_MAX_AGE_S}; SameSite=Lax${secure}`;
   } catch {
     /* a memóriában élő state ettől még érvényes az oldalletöltésre */
+  }
+}
+
+// ── Lánc-kulcs (R7) ─────────────────────────────────────────────────────────
+
+/**
+ * A `consentId` lánc titka. Ha nincs még (új lánc, vagy a 6.11 előtti lánc első
+ * döntése), most generáljuk és tároljuk — a szerver az első kulcsos döntéskor
+ * köti a lánchoz. localStorage nélkül undefined: a döntés kulcs nélkül megy
+ * (a lánc ilyenkor a régi, süti-egyezéses védelmen marad).
+ */
+function consentKeyFor(consentId: string): string | undefined {
+  try {
+    const raw = localStorage.getItem(CONSENT_KEY_STORAGE);
+    if (raw) {
+      const stored = JSON.parse(raw) as { consent_id?: unknown; key?: unknown };
+      if (stored.consent_id === consentId && typeof stored.key === 'string') return stored.key;
+    }
+    const key = (generateUUID() + generateUUID()).replace(/-/g, '');
+    localStorage.setItem(CONSENT_KEY_STORAGE, JSON.stringify({ consent_id: consentId, key }));
+    return key;
+  } catch {
+    return undefined;
   }
 }
 
@@ -273,6 +306,8 @@ export function applySboDecision(
     ...readCkyParallelWindow(),
     client_decided_at: new Date(state.decidedAtSec * 1000).toISOString()
   };
+  const consentKey = consentKeyFor(state.consentId);
+  if (consentKey) payload.consent_key = consentKey;
 
   // ELŐBB a pending, AZTÁN a POST: ha a Worker/tab a kettő között hal meg, a
   // döntés proof-ja megmarad, és a következő betöltés újraküldi. Fordítva a
