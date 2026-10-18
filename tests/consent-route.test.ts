@@ -94,7 +94,9 @@ function makeEnv(
             calls.push({ sql, binds });
             if (opts.d1Error) throw new Error('D1_ERROR: database is locked');
             return opts.firstRow ?? null;
-          }
+          },
+          // A lánc-utódok (R7 lánc-forgatás) lekérdezése — ebben a mockban nincs utód.
+          all: async () => ({ results: [] })
         })
       })
     }

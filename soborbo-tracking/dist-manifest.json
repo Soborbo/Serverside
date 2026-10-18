@@ -30,8 +30,8 @@
       "role": "browser"
     },
     "lib/consent-sbo.ts": {
-      "sha256": "9d84142bed2eaf0ee92e500586e3a4d501ace887e417495440cd7b3151218f74",
-      "bytes": 17519,
+      "sha256": "16ef65431e2701d619e3b82ae16798b7c581dd729ac27a92c2f1cd0c257f655c",
+      "bytes": 17868,
       "role": "browser"
     },
     "lib/consent-vendors.ts": {

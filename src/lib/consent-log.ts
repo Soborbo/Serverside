@@ -107,6 +107,11 @@ export interface ConsentLogEntry {
   cky_agreement?: 0 | 1;
   client_decided_at: string;
   /**
+   * Lánc-forgatásnál az ELŐZŐ lánc azonosítója (review R7): csak az új lánc első
+   * (kötő) döntésénél tárolódik, a consent_chain-ben. Lásd 0013 migráció.
+   */
+  previous_consent_id?: string;
+  /**
    * A lánc kulcsa igazolta-e a sort (a route tölti ki; review R7). A kulcs maga
    * NEM a payload része: a szerver adja ki HttpOnly sütiben (routes/consent.ts).
    */
@@ -259,6 +264,14 @@ export function parseConsentPayload(body: unknown, siteId: string): ConsentPaylo
     return { ok: false, reason: 'invalid_client_decided_at' };
   }
 
+  const previousId = str(p.previous_consent_id, MAX_ID_LEN);
+  if (
+    p.previous_consent_id !== undefined &&
+    (!previousId || !ID_RE.test(previousId) || previousId === consentId)
+  ) {
+    return { ok: false, reason: 'invalid_previous_consent_id' };
+  }
+
   const lang = str(p.lang, MAX_LANG_LEN);
   if (p.lang !== undefined && (!lang || !LANG_RE.test(lang))) {
     return { ok: false, reason: 'invalid_lang' };
@@ -310,7 +323,8 @@ export function parseConsentPayload(body: unknown, siteId: string): ConsentPaylo
       cky_cookie_analytics: ckyAnalytics,
       cky_cookie_marketing: ckyMarketing,
       cky_agreement: ckyAgreement,
-      client_decided_at: new Date(decidedAt).toISOString()
+      client_decided_at: new Date(decidedAt).toISOString(),
+      previous_consent_id: previousId
     }
   };
 }

@@ -30,8 +30,16 @@ CREATE TABLE IF NOT EXISTS consent_chain (
   consent_id TEXT NOT NULL,
   key_hash TEXT NOT NULL,
   bound_at TEXT NOT NULL,
+  -- A lánc-forgatás előző lánca (a kliens kulcsvesztés / régi lánc miatti 403
+  -- után új láncot indít). A régi lánc AKTUÁLIS állapota az utódaiéval METSZVE
+  -- számít: egy visszavonás az új láncon a régi consent_id-hoz kötött eseményekre
+  -- is hat. A kapcsolat hamisítható, de csak SZIGORÍTHAT (metszet) — ugyanaz a
+  -- képesség, ami egy igazolatlan szigorító írással amúgy is megvan.
+  predecessor_consent_id TEXT,
   PRIMARY KEY (site_id, consent_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_consent_chain_pred ON consent_chain (site_id, predecessor_consent_id);
 
 INSERT OR IGNORE INTO consent_chain (site_id, consent_id, key_hash, bound_at)
 SELECT site_id, consent_id, key_hash, MIN(server_received_at)

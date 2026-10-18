@@ -7,7 +7,7 @@ import type {
   ConsentSourceName,
   IngressKind
 } from './consent';
-import type { ConsentLogEntry, ConsentMetricEntry, ConsentLogState } from './consent-log';
+import { signalsFromCategories, type ConsentLogEntry, type ConsentMetricEntry, type ConsentLogState } from './consent-log';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
@@ -721,8 +721,9 @@ export async function recordConsentDecision(
     if (bindKeyHash) {
       await env.LEDGER.batch([
         env.LEDGER.prepare(
-          `INSERT INTO consent_chain (site_id, consent_id, key_hash, bound_at) VALUES (?, ?, ?, ?)`
-        ).bind(entry.site_id, entry.consent_id, bindKeyHash, nowIso),
+          `INSERT INTO consent_chain (site_id, consent_id, key_hash, bound_at, predecessor_consent_id)
+           VALUES (?, ?, ?, ?, ?)`
+        ).bind(entry.site_id, entry.consent_id, bindKeyHash, nowIso, entry.previous_consent_id ?? null),
         insert
       ]);
     } else {
@@ -798,6 +799,57 @@ export type ConsentStateRead =
  * betekintést egy másik site consent-rekordjába.
  */
 export async function readConsentState(
+  env: Env,
+  siteId: string,
+  consentId: string
+): Promise<ConsentStateRead> {
+  const own = await readOwnConsentState(env, siteId, consentId);
+  if (own.kind !== 'found' || !env.LEDGER) return own;
+  // Lánc-forgatás (review R7): a lánc utódainak állapota METSZVE számít — egy
+  // visszavonás az új láncon a régi consent_id-hoz kötött eseményekre is hat.
+  let successors: string[];
+  try {
+    const res = await env.LEDGER.prepare(
+      `WITH RECURSIVE succ(cid, depth) AS (
+         SELECT consent_id, 1 FROM consent_chain WHERE site_id = ?1 AND predecessor_consent_id = ?2
+         UNION
+         SELECT c.consent_id, s.depth + 1 FROM consent_chain c JOIN succ s
+           ON c.site_id = ?1 AND c.predecessor_consent_id = s.cid
+          WHERE s.depth < 10
+       )
+       SELECT DISTINCT cid FROM succ`
+    )
+      .bind(siteId, consentId)
+      .all<{ cid: string }>();
+    successors = (res.results ?? []).map((r) => r.cid).filter((c) => c !== consentId);
+  } catch (err) {
+    ledgerError('readConsentState.successors', err, { site_id: siteId });
+    return { kind: 'error' };
+  }
+  let state = own.state;
+  for (const cid of successors) {
+    const next = await readOwnConsentState(env, siteId, cid);
+    if (next.kind === 'error') return next;
+    if (next.kind === 'found') state = intersectConsentState(state, next.state);
+  }
+  return { kind: 'found', state };
+}
+
+/**
+ * Két consent-állapot METSZETE (pure): egy kategória csak akkor engedélyezett,
+ * ha mindkettőben az. Ha semmi nem szűkül, az eredeti állapot változatlan.
+ */
+export function intersectConsentState(a: ConsentLogState, b: ConsentLogState): ConsentLogState {
+  const analytics = a.cat_analytics && b.cat_analytics;
+  const marketing = a.cat_marketing && b.cat_marketing;
+  if (analytics === a.cat_analytics && marketing === a.cat_marketing) return a;
+  const decision: ConsentLogState['decision'] =
+    analytics && marketing ? a.decision : !analytics && !marketing ? 'withdrawn' : 'custom';
+  return { ...a, decision, cat_analytics: analytics, cat_marketing: marketing, ...signalsFromCategories(analytics, marketing) };
+}
+
+/** Egy lánc SAJÁT aktuális állapota (utódok nélkül). */
+async function readOwnConsentState(
   env: Env,
   siteId: string,
   consentId: string

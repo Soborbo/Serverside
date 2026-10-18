@@ -344,6 +344,9 @@ describe('403 consent_key_mismatch kezelése (2026-10-18 review R7)', () => {
     expect(rotated.consent_id).not.toBe(rejected.consent_id);
     expect(rotated.revision).toBe(1);
     expect(rotated.decision).toBe('accept_all');
+    // Az új lánc megnevezi az elődjét → a későbbi visszavonás a régi lánc
+    // eseményeire is hat (a szerver metszi a két állapotot).
+    expect(rotated.previous_consent_id).toBe(rejected.consent_id);
     expect(readSboConsent()?.consentId).toBe(rotated.consent_id);
     expect(localStorage.getItem('sbo_consent_pending')).toBeNull();
   });

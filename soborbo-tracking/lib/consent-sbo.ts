@@ -78,6 +78,12 @@ export interface SboConsentWirePayload {
   cky_cookie_analytics?: boolean;
   cky_cookie_marketing?: boolean;
   client_decided_at: string;
+  /**
+   * Lánc-forgatásnál az ELŐZŐ lánc (review R7): a szerver utód-kapcsolatként
+   * tárolja, és a régi lánc állapotát az új lánc döntéseivel metszi — egy
+   * későbbi visszavonás így a régi consent_id-hoz kötött eseményekre is hat.
+   */
+  previous_consent_id?: string;
 }
 
 // ── CookieYes párhuzamos ablak (2.4) ────────────────────────────────────────
@@ -272,7 +278,8 @@ async function rotateChain(rejected: SboConsentWirePayload): Promise<void> {
     decision: fresh.decision,
     cat_analytics: fresh.analytics,
     cat_marketing: fresh.marketing,
-    client_decided_at: new Date(fresh.decidedAtSec * 1000).toISOString()
+    client_decided_at: new Date(fresh.decidedAtSec * 1000).toISOString(),
+    previous_consent_id: rejected.consent_id
   };
   writePending([...readPending(), payload]);
   const outcome = await postConsent(payload);

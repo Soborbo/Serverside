@@ -358,3 +358,37 @@ describe('R7 — revision-felpumpálás nem fedheti el a visszavonást (függetl
     expect((await stateOf(env))?.decision).toBe('withdrawn');
   });
 });
+
+describe('R7 — lánc-forgatás után a visszavonás a régi lánc eseményeit is eléri (független utóellenőrzés)', () => {
+  it('régi lánc: hirdetés engedélyezve; bővítés 403 → új lánc (previous_consent_id); visszavonás az új láncon → a régi is tilt', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    // Régi lánc: csak marketing (a kulcs elveszett / régi lánc).
+    await handleConsent(post(decision({ decision: 'custom', cat_analytics: false, cat_marketing: true })), env);
+    // Bővítés kulcs nélkül → 403 (a kliens forgat).
+    expect((await handleConsent(post(decision({ revision: 2 })), env)).status).toBe(403);
+    const NEW = 'consent-r7-0000002';
+    const first = await handleConsent(
+      post(decision({ consent_id: NEW, revision: 1, previous_consent_id: CID })),
+      env
+    );
+    expect(first.status).toBe(204);
+    const key = issuedKey(first);
+    expect((await handleConsent(post(decision({ consent_id: NEW, revision: 2, ...WITHDRAW }), key), env)).status).toBe(204);
+    // A régi consent_id-hoz kötött esemény újraküldése is tiltott.
+    expect((await stateOf(env))?.ad_user_data).toBe('DENIED');
+    const replay = await checkReplayConsent(env, SITE as never, {
+      platform: 'meta', site_id: 'review', hostname: HOST, consent_id: CID
+    } as never);
+    expect(replay).toMatchObject({ skipped: true, skip_reason: 'consent_withdrawn' });
+  });
+
+  it('a (hamisítható) utód-kapcsolat csak szigoríthat: az utód engedélye a régi tiltást nem oldja fel', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    await handleConsent(post(decision(REJECT)), env);
+    const NEW = 'consent-r7-0000003';
+    await handleConsent(post(decision({ consent_id: NEW, revision: 1, previous_consent_id: CID })), env);
+    expect((await stateOf(env))?.decision).toBe('reject_all');
+  });
+});
