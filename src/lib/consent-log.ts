@@ -41,34 +41,12 @@ export function isConsentProviderSbo(site: { consent?: { provider?: string } }):
   return site.consent?.provider === 'sbo';
 }
 
-/**
- * Mehet-e GA4 ezen a site-on, a megadott consent-jelek mellett?
- *
- * A jogi audit 2. prioritása: a GA4 nem mehet `analytics_storage=DENIED` mellett.
- * Az EEA-ban ez egyértelmű; a UK DUAA statisztikai kivétele (Sch A1 para 5) pedig
- * NEM menti meg, mert az csak akkor áll, ha az adatot kizárólag a SAJÁT
- * szolgáltatásunk fejlesztésére használjuk, és nem adjuk harmadik félnek a saját
- * céljaira — a Google viszont a GA4-adatot a saját céljaira is felhasználja.
- *
- * DE EZ VISELKEDÉSVÁLTOZÁS, ezért flag mögött van:
- *   provider='cookieyes' (minden mai site) → a MAI szabály, változatlanul.
- *   provider='sbo'                          → `analytics_storage === 'GRANTED'` kell.
- *
- * HATÓKÖR — fontos, hogy ne áltassuk magunkat: a gateway fan-outjának 2026-06-28
- * (Modell 2) óta NINCS GA4-lába, tehát ez a kapu ma egyetlen élő úton hat, a
- * korábban DLQ-ba került ga4-rekordok retry-ján (scheduled/retry.ts). A pilot
- * VALÓDI GA4-kapuzása kliensoldali, és a Fázis 2-ben érkezik: analytics DENIED
- * mellett a GTM el sem indul, tehát a GA4 nem tüzel. Ez a függvény a szerveroldali
- * fél — kevés, de nem nulla, és ha egyszer visszakerül egy szerver-GA4 láb, a
- * szabály már itt lesz, nem utólag kell rátalálni.
- */
-export function isGa4AllowedForSite(
-  site: { consent?: { provider?: string } },
-  consent: { analytics_storage?: string } | undefined
-): boolean {
-  if (!isConsentProviderSbo(site)) return true;
-  return consent?.analytics_storage === 'GRANTED';
-}
+// A GA4-kapu (régen `isGa4AllowedForSite`) és az offline-/replay-kapu (régen
+// `isBlockedByConsentState`, ledger `isOfflineUploadBlocked`) a 2026-10-18-i
+// egységesítés óta EGY függvény: `decideAdConsent` (a fájl végén) — kategóriával
+// (ads / analytics). Saját CMP-n a GA4 a consent_log AKTUÁLIS analitika-állapotát
+// kéri; a DUAA statisztikai kivétel a GA4-et nem menti meg (Google saját célú
+// felhasználás), ezért hiányzó jel ott is tiltás.
 
 /** A döntés fajtái. A `withdrawn` is DÖNTÉS: új sor, nem UPDATE. */
 export const CONSENT_DECISIONS = ['accept_all', 'reject_all', 'custom', 'withdrawn'] as const;
@@ -412,17 +390,121 @@ export interface ConsentLogState {
   server_received_at: string;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// A hirdetési KÉZBESÍTÉS consent-döntése — EGY szabály minden szerveroldali
+// útra (2026-10-18 review, egységesítés): CRM-esemény (routes/lead-status.ts) és
+// minden újraküldés (scheduled/retry.ts retrySingle → cron, Queue-consumer,
+// admin single/bulk). A hívó olvas (D1), ez a függvény CSAK dönt (pure).
+//
+// A capture-kori böngésző-/szerver-ingress kapu (lib/consent.ts resolveConsent)
+// SZÁNDÉKOSAN külön marad: ott a döntés pillanatában a payload jele a friss
+// bizonyíték, a consent_log sora ilyenkor még úton lehet. Ami azonos: ott sem
+// válik a hiányzó jel engedéllyé `require_consent` alatt.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Háromállapotú D1-olvasat — PONTOSAN a ledger readConsentState / readLatestConsentForLead alakja. */
+type Read<K extends string, T> = ({ kind: 'found' } & { [k in K]: T }) | { kind: 'missing' } | { kind: 'error' };
+
+export interface AdConsentInput {
+  /** A site a saját CMP-n fut-e (isConsentProviderSbo). */
+  sbo: boolean;
+  /** A site `require_consent` kapcsolója (CookieYes fail-closed). */
+  requireConsent: boolean;
+  /** Melyik kategória kell: hirdetés (ad_user_data) vagy analitika (analytics_storage). */
+  category: 'ads' | 'analytics';
+  /** A consent_log aktuális állapota; `null` = nincs ismert consent_id. */
+  consentLog: Read<'state', ConsentLogState> | null;
+  /** A lead capture-kori receiptje (CookieYes-evidencia); `null` = nincs lead-kötés. */
+  receipt: Read<'record', { ad_allowed: boolean; ad_user_data: string | null; ad_personalization: string | null }> | null;
+  /** A CRM `ad_allowed` jele (csak CookieYes-site-on evidencia). */
+  crmAdAllowed?: boolean;
+  /**
+   * Az esemény a capture-kor MÁR átment egy consent-kapun (DLQ-replay). CookieYes-
+   * site-on ez a döntés áll (ott nincs visszavonás-forrás); saját CMP-n NEM elég —
+   * ott a consent_log AKTUÁLIS állapota dönt.
+   */
+  passedCaptureGate?: boolean;
+}
+
+export type AdConsentVerdict =
+  | {
+      kind: 'allowed';
+      source: 'consent_log' | 'receipt' | 'crm' | 'fallback' | 'capture_gate';
+      /** A platform felé jelenthető, BIZONYÍTOTT jelek (kitalált GRANTED nincs). */
+      signals: { ad_user_data?: 'GRANTED'; ad_personalization?: ConsentSignalValue };
+    }
+  | { kind: 'denied'; source: 'consent_log' | 'receipt' | 'crm' | 'fallback'; skip_reason: 'consent_withdrawn' | 'consent_denied' }
+  /** Nincs érvényes döntés a site szabálya szerint (saját CMP: nincs consent_log-sor). */
+  | { kind: 'needs_decision'; skip_reason: 'consent_missing_failclosed' }
+  /** Átmenetileg nem ellenőrizhető (D1-hiba) — se küldés, se végleges kihagyás. */
+  | { kind: 'unavailable' };
+
+const isSignal = (v: string | null | undefined): v is ConsentSignalValue => v === 'GRANTED' || v === 'DENIED';
+
 /**
- * Blokkolja-e az AKTUÁLIS consent-állapot az offline uploadot (pure).
- *
- * `null` (nincs ilyen consent_id) → a hívó a MEGLÉVŐ receipt-alapú szabályra esik
- * vissza (ledger.isOfflineUploadBlocked). A D1-HIBÁT a hívó külön kezeli
- * (ledger.readConsentState `error` → nincs küldés, újrapróba). Ez SZÁNDÉKOS: a Fázis 1
- * inert, tehát a CookieYes-oldalak — ahol soha nem lesz consent_id — pontosan úgy
- * viselkednek, mint ma. Fail-closed viselkedést itt bevezetni néma
- * konverzió-vesztés lenne az egész flottán.
+ * A kézbesítés consent-döntése (pure). Sorrend:
+ *  1. D1-hiba bármelyik SZÜKSÉGES olvasásnál → `unavailable` (sosem engedély).
+ *  2. consent_log-állapot → az dönt (a kategória szerint); tiltás `consent_withdrawn`.
+ *  3. Saját CMP-n ennél nincs tovább: hiányzó consent_id / sor → `needs_decision`.
+ *     A capture-kori receipt, a CRM-jel és a CookieYes-süti itt NEM evidencia — a
+ *     régi CookieYes-engedélyre nem lehet visszaesni.
+ *  4. CookieYes-site: receipt explicit jele → CRM-jel → capture-kapu (replay) →
+ *     `require_consent` fail-closed / fail-open alapszabály.
  */
-export function isBlockedByConsentState(state: ConsentLogState | null): boolean {
-  if (state === null) return false;
-  return state.decision === 'withdrawn' || state.ad_user_data !== 'GRANTED';
+export function decideAdConsent(input: AdConsentInput): AdConsentVerdict {
+  if (input.consentLog?.kind === 'error') return { kind: 'unavailable' };
+  if (input.receipt?.kind === 'error' && input.sbo) return { kind: 'unavailable' };
+
+  if (input.consentLog?.kind === 'found') {
+    const st = input.consentLog.state;
+    const granted =
+      st.decision !== 'withdrawn' &&
+      (input.category === 'ads' ? st.ad_user_data === 'GRANTED' : st.analytics_storage === 'GRANTED');
+    return granted
+      ? {
+          kind: 'allowed',
+          source: 'consent_log',
+          signals: { ad_user_data: 'GRANTED', ad_personalization: st.ad_personalization }
+        }
+      : { kind: 'denied', source: 'consent_log', skip_reason: 'consent_withdrawn' };
+  }
+  if (input.sbo) return { kind: 'needs_decision', skip_reason: 'consent_missing_failclosed' };
+
+  const rec = input.receipt?.kind === 'found' ? input.receipt.record : null;
+  if (rec && isSignal(rec.ad_user_data)) {
+    if (rec.ad_user_data === 'DENIED') return { kind: 'denied', source: 'receipt', skip_reason: 'consent_denied' };
+    return {
+      kind: 'allowed',
+      source: 'receipt',
+      signals: {
+        ad_user_data: 'GRANTED',
+        ...(isSignal(rec.ad_personalization) ? { ad_personalization: rec.ad_personalization } : {})
+      }
+    };
+  }
+  if (input.crmAdAllowed !== undefined) {
+    if (!input.crmAdAllowed) return { kind: 'denied', source: 'crm', skip_reason: 'consent_denied' };
+    // A CookieYes `advertisement` az ads-consentet egységként adja → ad_personalization
+    // csak akkor GRANTED, ha nincs granular receipt-jel, ami ellentmondana.
+    return {
+      kind: 'allowed',
+      source: 'crm',
+      signals: {
+        ad_user_data: 'GRANTED',
+        ...(rec && isSignal(rec.ad_personalization)
+          ? { ad_personalization: rec.ad_personalization }
+          : { ad_personalization: 'GRANTED' as const })
+      }
+    };
+  }
+  if (input.passedCaptureGate) return { kind: 'allowed', source: 'capture_gate', signals: {} };
+  const explicitNo = rec !== null && rec.ad_allowed === false;
+  if (explicitNo || (input.requireConsent && rec === null)) {
+    return { kind: 'denied', source: 'fallback', skip_reason: 'consent_denied' };
+  }
+  return {
+    kind: 'allowed',
+    source: 'fallback',
+    signals: rec && isSignal(rec.ad_personalization) ? { ad_personalization: rec.ad_personalization } : {}
+  };
 }

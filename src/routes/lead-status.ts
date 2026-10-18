@@ -17,7 +17,6 @@ import { sendAlert } from '../lib/notify';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
 import {
   isValidLeadId,
-  isOfflineUploadBlocked,
   mapLeadStatusToEventName,
   VALID_LEAD_STATUSES,
   REPEATABLE_LEAD_STATUSES,
@@ -30,7 +29,7 @@ import {
   recordDeliveries,
   normalizeDelivery
 } from '../lib/ledger';
-import { isBlockedByConsentState, isConsentProviderSbo } from '../lib/consent-log';
+import { decideAdConsent, isConsentProviderSbo } from '../lib/consent-log';
 
 /**
  * CRM offline-loop endpoint (P0 üzleti érték). A CRM ide POST-olja a lead
@@ -503,67 +502,33 @@ export async function handleLeadStatus(
     hasClickId: Boolean(body.gclid || body.gbraid || body.wbraid)
   });
 
-  // GDPR-kapu, precedencia szerint (2026-07-17 consent-audit):
-  //  1. A Worker SAJÁT consent-receiptje, ha EXPLICIT capture-kori jelet hordoz
-  //     (ad_user_data GRANTED/DENIED). Ez az időbélyeges, bizonyítható consent —
-  //     a szerver-ingress dispatch óta a receipt hordozza a CRM lead_id-t.
-  //     (A korábbi „a receipt lead_id=NULL-lal íródik" premissza HAMIS volt, és a
-  //     CRM newsletter-szemantikájú marketingConsent-je — amit a site-ok soha nem
-  //     töltenek a CookieYes ad-consentből — némán blokkolt minden uploadot.)
-  //  2. A CRM ad_allowed jele — fallback, ha nincs explicit receipt (telefonos/
-  //     manuális lead, vagy fail-open site consent-objektum nélküli receipttel).
-  //  3. require_consent fail-closed: kötelező consent + semmilyen jel → tiltott.
-  // A jel nélküli receipt ad_allowed=1-e NEM evidencia (fail-open default is adhatja).
+  // GDPR-kapu — a közös kézbesítési szabály (consent-log.ts decideAdConsent):
+  //  - consent_log AKTUÁLIS állapota (saját CMP) dönt, ha van;
+  //  - saját CMP-n ennél nincs tovább: se a capture-kori receipt, se a CRM-jel
+  //    nem evidencia → új döntés szükséges, nincs feltöltés;
+  //  - CookieYes-site-on a 2026-07-17-i precedencia: explicit receipt-jel → CRM
+  //    ad_allowed → require_consent fail-closed. (A jel nélküli receipt
+  //    ad_allowed=1-e NEM evidencia — a fail-open default is adhatja.)
+  //  - D1-hiba → 503, a CRM újrapróbálja; mellékhatás eddig nem történt.
   const leadConsentRead = await readLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
-  // Saját CMP-s site-on egy D1-hiba elrejthetné a consent_log visszavonását
-  // (2026-10-18 review R2) → 503, a CRM újrapróbálja. CookieYes-site-on nincs
-  // consent_log, ott a mai fail-open viselkedés marad.
-  if (leadConsentRead.kind === 'error' && isConsentProviderSbo(siteConfig)) {
-    return consentStateUnavailable(hostname, siteConfig.site_id, startedAt);
-  }
   const leadConsent = leadConsentRead.kind === 'found' ? leadConsentRead.record : null;
-  const receiptSignal =
-    leadConsent?.ad_user_data === 'GRANTED' || leadConsent?.ad_user_data === 'DENIED'
-      ? leadConsent.ad_user_data
-      : null;
-  // ad_personalization KÜLÖN jel — NEM az ad_user_data-ból vezetjük le (lásd lentebb
-  // a Data Manager consent-építésnél). Csak az explicit GRANTED/DENIED bizonyíték.
-  const receiptAdPersonalization =
-    leadConsent?.ad_personalization === 'GRANTED' || leadConsent?.ad_personalization === 'DENIED'
-      ? leadConsent.ad_personalization
-      : null;
-  // ── CMP Fázis 2 (2.5): a consent_log az ÚJ, legerősebb precedencia. ─────────
-  // Ha a lead receiptje consent_id-t hordoz (provider='sbo' site), az upload-
-  // döntést NEM a capture-kori receipt adja, hanem a consent_log AKTUÁLIS
-  // állapota (legmagasabb revision). A nap-1 GRANTED / nap-3 visszavonás /
-  // nap-10 revenue_confirmed eset csak így skippel helyesen. Nincs consent_id
-  // (a teljes CookieYes-flotta) vagy ismeretlen consent_id → a MAI precedencia-
-  // lánc változatlanul fut tovább. D1-hiba → 503 (lent).
   const consentLogRead = leadConsent?.consent_id
     ? await readConsentState(env, siteConfig.site_id, leadConsent.consent_id)
     : null;
-  // D1-hiba ≠ „nincs consent_id": a régi engedély nem érvényesülhet üzemzavar
-  // alatt (review R2). Mellékhatás eddig nem történt → a 503 tiszta retry.
-  if (consentLogRead?.kind === 'error') {
+  const verdict = decideAdConsent({
+    sbo: isConsentProviderSbo(siteConfig),
+    requireConsent: siteConfig.require_consent === true,
+    category: 'ads',
+    consentLog: consentLogRead,
+    receipt: leadConsentRead,
+    crmAdAllowed: body.ad_allowed
+  });
+  if (verdict.kind === 'unavailable') {
     return consentStateUnavailable(hostname, siteConfig.site_id, startedAt);
   }
+  const consentBlocked = verdict.kind !== 'allowed';
+  const consentSource = verdict.kind === 'needs_decision' ? 'none' : verdict.source;
   const consentLogState = consentLogRead?.kind === 'found' ? consentLogRead.state : null;
-
-  let consentBlocked: boolean;
-  let consentSource: 'consent_log' | 'receipt' | 'crm' | 'fallback';
-  if (consentLogState !== null) {
-    consentBlocked = isBlockedByConsentState(consentLogState);
-    consentSource = 'consent_log';
-  } else if (receiptSignal !== null) {
-    consentBlocked = receiptSignal === 'DENIED';
-    consentSource = 'receipt';
-  } else if (body.ad_allowed !== undefined) {
-    consentBlocked = body.ad_allowed === false;
-    consentSource = 'crm';
-  } else {
-    consentBlocked = isOfflineUploadBlocked(leadConsent, siteConfig.require_consent === true);
-    consentSource = 'fallback';
-  }
 
   // Ütközésbiztos, determinisztikus orderId: a (lead_id, status) SHA-256-ja —
   // ez megy a Google Ads offline uploadnak event_id-ként (transactionId).
@@ -591,41 +556,15 @@ export async function handleLeadStatus(
   // te) kap — lásd a záró státusz-leképezést.
   let configBlockQueued = false;
 
-  // Consent Mode jelek a Data Manager eventre. EEA/DMA alatt a jelöletlen
-  // (unspecified) consentű eventet a Google csendben kizárhatja az ads-
-  // mérésből — ha van POZITÍV consent-evidenciánk (explicit GRANTED receipt a
-  // capture-ből, vagy a CRM ad_allowed=true jele), azt explicit
-  // CONSENT_GRANTED-ként továbbítjuk. Evidencia nélkül (fail-open site jel
-  // nélküli receipttel) a mező kimarad — consentet nem találunk ki.
-  // ad_user_data és ad_personalization KÜLÖN Consent Mode jel — NEM egyenlők.
-  // Az ad_user_data-t a receipt/CRM evidencia adja; az ad_personalization-t NEM
-  // vezetjük le belőle (különben hamis GRANTED menne olyan usernek, aki csak a
-  // data-használatot engedte). Az ad_personalization csak SAJÁT bizonyítékra
-  // GRANTED: explicit receipt-jel, VAGY — granular receipt hiányában — a CRM
-  // ad_allowed=true (a CookieYes `advertisement` az ads-consentet egységként adja,
-  // ad_user_data + ad_personalization együtt). Explicit DENIED receiptet tisztelünk.
-  //
-  // A számítás a gads-ágak ELŐTT fut, mert a konfigurációs blokk DLQ-rekordjának
-  // ugyanezt a payloadot kell hordoznia — a replay később ugyanazzal a consent-
-  // jellel megy ki, mint amit most küldtünk volna.
-  // Consent_log-állapot mellett a JELEK IS onnan jönnek (mindkét mező explicit
-  // GRANTED/DENIED a logban) — a capture-kori receipt jele elavult lehet, és a
-  // Google felé a döntés pillanatában ÉRVÉNYES consentet kell jelenteni.
-  const adUserDataGranted = consentLogState
-    ? consentLogState.ad_user_data === 'GRANTED'
-    : receiptSignal === 'GRANTED' || body.ad_allowed === true;
-  const adPersonalizationSignal = consentLogState
-    ? consentLogState.ad_personalization
-    : (receiptAdPersonalization ??
-      (receiptSignal === null && body.ad_allowed === true ? 'GRANTED' : undefined));
+  // Consent Mode jelek a Data Manager eventre — CSAK bizonyított jel (a döntés
+  // adja: consent_log-állapot, explicit receipt, vagy a CookieYes CRM-jele).
+  // EEA/DMA alatt a jelöletlen eventet a Google kizárhatja, de consentet nem
+  // találunk ki; az ad_personalization KÜLÖN jel, nem az ad_user_data-ból jön.
+  // A gads-ágak ELŐTT fut, mert a konfigurációs blokk DLQ-rekordja is ezt hordozza.
   const consentSignals: {
     ad_user_data?: 'GRANTED' | 'DENIED';
     ad_personalization?: 'GRANTED' | 'DENIED';
-  } = {};
-  if (adUserDataGranted) consentSignals.ad_user_data = 'GRANTED';
-  if (adPersonalizationSignal) {
-    consentSignals.ad_personalization = adPersonalizationSignal;
-  }
+  } = verdict.kind === 'allowed' ? { ...verdict.signals } : {};
 
   if (consentBlocked) {
     logStructured({
@@ -663,8 +602,7 @@ export async function handleLeadStatus(
     // A skip OKA megkülönböztetett: a `consent_withdrawn` a consent_log AKTUÁLIS
     // állapotából jövő visszavonás, a `consent_denied` a capture-kori receipt /
     // CRM-jel / fail-closed tiltás. A kettő eltérő teendő, ezért nem mosható össze.
-    const consentSkipReason =
-      consentSource === 'consent_log' ? ('consent_withdrawn' as const) : ('consent_denied' as const);
+    const consentSkipReason = verdict.skip_reason;
     ctx.waitUntil(
       recordDeliveries(env, {
         event_id: orderId,

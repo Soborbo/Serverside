@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { checkIdempotency, markDispatched, isOfflineUploadBlocked } from '../src/lib/ledger';
+import { checkIdempotency, markDispatched } from '../src/lib/ledger';
+import { decideAdConsent } from '../src/lib/consent-log';
 
 // Fake D1: prepare().bind().first() returns a queued row (or throws), .run() no-ops.
 function envWith(firstResult: unknown, opts: { throwOnFirst?: boolean } = {}): any {
@@ -121,21 +122,34 @@ describe('markDispatched', () => {
   });
 });
 
-describe('isOfflineUploadBlocked — consent gate', () => {
+// A korábbi `isOfflineUploadBlocked` szabálya a 2026-10-18-i egységesítés óta a
+// decideAdConsent CookieYes-ágának utolsó lépcsője (fallback).
+describe('decideAdConsent fallback — CookieYes consent gate', () => {
+  const blocked = (rec: { ad_allowed: boolean } | null, requireConsent: boolean) =>
+    decideAdConsent({
+      sbo: false,
+      requireConsent,
+      category: 'ads',
+      consentLog: null,
+      receipt: rec
+        ? { kind: 'found', record: { ...rec, ad_user_data: null, ad_personalization: null } }
+        : { kind: 'missing' }
+    }).kind !== 'allowed';
+
   it('explicit ad_allowed=false → blocked', () => {
-    expect(isOfflineUploadBlocked({ ad_allowed: false }, false)).toBe(true);
-    expect(isOfflineUploadBlocked({ ad_allowed: false }, true)).toBe(true);
+    expect(blocked({ ad_allowed: false }, false)).toBe(true);
+    expect(blocked({ ad_allowed: false }, true)).toBe(true);
   });
 
   it('ad_allowed=true → allowed', () => {
-    expect(isOfflineUploadBlocked({ ad_allowed: true }, true)).toBe(false);
+    expect(blocked({ ad_allowed: true }, true)).toBe(false);
   });
 
   it('no record + require_consent=true → blocked (fail-closed, EEA / D1 outage safe)', () => {
-    expect(isOfflineUploadBlocked(null, true)).toBe(true);
+    expect(blocked(null, true)).toBe(true);
   });
 
   it('no record + require_consent=false → allowed (business responsibility)', () => {
-    expect(isOfflineUploadBlocked(null, false)).toBe(false);
+    expect(blocked(null, false)).toBe(false);
   });
 });

@@ -1262,23 +1262,6 @@ export async function getLeadTrail(
   }
 }
 
-/**
- * Eldönti, hogy egy offline-loop upload tiltott-e consent alapján (pure, tesztelhető).
- *  - Ha a leadnek explicit ad_allowed=false consentje van → tiltott.
- *  - Fail-closed (EEA): ha a site `require_consent`, ÉS nincs (vagy nem olvasható)
- *    consent-rekord (leadConsent===null, ami D1-hibát IS jelenthet) → tiltott.
- *    Így egy D1-kiesés nem fordítja át a „consent ismeretlen"-t „consent megadott"-ra.
- *  - Egyébként (nem kötelező consent, és nincs explicit tiltás) → engedett.
- */
-export function isOfflineUploadBlocked(
-  leadConsent: { ad_allowed: boolean } | null,
-  requireConsent: boolean
-): boolean {
-  if (leadConsent !== null && leadConsent.ad_allowed === false) return true;
-  if (requireConsent && leadConsent === null) return true;
-  return false;
-}
-
 function ledgerError(op: string, err: unknown, ctx: Record<string, unknown>): void {
   logStructured({
     level: 'warn',
