@@ -24,37 +24,54 @@ import { sanitizeErrorMessage } from './log-sanitize';
 const LINKEDIN_URL = 'https://api.linkedin.com/rest/conversionEvents';
 const LINKEDIN_TIMEOUT_MS = 5000;
 /**
- * A LinkedIn `YYYYMM` verziói LEGALÁBB egy évig támogatottak — a tényleges
- * megszűnési dátumot a LinkedIn hirdeti meg, és nem feltétlenül a 12. hónap
- * elején van. A korábbi '202401' 2025-01-22-én megszűnt, és minden config
- * nélküli kapcsolat azzal indult (2026-10-18 review R11). 202609: a hivatalos
- * verziózási oldalon ellenőrzött verzió (2026-10-18; azóta már 202610 is van).
+ * Az alapverzió. 202609: a hivatalos verziózási oldalon támogatottként szereplő
+ * verzió (ellenőrizve 2026-10-18; azóta 202610 is van). A korábbi '202401'-gyel
+ * minden config nélküli kapcsolat egy megszűnt verzióval indult (review R11).
  */
 export const DEFAULT_VERSION = '202609';
-/** A LinkedIn által vállalt MINIMÁLIS támogatási idő hónapokban (becslés alapja). */
+
+/**
+ * HIVATALOS adatok — a LinkedIn versioning oldaláról
+ * (learn.microsoft.com/linkedin/marketing/versioning), ellenőrizve 2026-10-18:
+ *  - bejelentett megszűnési dátumok (a figyelmeztető sávból);
+ *  - a dokumentáció által még támogatottként listázott legrégebbi verzió („The
+ *    documentation reflects all available API versions") — az ennél régebbi a
+ *    hivatalos lista szerint már nem elérhető.
+ * Frissítéskor MINDKETTŐT a forrásból kell átvenni, becslésből soha.
+ */
+const OFFICIAL_SUNSET_DATES: Readonly<Record<string, string>> = { '202511': '2026-11-16' };
+const OLDEST_LISTED_VERSION = '202511';
+const OFFICIAL_CHECKED_AT = '2026-10-18';
+
+/** A LinkedIn által vállalt MINIMÁLIS támogatási idő hónapokban (csak figyelmeztetéshez). */
 const VERSION_MIN_SUPPORT_MONTHS = 12;
-/** Ennyi hónappal a becsült megszűnés előtt kezdünk figyelmeztetni. */
+/** Ennyi hónappal a minimális támogatás vége előtt kezdünk figyelmeztetni. */
 const VERSION_WARN_MONTHS_BEFORE = 2;
 
 /**
- * Egy `YYYYMM` LinkedIn-verzió BECSÜLT állapota adott időpontban (pure). NEM
- * tényállítás: a valódi dátum a LinkedIn verziózási oldalán áll.
- *  - 'likely_sunset' = a minimális egyéves támogatás letelt — valószínűleg (de
- *    nem biztosan) megszűnt, ellenőrizd;
- *  - 'expiring_soon' = a minimális támogatás 2 hónapon belül letelik;
+ * Egy `YYYYMM` LinkedIn-verzió állapota adott időpontban (pure). KÉT forrás,
+ * külön kimenettel:
+ *  - HIVATALOS: 'sunset' (a bejelentett dátum elmúlt, vagy a verzió régebbi a
+ *    hivatalosan listázott legrégebbinél), 'sunset_announced' (bejelentett,
+ *    jövőbeli dátum);
+ *  - BECSLÉS (a „legalább egy év támogatás" vállalásból): 'maintenance_due' (a
+ *    minimális támogatás letelt, hivatalos dátum nincs — frissítsd, de ez NEM
+ *    bizonyított megszűnés), 'maintenance_soon' (2 hónapon belül letelik);
  *  - 'invalid' = nem YYYYMM alak.
  */
 export function linkedInVersionStatus(
   version: string,
   now: Date = new Date()
-): 'ok' | 'expiring_soon' | 'likely_sunset' | 'invalid' {
+): 'ok' | 'maintenance_soon' | 'maintenance_due' | 'sunset_announced' | 'sunset' | 'invalid' {
   const m = /^(\d{4})(0[1-9]|1[0-2])$/.exec(version);
   if (!m) return 'invalid';
+  const announced = OFFICIAL_SUNSET_DATES[version];
+  if (announced) return now.getTime() >= Date.parse(`${announced}T00:00:00Z`) ? 'sunset' : 'sunset_announced';
+  if (version < OLDEST_LISTED_VERSION) return 'sunset';
   const released = Number(m[1]) * 12 + (Number(m[2]) - 1);
-  const current = now.getUTCFullYear() * 12 + now.getUTCMonth();
-  const age = current - released;
-  if (age >= VERSION_MIN_SUPPORT_MONTHS) return 'likely_sunset';
-  if (age >= VERSION_MIN_SUPPORT_MONTHS - VERSION_WARN_MONTHS_BEFORE) return 'expiring_soon';
+  const age = now.getUTCFullYear() * 12 + now.getUTCMonth() - released;
+  if (age >= VERSION_MIN_SUPPORT_MONTHS) return 'maintenance_due';
+  if (age >= VERSION_MIN_SUPPORT_MONTHS - VERSION_WARN_MONTHS_BEFORE) return 'maintenance_soon';
   return 'ok';
 }
 
@@ -122,7 +139,9 @@ export async function sendToLinkedIn(
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED],
       site_id: siteConfig.site_id,
       api_version: version,
-      version_status: versionStatus
+      version_status: versionStatus,
+      // A „sunset*" a hivatalos oldal adata (ekkori állapot), a „maintenance_*" becslés.
+      official_data_checked_at: OFFICIAL_CHECKED_AT
     });
   }
 

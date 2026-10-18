@@ -12,11 +12,11 @@ import { handleOAuthCallback } from './routes/oauth-callback';
 import { handleOAuthDebug } from './routes/oauth-debug';
 import { handleOAuthInit } from './routes/oauth-init';
 import { logStructured } from './types';
-import { isTerminalSkip } from './lib/skip-reason';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from './lib/error-codes';
 import {
   handleScheduledRetry,
   retrySingle,
+  isTerminalRetrySkip,
   isRealRetrySuccess,
   recordRetryDelivery,
   logSkippedRetry
@@ -233,8 +233,20 @@ export default {
           // csinálja (markDoNotReplay + delete) — a Queue-ág most követi.
           // A RETRYABLE konfigurációs skip (`not_configured` / `invalid_identifier`)
           // marad a régi úton: azt a KV javítása után újra kell játszani.
-          if (isTerminalSkip(result.skip_reason)) {
+          if (isTerminalRetrySkip(record, result)) {
             msg.ack();
+            continue;
+          }
+          // Saját CMP, a consent-döntés még úton: a Queue kísérlet-számlálója ~35
+          // perc után archiválna. A rekordot a cron R2-sorába adjuk át, ahol a
+          // consent_pending nem fogyaszt kísérletet (scheduled/retry.ts) — és csak
+          // sikeres írás után ack-olunk.
+          if (result.skip_reason === 'consent_pending') {
+            if (await writeDeadLetter(env, record)) {
+              msg.ack();
+            } else {
+              msg.retry({ delaySeconds: backoffSeconds(msg.attempts - 1) });
+            }
             continue;
           }
         }

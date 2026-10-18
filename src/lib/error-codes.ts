@@ -207,7 +207,7 @@ export enum TrackingErrorCode {
   TIKTOK_API_TIMEOUT = 'TRK-820-002',
   LINKEDIN_DISPATCH_FAILED = 'TRK-830-001',
   LINKEDIN_API_TIMEOUT = 'TRK-830-002',
-  /** A használt LinkedIn-Version BECSLÉS szerint lejárhatott / hamarosan lejár / érvénytelen alakú. */
+  /** A használt LinkedIn-Version hivatalosan megszűnt / megszűnése bejelentve, vagy (becslés) karbantartása esedékes, vagy érvénytelen alakú. */
   LINKEDIN_API_VERSION_UNSUPPORTED = 'TRK-830-003',
 
   DLQ_WRITE_FAILED = 'TRK-900-001',
@@ -538,7 +538,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.LINKEDIN_DISPATCH_FAILED]: 'LinkedIn Conversions API call failed',
   [TrackingErrorCode.LINKEDIN_API_TIMEOUT]: 'LinkedIn Conversions API call exceeded timeout',
   [TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED]:
-    'LinkedIn-Version header is likely sunset or near its estimated sunset (minimum 1-year support), or malformed — verify on LinkedIn\'s versioning page and bump DEFAULT_VERSION / the site api_version',
+    'LinkedIn-Version header needs attention: officially sunset / sunset announced (LinkedIn versioning page), or — estimate only — past or near the minimum 1-year support (maintenance_due/soon), or malformed; see version_status, bump DEFAULT_VERSION / the site api_version',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'Failed to write event to R2 dead letter queue',
   [TrackingErrorCode.DLQ_LIST_FAILED]: 'Failed to list pending DLQ records',
   [TrackingErrorCode.DLQ_DELETE_FAILED]: 'Failed to delete DLQ record after successful retry',
@@ -568,7 +568,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]:
     'Current consent state could not be read before a replay — send withheld, record stays retryable',
   [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]:
-    'Unverified (no/wrong consent_key) restricting decision stored on a key-protected consent chain — a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look',
+    'Unverified (no/wrong sbo_consent_key cookie, or a legacy keyless chain) restricting decision stored — it can only narrow consent; a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look',
   [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]:
     'An EXPECTED platform has a config block, but its identifier is malformed (unfilled placeholder or typo) — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the identifier is fixed in KV',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:

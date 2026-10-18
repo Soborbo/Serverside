@@ -77,6 +77,11 @@ function makeEnv(
       }
     },
     LEDGER: {
+      // D1-batch: az első lánc-döntés a kulcs-kötéssel EGY tranzakcióban (R7).
+      batch: async (list: Array<{ run: () => Promise<unknown> }>) => {
+        for (const s of list) await s.run();
+        return [];
+      },
       prepare: (sql: string) => ({
         bind: (...binds: unknown[]) => ({
           run: async () => {
@@ -89,7 +94,9 @@ function makeEnv(
             calls.push({ sql, binds });
             if (opts.d1Error) throw new Error('D1_ERROR: database is locked');
             return opts.firstRow ?? null;
-          }
+          },
+          // A lánc-utódok (R7 lánc-forgatás) lekérdezése — ebben a mockban nincs utód.
+          all: async () => ({ results: [] })
         })
       })
     }

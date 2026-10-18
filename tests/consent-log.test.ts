@@ -6,11 +6,24 @@ import {
   decisionMatchesCategories,
   signalsFromCategories,
   isConsentProviderSbo,
-  isGa4AllowedForSite,
-  isBlockedByConsentState,
+  decideAdConsent,
   MAX_REVISION,
   type ConsentLogState
 } from '../src/lib/consent-log';
+
+const BASE_STATE: ConsentLogState = {
+  consent_id: 'c1',
+  revision: 1,
+  decision: 'accept_all',
+  cat_analytics: true,
+  cat_marketing: true,
+  ad_user_data: 'GRANTED',
+  ad_personalization: 'GRANTED',
+  ad_storage: 'GRANTED',
+  analytics_storage: 'GRANTED',
+  client_decided_at: '2026-08-17T10:00:00.000Z',
+  server_received_at: '2026-08-17T10:00:01.000Z'
+};
 
 /**
  * Soborbo CMP · Fázis 1 — a pure mag.
@@ -49,20 +62,30 @@ describe('a Fázis 1 INERT — provider-kapu', () => {
     expect(isConsentProviderSbo({ consent: { provider: 'sbo' } })).toBe(true);
   });
 
+  // A GA4-kapu a 2026-10-18-i egységesítés óta decideAdConsent analitika-kategóriával.
+  const ga4 = (sbo: boolean, analytics_storage?: 'GRANTED' | 'DENIED') =>
+    decideAdConsent({
+      sbo,
+      requireConsent: false,
+      category: 'analytics',
+      consentLog: analytics_storage
+        ? { kind: 'found', state: { ...BASE_STATE, analytics_storage, cat_analytics: analytics_storage === 'GRANTED' } }
+        : null,
+      receipt: null,
+      passedCaptureGate: true
+    }).kind;
+
   it('GA4: cookieyes-site-on a MAI szabály áll — consent nélkül is mehet', () => {
     // Ez a nulla-viselkedésváltozás bizonyítéka a GA4-lábra. Ha ez elromlik, a
     // merge egy éjszaka alatt elvágná a GA4-et az egész flottán.
-    expect(isGa4AllowedForSite({}, undefined)).toBe(true);
-    expect(isGa4AllowedForSite({ consent: { provider: 'cookieyes' } }, { analytics_storage: 'DENIED' })).toBe(true);
+    expect(ga4(false)).toBe('allowed');
   });
 
-  it('GA4: sbo-site-on analytics_storage=GRANTED kell', () => {
-    const sbo = { consent: { provider: 'sbo' } };
-    expect(isGa4AllowedForSite(sbo, { analytics_storage: 'GRANTED' })).toBe(true);
-    expect(isGa4AllowedForSite(sbo, { analytics_storage: 'DENIED' })).toBe(false);
-    // Hiányzó jel is tiltás: a DUAA statisztikai kivétel a GA4-et nem menti meg.
-    expect(isGa4AllowedForSite(sbo, undefined)).toBe(false);
-    expect(isGa4AllowedForSite(sbo, {})).toBe(false);
+  it('GA4: sbo-site-on a consent_log analytics_storage=GRANTED kell', () => {
+    expect(ga4(true, 'GRANTED')).toBe('allowed');
+    expect(ga4(true, 'DENIED')).toBe('denied');
+    // Hiányzó döntés sem engedély: a DUAA statisztikai kivétel a GA4-et nem menti meg.
+    expect(ga4(true)).toBe('needs_decision');
   });
 });
 
@@ -255,56 +278,37 @@ describe('parseConsentId — a konverziós út kötése', () => {
   });
 });
 
-describe('isBlockedByConsentState — az offline/replay kapu', () => {
-  const state = (over: Partial<ConsentLogState>): ConsentLogState => ({
-    consent_id: 'c1',
-    revision: 1,
-    decision: 'accept_all',
-    cat_analytics: true,
-    cat_marketing: true,
-    ad_user_data: 'GRANTED',
-    ad_personalization: 'GRANTED',
-    ad_storage: 'GRANTED',
-    analytics_storage: 'GRANTED',
-    client_decided_at: '2026-08-17T10:00:00.000Z',
-    server_received_at: '2026-08-17T10:00:01.000Z',
-    ...over
+describe('decideAdConsent — a consent_log-állapot az offline/replay kapun', () => {
+  const state = (over: Partial<ConsentLogState>): ConsentLogState => ({ ...BASE_STATE, ...over });
+  const ads = (log: ConsentLogState | null, sbo = true) =>
+    decideAdConsent({
+      sbo,
+      requireConsent: false,
+      category: 'ads',
+      consentLog: log ? { kind: 'found', state: log } : null,
+      receipt: null
+    }).kind;
+
+  it('CookieYes-site, nincs consent_id → NEM blokkol (a mai, receipt-alapú szabály)', () => {
+    // Az inertség sarokköve: a CookieYes-oldalakon soha nincs consent_id.
+    // Fail-closed viselkedés itt néma konverzió-vesztés lenne az EGÉSZ flottán.
+    expect(ads(null, false)).toBe('allowed');
   });
 
-  it('null → NEM blokkol (visszaesés a mai, receipt-alapú szabályra)', () => {
-    // Ez az inertség sarokköve: a CookieYes-oldalakon soha nincs consent_id,
-    // tehát itt mindig null jön. Fail-closed viselkedés bevezetése néma
-    // konverzió-vesztés lenne az EGÉSZ flottán.
-    expect(isBlockedByConsentState(null)).toBe(false);
+  it('withdrawn → tiltott', () => {
+    expect(ads(state({ decision: 'withdrawn', ad_user_data: 'DENIED', cat_marketing: false }))).toBe('denied');
   });
 
-  it('withdrawn → blokkol', () => {
-    expect(
-      isBlockedByConsentState(
-        state({ decision: 'withdrawn', ad_user_data: 'DENIED', cat_marketing: false })
-      )
-    ).toBe(true);
+  it('a nap-1 GRANTED / nap-3 visszavonás eset: a LEGFRISSEBB állapot dönt', () => {
+    expect(ads(state({ revision: 2, decision: 'withdrawn', ad_user_data: 'DENIED' }))).toBe('denied');
   });
 
-  it('a nap-1 GRANTED / nap-3 visszavonás eset: a LEGFRISSEBB revision dönt', () => {
-    // A hívó a MAX(revision)-t kapja (ledger.getConsentState) — ez a teszt azt
-    // rögzíti, hogy az így kapott withdrawn állapot tényleg blokkol, akkor is,
-    // ha a capture-kori receipt GRANTED volt.
-    expect(isBlockedByConsentState(state({ revision: 2, decision: 'withdrawn', ad_user_data: 'DENIED' }))).toBe(
-      true
-    );
+  it('érvényes GRANTED → engedélyezett', () => {
+    expect(ads(state({}))).toBe('allowed');
   });
 
-  it('érvényes GRANTED → nem blokkol', () => {
-    expect(isBlockedByConsentState(state({}))).toBe(false);
-  });
-
-  it('reject_all → blokkol (ad_user_data nem GRANTED)', () => {
-    expect(
-      isBlockedByConsentState(
-        state({ decision: 'reject_all', ad_user_data: 'DENIED', cat_marketing: false })
-      )
-    ).toBe(true);
+  it('reject_all → tiltott (ad_user_data nem GRANTED)', () => {
+    expect(ads(state({ decision: 'reject_all', ad_user_data: 'DENIED', cat_marketing: false }))).toBe('denied');
   });
 });
 

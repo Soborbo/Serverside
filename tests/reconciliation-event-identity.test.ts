@@ -236,3 +236,80 @@ describe('R5 utóellenőrzés — a lefedettség az ABLAK eseményeihez köt', (
     expect(inputs!.find((i) => i.site_id === 'review')!.offline_legs![0].accepted).toBe(1);
   });
 });
+
+describe('R5 második utóellenőrzés — az üzleti esemény az ELSŐ beérkezése szerint tartozik időszakhoz', () => {
+  const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+  function ls(db: DatabaseSync, orderId: string, createdAt: string) {
+    db.prepare(
+      `INSERT INTO lead_status (id, lead_id, site_id, status, order_id, occurred_at, created_at)
+       VALUES (?, 'lead-12345678', 'review', 'lead_qualified', ?, ?, ?)`
+    ).run(`ls${++seq}`, orderId, createdAt, createdAt);
+  }
+  function del(db: DatabaseSync, orderId: string, status: string, origin: string, createdAt: string, skip?: string) {
+    db.prepare(
+      `INSERT INTO deliveries (id, event_id, site_id, event_name, platform, status, http_status, origin, created_at, skip_reason)
+       VALUES (?, ?, 'review', 'lead_qualified', 'gads', ?, ?, ?, ?, ?)`
+    ).run(`d${++seq}`, orderId, status, status === 'skipped' ? null : status === 'accepted' ? 200 : 503, origin, createdAt, skip ?? null);
+  }
+  async function leg(db: DatabaseSync) {
+    const inputs = await fetchReconInputs({ LEDGER: d1(db) } as unknown as Env, since(), [SITE], true);
+    return inputs!.find((i) => i.site_id === 'review')!.offline_legs![0];
+  }
+
+  it('régi esemény CRM-újrakézbesítése ma (új lead_status sor, offline accepted) nem fedi el a mai hiányt', async () => {
+    const db = freshDb();
+    ls(db, 'order-old', ago(2));
+    del(db, 'order-old', 'rejected', 'offline', ago(2));
+    // A CRM ma újraküldi ugyanazt az üzleti eseményt — új kísérlet-sor, ugyanaz az orderId.
+    ls(db, 'order-old', now());
+    del(db, 'order-old', 'accepted', 'offline', now());
+    // A mai, valódi esemény kézbesítés nélkül.
+    ls(db, 'order-today', now());
+    expect(await leg(db)).toMatchObject({ received: 1, accepted: 0, recovered_earlier: 1 });
+  });
+
+  it('első küldés hibás, későbbi (ablakon belüli) újraküldés sikeres → egy elfogadott esemény, nem helyreállított', async () => {
+    const db = freshDb();
+    ls(db, 'order-a', now());
+    del(db, 'order-a', 'rejected', 'offline', now());
+    ls(db, 'order-a', now());
+    del(db, 'order-a', 'accepted', 'retry', now());
+    expect(await leg(db)).toMatchObject({ received: 1, accepted: 1, rejected: 0, recovered_earlier: 0 });
+  });
+
+  it('már korábban elfogadott régi esemény mai ismételt sikere NEM „helyreállítás"', async () => {
+    const db = freshDb();
+    ls(db, 'order-done', ago(3));
+    del(db, 'order-done', 'accepted', 'offline', ago(3));
+    del(db, 'order-done', 'accepted', 'retry', now());
+    ls(db, 'order-t', now());
+    del(db, 'order-t', 'accepted', 'offline', now());
+    expect(await leg(db)).toMatchObject({ received: 1, accepted: 1, recovered_earlier: 0 });
+  });
+
+  it('az ablak határán: közvetlenül előtte beérkezett esemény az ablakban kézbesítve → helyreállított, nem mai', async () => {
+    const db = freshDb();
+    const justBefore = new Date(Date.parse(since()) - 60_000).toISOString();
+    ls(db, 'order-edge', justBefore);
+    del(db, 'order-edge', 'accepted', 'retry', now());
+    ls(db, 'order-in', now());
+    del(db, 'order-in', 'skipped', 'offline', now(), 'consent_withdrawn');
+    const l = await leg(db);
+    expect(l).toMatchObject({ received: 1, accepted: 0, recovered_earlier: 1, skips: { consent_withdrawn: 1 } });
+  });
+
+  it('indokolt kihagyás nem hiány, a valódi kézbesítési hiba igen', async () => {
+    const db = freshDb();
+    for (let i = 0; i < 6; i++) {
+      ls(db, `order-skip-${i}`, now());
+      del(db, `order-skip-${i}`, 'skipped', 'offline', now(), 'consent_withdrawn');
+    }
+    for (let i = 0; i < 6; i++) {
+      ls(db, `order-fail-${i}`, now());
+      del(db, `order-fail-${i}`, 'skipped', 'offline', now(), 'not_configured');
+    }
+    const l = await leg(db);
+    expect(l.received).toBe(12);
+    expect(l.skips).toMatchObject({ consent_withdrawn: 6, not_configured: 6 });
+  });
+});

@@ -9,9 +9,10 @@ import {
 } from '../lib/deadletter';
 import { sendToMetaCAPI, type MetaCAPIPayload } from '../lib/meta';
 import { sendToGA4MP, type GA4Payload } from '../lib/ga4';
-import { isGa4AllowedForSite, isConsentProviderSbo } from '../lib/consent-log';
+import { decideAdConsent, isConsentProviderSbo } from '../lib/consent-log';
+import { isTerminalSkip } from '../lib/skip-reason';
 import { type GAdsPayload } from '../lib/gads';
-import { sendToDataManager } from '../lib/datamanager';
+import { assessUploadWindow, sendToDataManager } from '../lib/datamanager';
 import { sendToTikTok, type TikTokPayload } from '../lib/tiktok';
 import { sendToLinkedIn, type LinkedInPayload } from '../lib/linkedin';
 import { sendToMsAds, type MsAdsPayload } from '../lib/msads';
@@ -22,9 +23,9 @@ import {
   readLatestConsentForLead,
   readConsentState,
   markDoNotReplay,
+  skipReasonFromErrorCode,
   type VendorResult
 } from '../lib/ledger';
-import { isBlockedByConsentState } from '../lib/consent-log';
 import type { HashedUserData } from '../lib/hash';
 import { logStructured } from '../types';
 import { TrackingErrorCode, ERROR_DESCRIPTIONS } from '../lib/error-codes';
@@ -91,14 +92,15 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         await recordRetryDelivery(env, record, result);
         await deleteDeadLetter(env, key);
         succeeded++;
-      } else if (result.skipped && result.skip_reason === 'consent_withdrawn') {
-        // 2.5: a visszavonás NEM tranziens állapot — a rekord óránkénti újra-
-        // skippelése a 7 napos lejáratig csak zaj lenne, és a dead-archívumból
-        // egy admin-replay újra kiküldhetné. Ehelyett: do_not_replay=1 (permanens
-        // szuppresszió az idempotency táblában) + 'skipped' ledger-sor (a monitor
-        // lássa, MIÉRT nincs kézbesítés) + a DLQ-példány törlése. A törlés CSAK a
-        // sikeres jelölés után — ha a jelölés elbukik, a rekord marad, és a
-        // következő cron-kör újra próbálja.
+      } else if (isTerminalRetrySkip(record, result)) {
+        // TERMINÁLIS skip — UGYANAZ a szabály, mint a Queue-consumerben (worker.ts):
+        // a consent-tiltás/-hiány, a nem-elvárt platform és a hiányzó azonosító
+        // magától SOSEM javul meg, tehát a rekord óránkénti újra-skippelése a
+        // lejáratig csak zaj, és a dead-archívumba vinné a (hash-elt) PII-t.
+        // 'skipped' ledger-sor (a monitor lássa, MIÉRT nincs kézbesítés) + a
+        // DLQ-példány törlése. Visszavonásnál ELŐBB do_not_replay=1 (permanens
+        // szuppresszió), és a törlés CSAK a sikeres jelölés után — ha a jelölés
+        // elbukik, a rekord marad, és a következő cron-kör újra próbálja.
         await recordDeliveries(env, {
           event_id: String(record.event_payload.event_id ?? ''),
           lead_id: record.lead_id,
@@ -107,19 +109,24 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
           origin: 'retry',
           records: [normalizeDelivery(record.platform, { status: 'fulfilled', value: result })]
         });
-        const marked = await markDoNotReplay(
-          env,
-          record.site_id,
-          String(record.event_payload.event_name ?? ''),
-          String(record.event_payload.event_id ?? '')
-        );
+        const withdrawn = result.skip_reason === 'consent_withdrawn';
+        const marked = withdrawn
+          ? await markDoNotReplay(
+              env,
+              record.site_id,
+              String(record.event_payload.event_name ?? ''),
+              String(record.event_payload.event_id ?? '')
+            )
+          : true;
         if (marked) await deleteDeadLetter(env, key);
         logStructured({
           level: 'info',
-          message:
-            'DLQ record suppressed — consent withdrawn since capture (do_not_replay=1, record removed)',
+          message: withdrawn
+            ? 'DLQ record suppressed — consent withdrawn since capture (do_not_replay=1, record removed)'
+            : 'DLQ record closed — terminal skip on retry (record removed)',
           site_id: record.site_id,
           platform: record.platform,
+          skip_reason: result.skip_reason,
           lead_id: record.lead_id
         });
         suppressed++;
@@ -141,7 +148,10 @@ export async function handleScheduledRetry(event: ScheduledEvent, env: Env): Pro
         // hogy a hiányzó configot bárki visszaírná — vagyis a „tartós retry"
         // pontosan a lomtalan-forgatókönyvben mondana csődöt. Így a rekordot
         // egyedül a 7 napos ablak (retryWindowHoursFor) járatja le.
-        const configBlocked = record.blocked_configuration === true && result.skipped === true;
+        // A még úton lévő consent-döntés (consent_pending) sem kísérlet: hívás nem történt.
+        const configBlocked =
+          result.skipped === true &&
+          (record.blocked_configuration === true || result.skip_reason === 'consent_pending');
         const incremented = {
           ...record,
           retry_count: configBlocked ? record.retry_count : record.retry_count + 1,
@@ -256,70 +266,102 @@ export function logSkippedRetry(record: DeadLetterRecord): void {
 }
 
 /**
- * CMP Fázis 2 (2.5) replay-kapu, CSATORNAFÜGGETLENÜL: MINDEN hirdetési replay
- * előtt a consent_log AKTUÁLIS állapota (legmagasabb revision) dönt, nem a
- * capture-kori jel. A retrySingle az EGYETLEN közös pontja mind a négy replay-
- * útnak (cron, Queues consumer, admin single/bulk), ezért a kapu ide kerül.
- *
- * Korábban csak a gads-ágon futott — a Meta/TikTok/LinkedIn replay egy azóta
- * VISSZAVONT engedéllyel is kiment (2026-10-18 review R1). A D1-hibát pedig a
- * „nincs consent_id"-val azonos `null` jelezte, így üzemzavar alatt a régi
- * engedély érvényesült (R2).
+ * Lezárható-e a DLQ-rekord egy skip-eredmény alapján — a cron ÉS a Queue-consumer
+ * KÖZÖS szabálya (worker.ts). A Data Manager config-skipje `skip_reason` nélkül,
+ * csak `error_code`-dal jön: az okot abból vezetjük le (skipReasonFromErrorCode),
+ * különben az `isTerminalSkip(undefined) === true` a 7 napos konfigurációs
+ * blokkot az első futáson törölné. A `blocked_configuration` rekordot ok nélküli
+ * skip nem zárja le (azt a config visszaírásáig őrizzük), egy megnevezett
+ * terminális ok (consent_withdrawn, conversion_window_expired…) viszont igen.
+ */
+export function isTerminalRetrySkip(record: DeadLetterRecord, result: VendorResult): boolean {
+  if (result.skipped !== true) return false;
+  const reason = result.skip_reason ?? skipReasonFromErrorCode(result.error_code);
+  // Ok nélküli skip (pl. validate-only) a blokkolt rekordon a config-blokk része;
+  // de egy MEGNEVEZETT terminális ok (visszavonás, lejárt határidő) azt is lezárja.
+  if (reason === undefined && record.blocked_configuration === true) return false;
+  return isTerminalSkip(reason);
+}
+
+/**
+ * Replay consent-kapu, CSATORNAFÜGGETLENÜL: minden újraküldés (cron, Queues
+ * consumer, admin single/bulk) a retrySingle-en megy át, és ITT ugyanazt a közös
+ * szabályt kérdezi, mint a CRM-esemény (consent-log.ts decideAdConsent). A
+ * kategória a csatornától függ: a GA4 az analitika-, a többi a hirdetési jelet.
  *
  * Visszatérés: `null` = mehet a küldés; különben a hívónak visszaadandó eredmény:
- *  - visszavont / nem GRANTED állapot → `skipped` + `consent_withdrawn`
- *    (a hívók ezt terminálisan kezelik: do_not_replay + a rekord törlése);
- *  - olvasási hiba → `success:false` + CONSENT_STATE_UNAVAILABLE: hívás NEM
- *    történik, a rekord a normál retry-úton marad, és a helyreállás után az
- *    AKKORI állapot dönt.
+ *  - tiltott (visszavont) → `skipped` + `consent_withdrawn` (terminális,
+ *    do_not_replay + a rekord törlése);
+ *  - új döntés szükséges (saját CMP, nincs consent_log-sor / consent_id) →
+ *    20 óráig `consent_pending` (retryable, nem kísérlet), utána `skipped` +
+ *    `consent_missing_failclosed` (terminális) — a capture-kori engedélyre NEM
+ *    esünk vissza;
+ *  - nem ellenőrizhető (D1-hiba) → `success:false` + CONSENT_STATE_UNAVAILABLE:
+ *    hívás nem történik, a rekord a normál retry-úton marad.
  *
- * A consent_id a DLQ-rekordból jön (a capture-kor tárolva, lead_id nélkül is),
- * vagy a lead receiptjeiből. Egyik sincs (a teljes CookieYes-flotta) → a mai
- * viselkedés bitre változatlan. Egy CookieYes-site lead-olvasási hibája sem
- * állítja meg a küldést: ott consent_log nem létezik, nincs mit elmulasztani.
+ * CookieYes-site-on (nincs consent_log, nincs visszavonás-forrás) a capture-kori
+ * kapu döntése áll — a mai viselkedés; a lead-olvasás hibája ott nem állít meg.
  */
+/** Ennyi ideig várunk egy még úton lévő consent-döntésre a replay-en. */
+// 20 óra: a 24 órás retry-ablak (deadletter.ts) lejárta ELŐTT a kapu még
+// terminálisan lezárja a rekordot, így az nem a dead-archívumba fut ki.
+const NEEDS_DECISION_GRACE_MS = 20 * 60 * 60 * 1000;
+
 export async function checkReplayConsent(
   env: Env,
   siteConfig: SiteConfig,
   record: DeadLetterRecord
 ): Promise<VendorResult | null> {
-  const unavailable = (): VendorResult => {
+  let consentId = typeof record.consent_id === 'string' && record.consent_id ? record.consent_id : null;
+  const lead = !consentId && record.lead_id
+    ? await readLatestConsentForLead(env, record.site_id, record.lead_id)
+    : null;
+  if (lead?.kind === 'found') consentId = lead.record.consent_id;
+  const verdict = decideAdConsent({
+    sbo: isConsentProviderSbo(siteConfig),
+    requireConsent: siteConfig.require_consent === true,
+    category: record.platform === 'ga4' ? 'analytics' : 'ads',
+    consentLog: consentId ? await readConsentState(env, record.site_id, consentId) : null,
+    // A replay-en a receipt csak a consent_id forrása, nem evidencia: a capture-
+    // kori kapu már döntött. A hibája viszont saját CMP-n számít (lásd decide).
+    receipt: lead && lead.kind !== 'found' ? lead : null,
+    passedCaptureGate: true
+  });
+  if (verdict.kind === 'allowed') return null;
+  // Az „új döntés szükséges" a capture után nem feltétlenül végleges: a böngésző
+  // a 503-at kapott döntését a következő oldalletöltéskor küldi újra. A rekord
+  // ezért NEEDS_DECISION_GRACE_MS-ig újrapróbálható (nincs küldés), csak utána
+  // zárul terminális skippel — se engedély, se idő előtti végleges vesztés.
+  const young =
+    Date.now() - Date.parse(record.first_failed_at) < NEEDS_DECISION_GRACE_MS;
+  if (verdict.kind === 'needs_decision' && young) {
+    return {
+      success: true,
+      skipped: true,
+      skip_reason: 'consent_pending',
+      error: `${record.platform} replay deferred: no consent decision on record yet (may still be in flight)`
+    };
+  }
+  if (verdict.kind === 'unavailable') {
     logStructured({
       level: 'warn',
       error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE],
       site_id: record.site_id,
-      platform: record.platform
+      platform: record.platform,
     });
     return {
       success: false,
       error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
       error: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]
     };
+  }
+  return {
+    success: true,
+    skipped: true,
+    skip_reason: verdict.skip_reason,
+    error: `${record.platform} replay skipped: ${verdict.kind === 'denied' ? 'current consent state does not allow it' : 'no valid consent decision on record'}`
   };
-
-  let consentId = typeof record.consent_id === 'string' && record.consent_id ? record.consent_id : null;
-  if (!consentId && record.lead_id) {
-    const lead = await readLatestConsentForLead(env, record.site_id, record.lead_id);
-    if (lead.kind === 'error') {
-      if (isConsentProviderSbo(siteConfig)) return unavailable();
-      return null;
-    }
-    if (lead.kind === 'found') consentId = lead.record.consent_id;
-  }
-  if (!consentId) return null;
-
-  const read = await readConsentState(env, record.site_id, consentId);
-  if (read.kind === 'error') return unavailable();
-  if (read.kind === 'found' && isBlockedByConsentState(read.state)) {
-    return {
-      success: true,
-      skipped: true,
-      skip_reason: 'consent_withdrawn',
-      error: `${record.platform} replay skipped: current consent state is ${read.state.decision} (revision ${read.state.revision})`
-    };
-  }
-  return null;
 }
 
 /**
@@ -348,12 +390,9 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
   const hashedUserData = (record.hashed_user_data || {}) as HashedUserData;
   const eventPayload = record.event_payload;
 
-  // A GA4-nek saját (analytics-) kapuja van lent; minden HIRDETÉSI csatorna
-  // ugyanazon az aktuális-consent kapun megy át.
-  if (record.platform !== 'ga4') {
-    const blocked = await checkReplayConsent(env, siteConfig, record);
-    if (blocked) return blocked;
-  }
+  // Minden csatorna (a GA4 is, az analitika-kategóriával) ugyanazon a kapun megy át.
+  const blocked = await checkReplayConsent(env, siteConfig, record);
+  if (blocked) return blocked;
 
   if (record.platform === 'meta') {
     return sendToMetaCAPI(
@@ -364,34 +403,36 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
   }
   if (record.platform === 'ga4') {
     // Az offline GA4 láb kikapcsolt (Run 6), de a korábban DLQ-ba került ga4-
-    // rekordok leürítéséhez a retry-út megmarad.
-    //
-    // CMP Fázis 1: `provider='sbo'` site-on a GA4 `analytics_storage='GRANTED'`-hez
-    // kötött (a DUAA statisztikai kivétel a GA4-et nem menti meg — lásd
-    // consent-log.ts isGa4AllowedForSite). A CookieYes-site-okon a mai szabály áll,
-    // tehát ez az ág ott bitre változatlan. A DLQ-rekord a capture-kori jeleket
-    // hordozza; ha akkor nem volt analytics-consent, ma sem küldjük fel.
+    // rekordok leürítéséhez a retry-út megmarad. A consent-kapu fent futott
+    // (analitika-kategória: saját CMP-n a consent_log AKTUÁLIS állapota).
     const ga4Payload = eventPayload as unknown as GA4Payload;
-    if (!isGa4AllowedForSite(siteConfig, ga4Payload.consent)) {
-      return {
-        success: true,
-        skipped: true,
-        skip_reason: 'consent_denied',
-        error: 'GA4 skipped: analytics consent not granted (provider=sbo)'
-      };
-    }
     return sendToGA4MP(siteConfig, ga4Payload);
   }
   if (record.platform === 'gads') {
     // Modell 2 + Data Manager migráció: a Google Ads offline láb a Data Manager
     // API-n megy, NEM a sunset uploadClickConversions-ön (az új adopternek
     // CUSTOMER_NOT_ALLOWLISTED-et ad). A retry-nak UGYANAZT az utat kell használnia.
-    return sendToDataManager(
-      siteConfig,
-      env,
-      eventPayload as unknown as GAdsPayload,
-      hashedUserData
-    );
+    // A feltöltési határidőt az ÚJRAKÜLDÉS pillanatában ellenőrizzük (review R8):
+    // a határidő előtt sorba került, de utána újraküldött esemény kifutott. Az
+    // üzleti esemény és a bevétele (lead_status) ettől érintetlen.
+    const gadsPayload = eventPayload as unknown as GAdsPayload;
+    // Hiányzó / hibás / nulla event_time (régi rekord) nem dobhat RangeError-t,
+    // és nem olvasódhat 1970-nek (az hamis végleges lejárat lenne): ilyenkor
+    // csak a click_at-ből ítélünk (ismeretlen → a Google dönt).
+    const eventMs = Number(gadsPayload.event_time) * 1000;
+    const window = assessUploadWindow(Number.isFinite(eventMs) && eventMs > 0 ? new Date(eventMs).toISOString() : '', {
+      clickAtIso: gadsPayload.click_at,
+      hasClickId: Boolean(gadsPayload.gclid || gadsPayload.gbraid || gadsPayload.wbraid)
+    });
+    if (window.status === 'expired') {
+      return {
+        success: true,
+        skipped: true,
+        skip_reason: 'conversion_window_expired',
+        error: `gads replay skipped: ${window.age_days} days since ${window.reference} > ${window.limit_days}-day upload limit (${window.identification})`
+      };
+    }
+    return sendToDataManager(siteConfig, env, gadsPayload, hashedUserData);
   }
   if (record.platform === 'tiktok') {
     return sendToTikTok(siteConfig, eventPayload as unknown as TikTokPayload, hashedUserData);

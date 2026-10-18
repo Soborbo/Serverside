@@ -1,8 +1,7 @@
 {
   "_comment": "GENERÁLT RACSNI — csak szűkülhet. Lásd scripts/check-error-code-emission.mjs",
-  "generated_from_active_codes": 124,
+  "generated_from_active_codes": 127,
   "uncovered": [
-    "TRK-000-008",
     "TRK-400-006",
     "TRK-400-007",
     "TRK-400-016",
@@ -13,7 +12,6 @@
     "TRK-600-007",
     "TRK-600-008",
     "TRK-700-001",
-    "TRK-700-002",
     "TRK-800-003",
     "TRK-800-006",
     "TRK-820-002",
@@ -22,7 +20,6 @@
     "TRK-900-003",
     "TRK-900-004",
     "TRK-900-006",
-    "TRK-910-002",
     "TRK-910-004",
     "TRK-910-005",
     "TRK-910-006",

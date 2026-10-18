@@ -147,6 +147,106 @@ describe('A konfigurációs blokk külön retry-keretet kap', () => {
     expect(stored[0].last_attempted_at).not.toBe(record.last_attempted_at);
   });
 
+  it('Data Manager konfigurációs blokk (skip_reason NÉLKÜL, csak error_code): a cron NEM törli a rekordot', async () => {
+    // 2026-10-18 független utóellenőrzés: a cron terminális-skip ága az
+    // `isTerminalSkip(undefined) === true` miatt az ok nélküli Data Manager
+    // config-skipet terminálisnak vette, és az ELSŐ futáson törölte a 7 napos
+    // blocked_configuration rekordot.
+    const stored: DeadLetterRecord[] = [];
+    const deleted: string[] = [];
+    const record = base({
+      platform: 'gads',
+      site_id: 'cfg',
+      hostname: 'cfg.example',
+      lead_id: 'lead-12345678',
+      event_payload: { event_id: 'order-cfg', event_name: 'lead_qualified', event_time: Math.floor(Date.now() / 1000) - 3600 },
+      hashed_user_data: { em: 'a'.repeat(64) },
+      blocked_configuration: true,
+      retry_count: 0,
+      last_attempted_at: '2026-07-19T00:00:00.000Z'
+    });
+    const env: any = {
+      GADS_OAUTH_CLIENT_ID: 'c',
+      GADS_OAUTH_CLIENT_SECRET: 's',
+      SITE_CONFIG: {
+        get: async () => ({ site_id: 'cfg', country_code: 'GB', gads: { customer_id: '1234567890', conversion_actions: {} } })
+      },
+      DEAD_LETTER: {
+        list: async () => ({ objects: [{ key: 'cfg/gads/2026-10-18/r0.json' }], truncated: false }),
+        get: async () => ({ json: async () => record }),
+        put: async (_k: string, body: string) => stored.push(JSON.parse(body)),
+        delete: async (k: string) => deleted.push(k)
+      }
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+
+    await handleScheduledRetry({ scheduledTime: Date.now(), cron: '0 * * * *' } as unknown as ScheduledEvent, env);
+
+    expect(stored).toHaveLength(1);
+    expect(stored[0].blocked_configuration).toBe(true);
+    expect(stored[0].retry_count).toBe(0);
+  });
+
+  it('blokkolt rekord, de a consent közben visszavonva → a cron LEZÁRJA (törlés), nem őrzi 7 napig a PII-t', async () => {
+    // Második független utóellenőrzés (HIGH): a blocked_configuration-őr a
+    // consent_withdrawn skipet is nem-terminálisnak vette.
+    const stored: DeadLetterRecord[] = [];
+    const deleted: string[] = [];
+    const record = base({ blocked_configuration: true, consent_id: 'cid-0123456789abcdef' } as Partial<DeadLetterRecord>);
+    const row = {
+      consent_id: 'cid-0123456789abcdef', revision: 2, decision: 'withdrawn', cat_analytics: 0, cat_marketing: 0,
+      ad_user_data: 'DENIED', ad_personalization: 'DENIED', ad_storage: 'DENIED', analytics_storage: 'DENIED',
+      client_decided_at: '2026-10-01T00:00:00.000Z', server_received_at: '2026-10-01T00:00:01.000Z', verified: 1, seq: 1
+    };
+    const stmt = (sql: string): any => ({
+      bind: () => stmt(sql),
+      first: async () => (/FROM consent_log/.test(sql) ? row : sql.includes('INSERT INTO idempotency') ? { seen_count: 1 } : null),
+      all: async () => ({ results: [] }),
+      run: async () => ({ meta: { changes: 1 } })
+    });
+    const env: any = {
+      SITE_CONFIG: { get: async () => ({ site_id: 'lomtalan', country_code: 'HU', consent: { provider: 'sbo' } }) },
+      LEDGER: { prepare: (sql: string) => stmt(sql), batch: async () => [] },
+      DEAD_LETTER: {
+        list: async () => ({ objects: [{ key: 'lomtalan/meta/2026-07-15/r0.json' }], truncated: false }),
+        get: async () => ({ json: async () => record }),
+        put: async (_k: string, body: string) => stored.push(JSON.parse(body)),
+        delete: async (k: string) => deleted.push(k)
+      }
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    await handleScheduledRetry({ scheduledTime: Date.now(), cron: '0 * * * *' } as unknown as ScheduledEvent, env);
+    expect(stored).toHaveLength(0);
+    expect(deleted).toEqual(['lomtalan/meta/2026-07-15/r0.json']);
+  });
+
+  it('sbo, a consent-döntés még úton (consent_pending): a cron NEM növeli a retry_count-ot és NEM ír delivery-sort', async () => {
+    const stored: DeadLetterRecord[] = [];
+    const ledgerWrites: string[] = [];
+    const record = base({ consent_id: 'cid-0123456789abcdef', retry_count: 1, last_attempted_at: '2026-07-19T00:00:00.000Z' } as Partial<DeadLetterRecord>);
+    const stmt = (sql: string): any => ({
+      bind: () => stmt(sql),
+      first: async () => null,
+      all: async () => ({ results: [] }),
+      run: async () => { ledgerWrites.push(sql); return { meta: { changes: 1 } }; }
+    });
+    const env: any = {
+      SITE_CONFIG: { get: async () => ({ site_id: 'lomtalan', country_code: 'HU', consent: { provider: 'sbo' } }) },
+      LEDGER: { prepare: (sql: string) => stmt(sql), batch: async (l: any[]) => { ledgerWrites.push('batch'); return l; } },
+      DEAD_LETTER: {
+        list: async () => ({ objects: [{ key: 'lomtalan/meta/2026-07-15/r0.json' }], truncated: false }),
+        get: async () => ({ json: async () => record }),
+        put: async (_k: string, body: string) => stored.push(JSON.parse(body)),
+        delete: async () => {}
+      }
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    await handleScheduledRetry({ scheduledTime: Date.now(), cron: '0 * * * *' } as unknown as ScheduledEvent, env);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].retry_count).toBe(1);
+    expect(ledgerWrites.filter((w) => w === 'batch' || /deliveries/.test(w))).toHaveLength(0);
+  });
+
   it('valódi vendor-hiba UTÁN a retry_count normálisan nő', async () => {
     const stored: DeadLetterRecord[] = [];
     const record = base({ blocked_configuration: true, retry_count: 2 });

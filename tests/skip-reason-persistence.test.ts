@@ -24,11 +24,13 @@ import { TrackingErrorCode } from '../src/lib/error-codes';
  */
 
 describe('SkipReason taxonómia', () => {
-  it('a not_configured és az invalid_identifier a KÉT nem-terminális ok', () => {
-    // Mindkettő KV-javítás után újrajátszható (hiányzó blokk / formahibás ID) —
-    // minden más skip terminális. Bővítés csak tudatosan, a DLQ-következménnyel.
+  it('a not_configured, az invalid_identifier és a consent_pending a nem-terminális okok', () => {
+    // Az első kettő KV-javítás után újrajátszható (hiányzó blokk / formahibás ID).
+    // A consent_pending (2026-10-18, tudatos bővítés): saját CMP alatt a consent-
+    // döntés még úton van; a DLQ-következmény: nem kísérlet, 20 óra után a kapu
+    // terminálisan lezárja (scheduled/retry.ts). Minden más skip terminális.
     const retryable = SKIP_REASONS.filter((r) => !isTerminalSkip(r));
-    expect(retryable).toEqual(['not_configured', 'invalid_identifier']);
+    expect(retryable).toEqual(['not_configured', 'invalid_identifier', 'consent_pending']);
   });
 
   it('minden Fázis D-ben felvett ok terminális', () => {

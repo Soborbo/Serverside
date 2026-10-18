@@ -523,3 +523,81 @@ export async function sendToDataManager(
     };
   }
 }
+
+// ── Feltöltési határidő (2026-10-18 review R8) ─────────────────────────────────
+
+/**
+ * A Google offline-import határideje a KAPCSOLÓDÓ UTOLSÓ kattintástól a
+ * FELTÖLTÉSIG (napokban). Forrás: Google Ads Help, „Guidelines for importing
+ * offline conversions" (support.google.com/google-ads/answer/15081888, 2026-10-18):
+ *  - kattintásazonosítós import: 90 nap;
+ *  - Enhanced Conversions for Leads (csak személyes adat): 63 nap.
+ * A gbraid/wbraid-et kattintásazonosítóként kezeljük (a forrás külön nem nevesíti
+ * — élesben a Google elutasítása a bíró). A konverziós ablak (1–90 nap,
+ * műveletenként; answer/3123169) a kattintás→KONVERZIÓ időt korlátozza — azt
+ * innen nem ismerjük, ezért erről nem állítunk semmit.
+ */
+export const OFFLINE_WINDOW_DAYS = { click_id: 90, user_data: 63 } as const;
+
+export type UploadWindowStatus = 'within' | 'expired' | 'unknown';
+export type UploadIdentification = keyof typeof OFFLINE_WINDOW_DAYS;
+
+export interface UploadWindowAssessment {
+  status: UploadWindowStatus;
+  identification: UploadIdentification;
+  limit_days: number;
+  /**
+   * Mihez mértünk: a kattintáshoz, a konverzióhoz (az utolsó kattintás biztosan
+   * ELŐTTE volt), vagy — `click_after_conversion` — a megadott kattintási idő a
+   * konverzió UTÁN van (hibás időrend; abból nem számolunk). null: nincs pont.
+   */
+  reference: 'click_at' | 'occurred_at' | 'click_after_conversion' | null;
+  /** A feltöltésig eltelt idő a viszonyítási ponttól (napok, lefelé kerekítve). */
+  age_days: number | null;
+}
+
+/**
+ * Belefér-e a feltöltés a Google határidejébe (pure). A négy időpont KÜLÖN:
+ *  - kattintás (`clickAtIso`, ha a CRM ismeri);
+ *  - üzleti esemény (`occurredAtIso` — SOHA nem módosul, nincs visszadátumozás);
+ *  - feltöltés (`uploadAtIso`, alapból MOST — az újraküldésnél is az akkori idő);
+ *  - azonosítási mód (`hasClickId`): click ID → 90 nap, csak személyes adat → 63.
+ *
+ * Biztos állítás csak bizonyított pontból:
+ *  - expired: a konverzió maga régebbi a határnál (az attribuáló kattintás csak
+ *    előtte lehetett), VAGY click ID-s feltöltésnél a megnevezett kattintás az;
+ *  - within: az ismert kattintás a határon belül van (a személyes adatos
+ *    egyezés ennél csak újabb kattintáshoz köthet → az is belefér);
+ *  - unknown minden más: nincs kattintási idő; személyes adatnál a régi ismert
+ *    kattintás (egy újabb kattintás is lehetett); hibás időrend. Az unknown
+ *    feltöltődik — a Google dönt, és az elutasítás 'rejected' sor lesz.
+ * A lead első ismert eseménye NEM alsó becslés: egy régi leadhez új kattintás
+ * tartozhat.
+ */
+export function assessUploadWindow(
+  occurredAtIso: string,
+  refs: { clickAtIso?: string; uploadAtIso?: string; hasClickId: boolean }
+): UploadWindowAssessment {
+  const identification: UploadIdentification = refs.hasClickId ? 'click_id' : 'user_data';
+  const limit = OFFLINE_WINDOW_DAYS[identification];
+  const base = { identification, limit_days: limit };
+  const upload = refs.uploadAtIso ? Date.parse(refs.uploadAtIso) : Date.now();
+  const occurred = Date.parse(occurredAtIso);
+  const click = refs.clickAtIso ? Date.parse(refs.clickAtIso) : NaN;
+  const days = (from: number) => (upload - from) / 86_400_000;
+
+  if (Number.isFinite(occurred) && Number.isFinite(upload) && days(occurred) > limit) {
+    return { ...base, status: 'expired', reference: 'occurred_at', age_days: Math.floor(days(occurred)) };
+  }
+  if (!Number.isFinite(click) || !Number.isFinite(upload)) {
+    return { ...base, status: 'unknown', reference: null, age_days: null };
+  }
+  if (Number.isFinite(occurred) && click > occurred) {
+    return { ...base, status: 'unknown', reference: 'click_after_conversion', age_days: null };
+  }
+  const age = days(click);
+  if (age <= limit) return { ...base, status: 'within', reference: 'click_at', age_days: Math.floor(age) };
+  return refs.hasClickId
+    ? { ...base, status: 'expired', reference: 'click_at', age_days: Math.floor(age) }
+    : { ...base, status: 'unknown', reference: 'click_at', age_days: Math.floor(age) };
+}

@@ -175,14 +175,26 @@ Storno / teljes jóváírás → RETRACT; részleges jóváírás / felszorzás 
 
 - A Data Manager-esemény ideje **mindig** az `occurred_at` (fizetés / státusz
   valódi ideje). Nincs automatikus visszadátumozás; a `won_at` csak informatív.
-- Az ablak a **kattintástól a FELTÖLTÉSIG** mér (nem az eseményig): kattintás-
-  azonosítóval (gclid/gbraid/wbraid) **90 nap**, csak személyes adattal
-  (Enhanced Conversions for Leads) **63 nap** (`OFFLINE_WINDOW_DAYS`, Google Ads
-  Help „Offline conversion imports FAQs").
-- A kattintás idejét a CRM `click_at` mezője adja. Nélküle csak **alsó becslés**
-  van (a lead első ismert eseménye, ill. maga a konverzió — mindkettő a kattintás
-  UTÁN van): ha már az is kifut → lejárt; ha nem → **ismeretlen**, és feltöltünk
-  (egy fiatal leadből nem következik, hogy a kattintás is belefér; a Google dönt).
+- A határidő a **kapcsolódó utolsó kattintástól a FELTÖLTÉSIG** mér (nem az
+  eseményig): kattintásazonosítóval (gclid/gbraid/wbraid) **90 nap**, csak
+  személyes adattal (Enhanced Conversions for Leads) **63 nap**
+  (`OFFLINE_WINDOW_DAYS`, `lib/datamanager.ts`; forrás: Google Ads Help
+  „Guidelines for importing offline conversions", answer/15081888, ellenőrizve
+  2026-10-18). A gbraid/wbraid kattintásazonosítóként kezelése feltételezés.
+- **Külön szabály, amit NEM ellenőrzünk:** a konverziós ablak (műveletenként
+  1–90 nap, answer/3123169) a kattintás→konverzió időt korlátozza. A művelet
+  beállítását innen nem látjuk; a Google ott is a végső bíró.
+- Biztos állítás csak bizonyított pontból (2026-10-18, második utóellenőrzés):
+  - **lejárt**, ha maga a konverzió régebbi a határnál (az attribuáló kattintás
+    csak előtte lehetett), vagy click ID-s feltöltésnél a megnevezett kattintás az;
+  - **belefér**, ha az ismert kattintás a határon belül van;
+  - **ismeretlen** minden más esetben — nincs `click_at`; csak személyes adatnál
+    régi ismert kattintás (a Google a felhasználó újabb kattintásához is köthet);
+    a `click_at` a konverzió UTÁN van (hibás időrend). Ismeretlennél feltöltünk.
+  - A lead első ismert eseménye **nem** alsó becslés: egy régi leadhez új
+    kattintás tartozhat (a 6.12 még annak használta — hibásan).
+- Az ellenőrzés az **újraküldéskor is** az akkori időponttal fut (a `click_at` a
+  DLQ-rekord payloadjában utazik, a Google-nek nem megy ki).
 - Kifutott esemény: **nincs feltöltés**, `deliveries` sor
   `skipped / conversion_window_expired`, a válasz `upload_window_expired: true`.
   Az üzleti bevétel (`lead_status`) **megmarad** — a hirdetési visszajelzés lejárt,

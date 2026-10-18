@@ -289,59 +289,84 @@ describe('párhuzamos mérési ablak (2.4)', () => {
   });
 });
 
-describe('lánc-kulcs (2026-10-18 review R7)', () => {
-  const sentKeys = (fn: ReturnType<typeof vi.fn>) =>
-    fn.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string) as { consent_id: string; consent_key?: string });
-
-  it('minden döntés hordozza a lánc kulcsát; ugyanaz a lánc → ugyanaz a kulcs', async () => {
+describe('lánc-kulcs (2026-10-18 review R7) — a szerver adja ki, nem a localStorage', () => {
+  it('a payload NEM hordoz kulcsot, és a localStorage-ba sem kerül kulcs (a régi bejegyzés törlődik)', async () => {
+    localStorage.setItem('sbo_consent_key', JSON.stringify({ consent_id: 'x', key: 'k'.repeat(64) }));
     const fn = mockFetch(204);
     applySboDecision({ analytics: true, marketing: true }, CTX);
-    applySboDecision({ analytics: false, marketing: false }, CTX);
     await flushAsync();
-    const [a, b] = sentKeys(fn);
-    expect(a.consent_key).toMatch(/^[A-Za-z0-9_-]{32,128}$/);
-    expect(b.consent_id).toBe(a.consent_id);
-    expect(b.consent_key).toBe(a.consent_key);
+    const body = JSON.parse((fn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.consent_key).toBeUndefined();
+    expect(localStorage.getItem('sbo_consent_key')).toBeNull();
+    // A HttpOnly kulcs-süti csak a same-origin hitelesítő adatokkal megy vissza.
+    expect((fn.mock.calls[0][1] as RequestInit).credentials).toBe('same-origin');
   });
 
-  it('új lánc (a süti eltűnt) → új kulcs, a régi lánc kulcsa nem megy át', async () => {
+  it('tárhely nem elérhető: a döntés így is elmegy (a védelmet a szerver-süti adja)', async () => {
     const fn = mockFetch(204);
-    applySboDecision({ analytics: true, marketing: true }, CTX);
-    document.cookie = 'sbo_consent=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
-    applySboDecision({ analytics: true, marketing: true }, CTX);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    applySboDecision({ analytics: false, marketing: false }, CTX);
     await flushAsync();
-    const [a, b] = sentKeys(fn);
-    expect(b.consent_id).not.toBe(a.consent_id);
-    expect(b.consent_key).not.toBe(a.consent_key);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('kulcsvesztés utáni lánc-forgatás (2026-10-18 review R7)', () => {
-  it('a 403 consent_key_mismatch-re a döntés ÚJ láncon, új kulccsal, revision=1-ről megy újra', async () => {
+const KEY_403 = { status: 403, ok: false, text: async () => 'consent_key_mismatch' } as unknown as Response;
+const OK_204 = { status: 204, ok: true } as Response;
+
+describe('403 consent_key_mismatch kezelése (2026-10-18 review R7)', () => {
+  it('két lap versenye: egy újrapróba UGYANAZZAL a döntéssel (a kulcs-süti azóta megjött) — nincs lánc-forgatás', async () => {
     const bodies: Array<Record<string, unknown>> = [];
-    let call = 0;
+    const replies = [KEY_403, OK_204];
     vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
       bodies.push(JSON.parse(init.body as string));
-      call++;
-      return call === 1
-        ? ({ status: 403, ok: false, text: async () => 'consent_key_mismatch' } as unknown as Response)
-        : ({ status: 204, ok: true } as Response);
+      return replies.shift() ?? OK_204;
     }));
     applySboDecision({ analytics: true, marketing: true }, CTX);
-    await flushAsync();
-    await flushAsync();
+    for (let i = 0; i < 4; i++) await flushAsync();
     expect(bodies).toHaveLength(2);
-    const [rejected, rotated] = bodies;
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(localStorage.getItem('sbo_consent_pending')).toBeNull();
+  });
+
+  it('kulcsvesztés / régi lánc: az újrapróba is 403 → a döntés ÚJ láncon, revision=1-ről megy', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const replies = [KEY_403, KEY_403, OK_204];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      return replies.shift() ?? OK_204;
+    }));
+    applySboDecision({ analytics: true, marketing: true }, CTX);
+    for (let i = 0; i < 6; i++) await flushAsync();
+    expect(bodies).toHaveLength(3);
+    const [rejected, , rotated] = bodies;
     expect(rotated.consent_id).not.toBe(rejected.consent_id);
     expect(rotated.revision).toBe(1);
     expect(rotated.decision).toBe('accept_all');
-    expect(rotated.consent_key).not.toBe(rejected.consent_key);
-    // A süti az új láncra áll — az új konverziók már ahhoz kötődnek.
+    // Az új lánc megnevezi az elődjét → a későbbi visszavonás a régi lánc
+    // eseményeire is hat (a szerver metszi a két állapotot).
+    expect(rotated.previous_consent_id).toBe(rejected.consent_id);
     expect(readSboConsent()?.consentId).toBe(rotated.consent_id);
     expect(localStorage.getItem('sbo_consent_pending')).toBeNull();
   });
 
-  it('más 403 (pl. origin) nem forgat láncot', async () => {
+  it('elavult döntés 403-a (közben újabb született) → NINCS forgatás, az újabb döntés a saját láncán marad', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      return ++n === 1 ? KEY_403 : OK_204;
+    }));
+    applySboDecision({ analytics: true, marketing: true }, CTX);
+    applySboDecision({ analytics: false, marketing: false }, CTX); // az újabb döntés, mielőtt a 403 megjön
+    for (let i = 0; i < 6; i++) await flushAsync();
+    const ids = new Set(bodies.map((b) => b.consent_id));
+    expect(ids.size).toBe(1);
+    expect(readSboConsent()?.revision).toBe(2);
+  });
+
+  it('más 403 (pl. origin) nem forgat láncot és nem próbál újra', async () => {
     const fn = vi.fn(async () => ({ status: 403, ok: false, text: async () => 'Forbidden origin' }) as unknown as Response);
     vi.stubGlobal('fetch', fn);
     applySboDecision({ analytics: true, marketing: true }, CTX);

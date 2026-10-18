@@ -26,13 +26,14 @@ import {
   resolveConsent,
   buildConsentTelemetry,
   parseConsentCookieHeader,
+  parseConsentSources,
   type ConsentDecision,
   type ConsentTelemetry
 } from '../lib/consent';
 import { parseAttribution, buildFbcFromFbclid, type AttributionParams } from '../lib/attribution';
 import { isValidProvenance } from '../lib/provenance';
 import { parseStorageReadTelemetry } from '../lib/storage-telemetry';
-import { parseConsentId } from '../lib/consent-log';
+import { parseConsentId, isConsentProviderSbo } from '../lib/consent-log';
 import { parseEcommerce } from '../lib/ecommerce';
 import { enqueueFailure, type Platform } from '../lib/deadletter';
 import { isTerminalSkip } from '../lib/skip-reason';
@@ -624,8 +625,17 @@ export async function handleConversion(
   // click-ID forwarderek (TikTok/LinkedIn/MsAds) kimaradnak (GDPR). GA4-ág ezen
   // az úton NINCS (Modell 2: a böngésző birtokolja az on-site GA4-et), a Google Ads
   // pedig kizárólag offline megy (routes/lead-status.ts), saját consent-kapuval.
-  const consentState = parseConsent(payload.consent);
-  const consentDecision = resolveConsent(consentState, siteConfig.require_consent === true);
+  //
+  // Saját CMP (sbo) alatt UGYANAZ a szabály, mint a kézbesítési utakon
+  // (consent-log.ts decideAdConsent): bizonyított döntés nélkül nincs hirdetési
+  // kézbesítés (fail-closed a config `require_consent`-jétől függetlenül), és a
+  // CookieYes-forrású jel nem evidencia — régi CookieYes-engedélyre nem esünk vissza.
+  const sboSite = isConsentProviderSbo(siteConfig);
+  const consentSourceUsed = parseConsentSources(payload.consent_sources)?.source_used;
+  const consentState =
+    sboSite && consentSourceUsed?.startsWith('cookieyes') ? undefined : parseConsent(payload.consent);
+  const requireConsent = siteConfig.require_consent === true || sboSite;
+  const consentDecision = resolveConsent(consentState, requireConsent);
 
   // ── Fázis D · consent-diagnosztika (2026-08) ────────────────────────────────
   // A FENTI KAPU VÁLTOZATLAN. Ez a blokk MÉR: begyűjti a párhuzamos consent-
@@ -645,7 +655,7 @@ export async function handleConversion(
     rawSources: payload.consent_sources,
     consent: consentState,
     baseAdAllowed: consentDecision.adAllowed,
-    requireConsent: siteConfig.require_consent === true,
+    requireConsent,
     strict: siteConfig.consent_strict === true,
     ingressKind: serverIngress ? 'server' : 'browser',
     serverCookie: parseConsentCookieHeader(request.headers.get('Cookie'))
@@ -903,7 +913,7 @@ function fanOut(
       lead_id: leadId,
       site_id: siteConfig.site_id,
       consent: consentDecision.consent,
-      require_consent: siteConfig.require_consent === true,
+      require_consent: siteConfig.require_consent === true || isConsentProviderSbo(siteConfig),
       ad_allowed: adAllowed,
       // Fázis D: forrásonkénti parse-olt booleanok + a döntést hajtó forrás.
       // NULL = az a forrás nem volt elérhető (a betöltési verseny bizonyítéka).
