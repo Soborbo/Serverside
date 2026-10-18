@@ -681,8 +681,8 @@ export async function recordConsentDecision(
           consent_mode, policy_version, banner_version, consent_text_version, ruleset,
           lang, country, client_lib_version,
           cky_cookie_analytics, cky_cookie_marketing, cky_agreement,
-          client_decided_at, server_received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          client_decided_at, server_received_at, key_hash, verified)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -709,7 +709,9 @@ export async function recordConsentDecision(
         entry.cky_cookie_marketing ?? null,
         entry.cky_agreement ?? null,
         entry.client_decided_at,
-        new Date().toISOString()
+        new Date().toISOString(),
+        entry.key_hash ?? null,
+        entry.verified === true ? 1 : 0
       )
       .run();
     return 'stored';
@@ -751,67 +753,169 @@ export async function recordConsentMetric(env: Env, m: ConsentMetricEntry): Prom
 }
 
 /**
+ * Az AKTUÁLIS consent-állapot olvasásának eredménye — HÁROM állapot, nem kettő.
+ *
+ * A korábbi `ConsentLogState | null` ugyanazzal a `null`-lal jelezte a „nincs
+ * ilyen consent_id"-t és a D1-hibát. A replay-kapu a `null`-t „nincs tiltás"-nak
+ * olvasta, így PONT üzemzavar alatt veszett el a visszavonás érvényesítése
+ * (2026-10-18 review R2). A hívó most meg tudja különböztetni a kettőt.
+ */
+export type ConsentStateRead =
+  | { kind: 'found'; state: ConsentLogState }
+  | { kind: 'missing' }
+  | { kind: 'error' };
+
+/**
  * Az AKTUÁLIS consent-állapot egy `consent_id`-re: a LEGMAGASABB revision.
  *
- * Ezt hívja a `GET /api/consent/:consent_id`, és rajta keresztül minden offline
- * upload / retry / replay — NEM a capture-kori receiptet. A nap-1 GRANTED /
- * nap-3 visszavonás / nap-10 revenue_confirmed eset csak így skippel helyesen.
+ * Ezt hívja minden offline upload / retry / replay — NEM a capture-kori
+ * receiptet. A nap-1 GRANTED / nap-3 visszavonás / nap-10 revenue_confirmed eset
+ * csak így skippel helyesen.
  *
- * `null` = nincs ilyen consent_id, VAGY D1-hiba. A hívó ezt a mai, receipt-alapú
- * szabályra visszaesésként kezeli (consent-log.ts isBlockedByConsentState) — a
- * Fázis 1 inert, a CookieYes-oldalakon soha nincs consent_id.
+ * `missing` = nincs ilyen consent_id (vagy nincs LEDGER binding); `error` = a
+ * D1-olvasás elbukott. Egy kötelező consent-ellenőrzés `error`-nál NEM mehet
+ * tovább — az eventnek újrapróbálhatónak kell maradnia.
  *
  * A tenant-izolációhoz a `site_id` KÖTELEZŐ: egy consent_id ismerete nem adhat
  * betekintést egy másik site consent-rekordjába.
+ */
+export async function readConsentState(
+  env: Env,
+  siteId: string,
+  consentId: string
+): Promise<ConsentStateRead> {
+  if (!env.LEDGER) return { kind: 'missing' };
+  // Három jelölt (review R7, aszimmetrikus szabály):
+  //  latest   — a legmagasabb revision (régi / kulcs nélküli láncok: ez dönt);
+  //  verified — a legmagasabb revisionű IGAZOLT sor (védett lánc alapállapota);
+  //  unverif  — a legutóbb BEÉRKEZETT igazolatlan sor (szigorítás a védett láncon).
+  const cols = `consent_id, revision, decision, cat_analytics, cat_marketing,
+                ad_user_data, ad_personalization, ad_storage, analytics_storage,
+                client_decided_at, server_received_at, verified`;
+  try {
+    const where = 'FROM consent_log WHERE site_id = ? AND consent_id = ?';
+    const one = (filter: string, order: string) =>
+      env.LEDGER!.prepare(`SELECT ${cols} ${where}${filter} ORDER BY ${order} LIMIT 1`)
+        .bind(siteId, consentId)
+        .first<ConsentRow>();
+    const [latestRow, verifiedRow, unverifiedRow] = await Promise.all([
+      one('', 'revision DESC'),
+      one(' AND verified = 1', 'revision DESC'),
+      one(' AND verified = 0', 'server_received_at DESC, revision DESC')
+    ]);
+    const by = new Map<string, ConsentRow>();
+    if (latestRow) by.set('latest', latestRow);
+    if (verifiedRow) by.set('verified', verifiedRow);
+    if (unverifiedRow) by.set('unverified', unverifiedRow);
+    const latest = by.get('latest');
+    if (!latest) return { kind: 'missing' };
+    const verified = by.get('verified');
+    const unverified = by.get('unverified');
+    let row: ConsentRow = latest;
+    if (verified) {
+      row =
+        unverified &&
+        unverified.server_received_at > verified.server_received_at &&
+        narrowsOrKeeps(unverified, verified)
+          ? unverified
+          : verified;
+    }
+    return { kind: 'found', state: toConsentState(row) };
+  } catch (err) {
+    ledgerError('getConsentState', err, { site_id: siteId });
+    return { kind: 'error' };
+  }
+}
+
+interface ConsentRow {
+  consent_id: string;
+  revision: number;
+  decision: string;
+  cat_analytics: number;
+  cat_marketing: number;
+  ad_user_data: string;
+  ad_personalization: string;
+  ad_storage: string;
+  analytics_storage: string;
+  client_decided_at: string;
+  server_received_at: string;
+  verified: number;
+}
+
+function toConsentState(row: ConsentRow): ConsentLogState {
+  return {
+    consent_id: row.consent_id,
+    revision: row.revision,
+    decision: row.decision as ConsentLogState['decision'],
+    cat_analytics: row.cat_analytics === 1,
+    cat_marketing: row.cat_marketing === 1,
+    ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
+    ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
+    ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
+    analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
+    client_decided_at: row.client_decided_at,
+    server_received_at: row.server_received_at
+  };
+}
+
+/**
+ * A `next` döntés SEMMILYEN kategóriát nem bővít a `current`-hez képest (pure).
+ * Ez a „szigorító" döntés definíciója a review R7 aszimmetrikus szabályában:
+ * kulcs nélkül csak ilyen írható egy védett láncra, és csak ilyen léphet egy
+ * igazolt állapot helyébe.
+ */
+export function narrowsOrKeeps(
+  next: { cat_analytics: number | boolean; cat_marketing: number | boolean },
+  current: { cat_analytics: number | boolean; cat_marketing: number | boolean } | null
+): boolean {
+  const on = (v: number | boolean) => v === true || v === 1;
+  const curA = current ? on(current.cat_analytics) : false;
+  const curM = current ? on(current.cat_marketing) : false;
+  return (!on(next.cat_analytics) || curA) && (!on(next.cat_marketing) || curM);
+}
+
+/**
+ * Egy consent-lánc írási jogosultságának állapota (review R7): a legmagasabb
+ * eddigi revision és a lánc tulajdonlási hash-e — KIZÁRÓLAG igazolt sorról (a
+ * lánc első, kulccsal induló döntése). Régi / kulcs nélküli láncon null: azt
+ * utólag senki nem „védheti le", a támadó sem. `null` visszatérés = D1-hiba.
+ */
+export async function readConsentChainAuth(
+  env: Env,
+  siteId: string,
+  consentId: string
+): Promise<{ max_revision: number | null; key_hash: string | null } | null> {
+  if (!env.LEDGER) return { max_revision: null, key_hash: null };
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT MAX(revision) AS max_revision,
+              (SELECT key_hash FROM consent_log
+                WHERE site_id = ?1 AND consent_id = ?2 AND key_hash IS NOT NULL AND verified = 1
+                ORDER BY server_received_at ASC, revision ASC LIMIT 1) AS key_hash
+         FROM consent_log
+        WHERE site_id = ?1 AND consent_id = ?2`
+    )
+      .bind(siteId, consentId)
+      .first<{ max_revision: number | null; key_hash: string | null }>();
+    return { max_revision: row?.max_revision ?? null, key_hash: row?.key_hash ?? null };
+  } catch (err) {
+    ledgerError('readConsentChainAuth', err, { site_id: siteId });
+    return null;
+  }
+}
+
+/**
+ * `readConsentState` kétállapotú burkolója a `GET /api/consent/:consent_id`
+ * olvasó végpontnak: `null` = nincs ilyen consent_id VAGY D1-hiba. Kapu-döntéshez
+ * (upload / replay) NE ezt használd — ott a hibát külön kell kezelni.
  */
 export async function getConsentState(
   env: Env,
   siteId: string,
   consentId: string
 ): Promise<ConsentLogState | null> {
-  if (!env.LEDGER) return null;
-  try {
-    const row = await env.LEDGER.prepare(
-      `SELECT consent_id, revision, decision, cat_analytics, cat_marketing,
-              ad_user_data, ad_personalization, ad_storage, analytics_storage,
-              client_decided_at, server_received_at
-         FROM consent_log
-        WHERE site_id = ? AND consent_id = ?
-        ORDER BY revision DESC
-        LIMIT 1`
-    )
-      .bind(siteId, consentId)
-      .first<{
-        consent_id: string;
-        revision: number;
-        decision: string;
-        cat_analytics: number;
-        cat_marketing: number;
-        ad_user_data: string;
-        ad_personalization: string;
-        ad_storage: string;
-        analytics_storage: string;
-        client_decided_at: string;
-        server_received_at: string;
-      }>();
-    if (!row) return null;
-    return {
-      consent_id: row.consent_id,
-      revision: row.revision,
-      decision: row.decision as ConsentLogState['decision'],
-      cat_analytics: row.cat_analytics === 1,
-      cat_marketing: row.cat_marketing === 1,
-      ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
-      ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
-      ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
-      analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
-      client_decided_at: row.client_decided_at,
-      server_received_at: row.server_received_at
-    };
-  } catch (err) {
-    ledgerError('getConsentState', err, { site_id: siteId });
-    return null;
-  }
+  const read = await readConsentState(env, siteId, consentId);
+  return read.kind === 'found' ? read.state : null;
 }
 
 export interface DeliveriesInput {
@@ -979,7 +1083,20 @@ export async function getLatestConsentForLead(
   siteId: string,
   leadId: string
 ): Promise<LeadConsentRecord | null> {
-  if (!env.LEDGER) return null;
+  const read = await readLatestConsentForLead(env, siteId, leadId);
+  return read.kind === 'found' ? read.record : null;
+}
+
+/**
+ * `getLatestConsentForLead` háromállapotú alakja: a replay-kapunak tudnia kell,
+ * hogy a lead receiptje HIÁNYZIK, vagy a D1-olvasás BUKOTT el (review R2).
+ */
+export async function readLatestConsentForLead(
+  env: Env,
+  siteId: string,
+  leadId: string
+): Promise<{ kind: 'found'; record: LeadConsentRecord } | { kind: 'missing' } | { kind: 'error' }> {
+  if (!env.LEDGER) return { kind: 'missing' };
   try {
     // A JEL-HORDOZÓ receipt megelőzi a puszta frissességet.
     //
@@ -1015,15 +1132,43 @@ export async function getLatestConsentForLead(
         ad_personalization: string | null;
         consent_id: string | null;
       }>();
-    if (!row) return null;
+    if (!row) return { kind: 'missing' };
     return {
-      ad_allowed: row.ad_allowed === 1,
-      ad_user_data: row.ad_user_data ?? null,
-      ad_personalization: row.ad_personalization ?? null,
-      consent_id: row.consent_id ?? null
+      kind: 'found',
+      record: {
+        ad_allowed: row.ad_allowed === 1,
+        ad_user_data: row.ad_user_data ?? null,
+        ad_personalization: row.ad_personalization ?? null,
+        consent_id: row.consent_id ?? null
+      }
     };
   } catch (err) {
     ledgerError('getLatestConsentForLead', err, { site_id: siteId });
+    return { kind: 'error' };
+  }
+}
+
+/**
+ * A lead legkorábbi ismert eseménye (events_raw) — a hirdetési kattintás UTÁNI
+ * alsó becslés az offline-ablakhoz (lead-status assessUploadWindow, review R8).
+ * null = nincs ilyen esemény, VAGY D1-hiba: a hívó ilyenkor 'unknown' ablakkal
+ * feltölt (a Google dönt) — egy olvasási hiba nem dobhat el konverziót.
+ */
+export async function getLeadFirstSeenAt(
+  env: Env,
+  siteId: string,
+  leadId: string
+): Promise<string | null> {
+  if (!env.LEDGER) return null;
+  try {
+    const row = await env.LEDGER.prepare(
+      `SELECT MIN(received_at) AS first_seen FROM events_raw WHERE site_id = ? AND lead_id = ?`
+    )
+      .bind(siteId, leadId)
+      .first<{ first_seen: string | null }>();
+    return row?.first_seen ?? null;
+  } catch (err) {
+    ledgerError('getLeadFirstSeenAt', err, { site_id: siteId });
     return null;
   }
 }

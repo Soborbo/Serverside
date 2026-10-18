@@ -146,11 +146,23 @@ const {
         if (btn) lastSubmitter = btn;
       });
 
-      // Submit guard
+      // Submit guard — KÉT külön állapot. Korábban egyetlen `isSubmitting` jelölte
+      // a programozott újraküldést ÉS a folyamatban lévő küldést, és mindkettőt
+      // preventDefault nélkül engedte át: egy függő fetch alatti dupla klikk/Enter
+      // így natív submitként (második kérés, váratlan navigáció) csúszott át
+      // (2026-10-18 review R9).
+      //  - isSubmitting: a küldés folyamatban → minden ÚJ submit elnyelve.
+      //  - nativeResubmit: a SAJÁT requestSubmit()-ünk re-entry-je → átengedve,
+      //    hogy a natív submit és a többi listener lefusson.
       let isSubmitting = false;
+      let nativeResubmit = false;
 
       form.addEventListener('submit', async (e) => {
-        if (isSubmitting) return; // programmatic re-entry → let through
+        if (nativeResubmit) return; // programmatic re-entry → let through
+        if (isSubmitting) {
+          e.preventDefault();
+          return;
+        }
 
         if (!form.reportValidity()) return;
         e.preventDefault();
@@ -214,20 +226,25 @@ const {
 
         await waitForTracking(600);
 
-        // Re-submit. The isSubmitting guard makes the re-fired submit event a
+        // Re-submit. The nativeResubmit flag makes the re-fired submit event a
         // no-op for our handler (no preventDefault), so the native submission
         // proceeds AND any other submit listeners run. requestSubmit() preserves
         // the clicked submitter's name/value natively (multi-button forms).
-        if (typeof form.requestSubmit === 'function') {
-          form.requestSubmit(lastSubmitter || undefined);
-        } else {
-          // Legacy fallback: form.submit() bypasses listeners, so re-add the submitter.
-          if (lastSubmitter?.name) {
-            const h = document.createElement('input');
-            h.type = 'hidden'; h.name = lastSubmitter.name; h.value = lastSubmitter.value || '';
-            form.appendChild(h);
+        nativeResubmit = true;
+        try {
+          if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit(lastSubmitter || undefined);
+          } else {
+            // Legacy fallback: form.submit() bypasses listeners, so re-add the submitter.
+            if (lastSubmitter?.name) {
+              const h = document.createElement('input');
+              h.type = 'hidden'; h.name = lastSubmitter.name; h.value = lastSubmitter.value || '';
+              form.appendChild(h);
+            }
+            form.submit();
           }
-          form.submit();
+        } finally {
+          nativeResubmit = false;
         }
         // A guardot feloldjuk: a re-entry MÁR lefutott (requestSubmit synchron
         // fire-öl), a natív submit pedig vagy navigál (az oldal úgyis elhagyja ezt),

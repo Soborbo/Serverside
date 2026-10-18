@@ -150,8 +150,9 @@ describe('POST /api/consent — őszinte státuszkódok', () => {
     const res = await handleConsent(post('/api/consent', DECISION), env);
     expect(res.status).toBe(204);
     expect(res.headers.get('X-Consent-Received')).toBe('1');
-    expect(calls).toHaveLength(1);
-    expect(calls[0].sql).toContain('INSERT INTO consent_log');
+    // Az INSERT előtt a lánc jogosultsága olvasódik (review R7) — írás pontosan egy.
+    const inserts = calls.filter((c) => c.sql.includes('INSERT INTO consent_log'));
+    expect(inserts).toHaveLength(1);
   });
 
   it('204 a duplikátumra is — a kliens retry-ja NEM hiba', async () => {

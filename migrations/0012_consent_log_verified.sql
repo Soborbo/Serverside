@@ -1,0 +1,15 @@
+-- 0012 — igazolt / igazolatlan consent-döntés (2026-10-18 review R7, utóellenőrzés).
+--
+-- A 0011 kulcsa két rést hagyott: (1) kulcsvesztés után a JOGOS visszavonás 403-at
+-- kapott és elveszett; (2) a kulcs nélküli (régi) láncot az első jelentkező
+-- kulcsa „védte le" — a támadóé is. Az új, ASZIMMETRIKUS szabály:
+--
+--  * verified = 1: a sort a lánc kulcsa igazolta (vagy a lánc ezzel a kulccsal
+--    indult). Csak ilyen sor köthet kulcsot a lánchoz.
+--  * verified = 0: kulcs nélküli / rossz kulcsú SZIGORÍTÓ döntés egy védett láncon
+--    (soha nem bővít engedélyt), vagy egy régi/kulcs nélküli lánc bármely sora.
+--
+-- A védett lánc AKTUÁLIS állapota: a legutóbbi igazolt sor, KIVÉVE ha utána
+-- (beérkezési idő szerint) igazolatlan szigorítás érkezett — akkor az. Egy
+-- későbbi igazolt döntés ezt felülírja. Jogos visszavonás így soha nem vész el.
+ALTER TABLE consent_log ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;

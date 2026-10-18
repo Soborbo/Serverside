@@ -10,6 +10,44 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.12.0 (2026-10-18)
+
+### Javítva — kulcsvesztés után sem vész el a jogos visszavonás; régi lánc nem „védhető le" (review R7, utóellenőrzés)
+
+A 6.11.0 két rést hagyott: (1) ha a böngésző elvesztette a lánc kulcsát, a visszavonása 403-at kapott, kikerült az újraküldési sorból, és a szerveren az engedély maradt érvényben; (2) a kulcs nélküli (régi) láncot az első jelentkező kulcsa kötötte meg — a támadóé is. Az új, **aszimmetrikus** szabály (0012 migráció, `consent_log.verified`):
+
+- Védett láncra kulcs nélkül vagy rossz kulccsal **csak szigorító** döntés írható (semmilyen kategóriát nem bővít), **igazolatlanként** — de érvényes: a replay-kapu tiltásnak veszi. Riasztási jel: TRK-910-010. A tulajdonos későbbi, kulccsal igazolt döntése felülírja (beérkezési sorrend szerint, a revisiontől függetlenül).
+- Engedély-bővítés csak a lánc kulcsával. Kulcsvesztés után a kliens a 403 `consent_key_mismatch`-re **új láncot indít** (új `consent_id`, új kulcs, revision=1) a jelenlegi döntéssel — a döntés nem vész el.
+- Kulcs **csak** új lánc első, kulcsos döntéséhez köthető. A régi / kulcs nélküli láncok a süti lejártáig (180 nap) a régi süti-egyezéses szabályon maradnak, igazolatlan sorokkal.
+
+A 6.11.0 „Ismert korlát" bekezdése ezzel érvényét veszti. **Deploy-sorrend:** 0011 + 0012 migráció → worker → site-csomagok.
+
+## 6.11.0 (2026-10-18)
+
+### Biztonság — a consent-lánc tulajdonlási kulcsa (review R7)
+
+A kliens a consent-lánc indulásakor véletlen titkot generál (`localStorage` `sbo_consent_key`, a `consent_id`-hez kötve), és minden döntéssel elküldi (`consent_key`). A gateway csak a SHA-256 hash-ét tárolja (`consent_log.key_hash`, 0011 migráció), és a védett láncra kulcs nélkül nem fogad el döntést (403 `consent_key_mismatch`) — egy `consent_id` ismerete és egy hamisított süti már nem elég egy hamis visszavonáshoz. A revision a lánc ismert maximumánál legfeljebb 20-szal lehet nagyobb (400 `revision_out_of_range`). A 6.11 előtti láncok az első kulcsos döntéskor válnak védetté.
+
+**Ismert korlát:** ha egy látogató a `localStorage`-t törli, de az `sbo_consent` sütit nem, a védett lánc további döntéseit a gateway elutasítja (a kliens hangosan jelzi, TRK-4002); a döntés a böngészőben ettől még érvényes.
+
+**Deploy-sorrend:** előbb a 0011 migráció, aztán a worker, végül a site-ok csomagja.
+
+## 6.10.0 (2026-10-18)
+
+A 2026-10-18-i kód-review P1-es, hozzájárulást érintő hibáinak javítása (R3, R9, R10). A worker-oldali párjuk (R1, R2: a replay-kapu) ugyanebben a változásban él.
+
+### Javítva — a szerveroldali consent-olvasó nem esik vissza a régi CookieYes-engedélyre (R3)
+
+`readConsentFromCookie` új, opcionális `provider` opciót kap (`GatewayEnv.TRACKING_CONSENT_PROVIDER`). `provider: 'sbo'` mellett KIZÁRÓLAG az `sbo_consent` dönt: hiányzó, lejárt vagy régi policy-verziójú süti → nincs döntés (a gateway `require_consent`-re esik), a CookieYes-„igen" nem helyettesíti. Megadás nélkül (régi másolatok) ha az `sbo_consent` süti jelen van, érvénytelensége esetén sincs CookieYes-visszaesés; sbo-süti nélkül a CookieYes-flotta viselkedése változatlan. **Site-teendő sbo-site-on:** `TRACKING_CONSENT_PROVIDER=sbo` a backend-envbe, és `provider: consentProviderFromEnv(env)` a `readConsentFromCookie` hívásba (lásd `server/backend/README.md`).
+
+### Javítva — függő fetch alatt a második submit nem csúszik át (R9)
+
+A `TrackedForm` két külön állapotot tart: a folyamatban lévő küldés alatt minden új submit `preventDefault`-ot kap (dupla klikk / Enter nem indít második kérést vagy navigációt); csak a saját, programozott `requestSubmit()` re-entry megy át natívan.
+
+### Javítva — tájékoztató-verzióváltás után újra megjelenik a banner (R10)
+
+A `ConsentBanner` megjelenítése, bezárása és a panel előtöltése az aktív `PUBLIC_TRACKING_POLICY_VERSION`-höz kötött — ugyanaz a kapu, mint a `<head>` consent-bootja és a mérés olvasói. Egy régi szövegre adott döntés többé nem rejti el a bannert. A `consent_id`/`revision` folytonossága (verziófüggetlen olvasás az `applySboDecision`-ben) változatlan.
+
 ## 6.9.0 (2026-09-17)
 
 ### Hozzáadva — banner A/B teszt (b3: site-onkénti cím + balról beúszó kártya)

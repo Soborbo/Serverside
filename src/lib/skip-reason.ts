@@ -99,7 +99,14 @@ export type SkipReason =
    * a visszavont döntés alatti eventet egy későbbi ÚJ hozzájárulás sem
    * játszhatja újra.
    */
-  | 'consent_withdrawn';
+  | 'consent_withdrawn'
+  /**
+   * 2026-10-18 review R8: az offline konverzió a kattintáshoz (vagy a lead első
+   * eseményéhez) képest kifutott a Google feltöltési ablakából. Az üzleti
+   * bevétel megmarad (lead_status); a hirdetési láb kifejezetten lejárt.
+   * TERMINÁLIS — a retry ezen nem segít.
+   */
+  | 'conversion_window_expired';
 
 /**
  * A perzisztálható skip-okok teljes listája — a `deliveries.skip_reason` oszlop
@@ -118,7 +125,8 @@ export const SKIP_REASONS: readonly SkipReason[] = [
   'eea_rule',
   'template_guard',
   'invalid_identifier',
-  'consent_withdrawn'
+  'consent_withdrawn',
+  'conversion_window_expired'
 ];
 
 export function isSkipReason(v: unknown): v is SkipReason {

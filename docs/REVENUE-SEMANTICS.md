@@ -164,19 +164,33 @@ Storno / teljes jóváírás → RETRACT; részleges jóváírás / felszorzás 
 > (DLQ + cron) ezért CSAK `markDoNotReplay` mögött futhat, különben egy tranziens
 > 5xx duplán vonná vissza ugyanazt a konverziót.
 
-### D4 — Visszamenőlegesség: **ablakon belül a fizetés ideje, azon túl a `wonAt`.**
+### D4 — Időpont: **mindig a valódi üzleti időpont; a kifutott esemény „lejárt", nem visszadátumozott.**
 
-Ha a fizetés belefér a Google offline-ablakába, az a konverzió ideje. Ha kifut, a
-`wonAt`-tal küldjük — de a **már ismert, helyes értékkel**. Egy elveszett
-konverzió rosszabb, mint egy pontatlan időbélyeg.
+> **Módosítva 2026-10-18 (review R8).** A korábbi szabály (2026-09-09: „ablakon
+> túl a `wonAt`") a fizetés–nyerés különbségéből következtetett, és 90 nap felett
+> a valódi időt a `won_at`-ra cserélte. Ez a platformnak hamis időbélyeget adott,
+> a feltöltést mégsem biztosította, mert a **kattintás kora** ismeretlen maradt
+> (július 1-i kattintás, október 1-i nyerés, október 18-i fizetés: a régi kód 17
+> napot látott, a kattintás 109 napos volt).
 
-A gateway a `won_at`-hoz mér, nem a kattintáshoz: a kattintás idejét nem ismeri,
-a megnyerés viszont mindig a kattintás UTÁN van, tehát ez **konzervatív** becslés
-— ha a `won_at`-tól számítva belefér, a kattintástól számítva is belefért. Az
-ablak `OFFLINE_WINDOW_DAYS = 90`.
+- A Data Manager-esemény ideje **mindig** az `occurred_at` (fizetés / státusz
+  valódi ideje). Nincs automatikus visszadátumozás; a `won_at` csak informatív.
+- Az ablak a **kattintástól a FELTÖLTÉSIG** mér (nem az eseményig): kattintás-
+  azonosítóval (gclid/gbraid/wbraid) **90 nap**, csak személyes adattal
+  (Enhanced Conversions for Leads) **63 nap** (`OFFLINE_WINDOW_DAYS`, Google Ads
+  Help „Offline conversion imports FAQs").
+- A kattintás idejét a CRM `click_at` mezője adja. Nélküle csak **alsó becslés**
+  van (a lead első ismert eseménye, ill. maga a konverzió — mindkettő a kattintás
+  UTÁN van): ha már az is kifut → lejárt; ha nem → **ismeretlen**, és feltöltünk
+  (egy fiatal leadből nem következik, hogy a kattintás is belefér; a Google dönt).
+- Kifutott esemény: **nincs feltöltés**, `deliveries` sor
+  `skipped / conversion_window_expired`, a válasz `upload_window_expired: true`.
+  Az üzleti bevétel (`lead_status`) **megmarad** — a hirdetési visszajelzés lejárt,
+  nem a pénz.
+- A Google a végső bíró: az ablakon belüli, mégis elutasított feltöltés
+  `rejected` sorként látszik.
 
-**A ledger a VALÓDI `occurred_at`-et őrzi** — a helyesbítés a platformnak szól,
-nem a saját könyvelésünknek.
+**A ledger a VALÓDI `occurred_at`-et őrzi.**
 
 ---
 
@@ -186,7 +200,7 @@ nem a saját könyvelésünknek.
 
 - `payment_received` kanonikus offline event (`src/events.json`), `occurrence_id`
   kötelezettséggel és ütközésmentes `orderId`-vel;
-- a D4 időpont-szabály (`resolveConversionTimeIso`, `won_at` mező);
+- a D4 időpont-szabály (`assessUploadWindow`, `click_at` mező; 2026-10-18 óta nincs visszadátumozás);
 - a D1 dupla-számolás elleni config-őr;
 - a D3 hangos, nevesített elutasítás — `revenue_retracted` / `revenue_restated`
   mint ÉRVÉNYES státusz, hogy a CRM ne „ismeretlen státusz" 400-at kapjon;
@@ -197,7 +211,7 @@ nem a saját könyvelésünknek.
 **Hátra van:**
 
 1. **CRM-oldal:** a fizetési esemény kiváltsa a lifecycle-hookot
-   (`payment_received` + `occurrence_id` = a `payments` sor id-ja + `won_at`).
+   (`payment_received` + `occurrence_id` = a `payments` sor id-ja + `click_at`, ha ismert).
    Ma a hook forrása kizárólag a lead-státusz.
 2. **KV-config site-onként:** `gads.conversion_actions.payment_received` egy
    **ÚJ** Google Ads conversion actionre (nem a `revenue_confirmed`-ére — lásd az

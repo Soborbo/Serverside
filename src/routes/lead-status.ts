@@ -22,14 +22,15 @@ import {
   VALID_LEAD_STATUSES,
   REPEATABLE_LEAD_STATUSES,
   ADJUSTMENT_LEAD_STATUSES,
-  getLatestConsentForLead,
-  getConsentState,
+  readLatestConsentForLead,
+  readConsentState,
+  getLeadFirstSeenAt,
   markDoNotReplay,
   recordLeadStatus,
   recordDeliveries,
   normalizeDelivery
 } from '../lib/ledger';
-import { isBlockedByConsentState } from '../lib/consent-log';
+import { isBlockedByConsentState, isConsentProviderSbo } from '../lib/consent-log';
 
 /**
  * CRM offline-loop endpoint (P0 üzleti érték). A CRM ide POST-olja a lead
@@ -100,31 +101,86 @@ interface LeadStatusBody {
    * helyes értékkel. Hiánya nem hiba: akkor a fizetés ideje marad.
    */
   won_at?: string;
+  /**
+   * 2026-10-18 review R8 — a hirdetési KATTINTÁS (vagy első érintés) ideje, ha a
+   * CRM ismeri. Ez az offline-ablak valódi viszonyítási pontja; hiányában a lead
+   * első ismert eseménye (events_raw) az alsó becslés.
+   */
+  click_at?: string;
 }
 
 /**
- * P10 §5.4 — meddig fogadjuk el a fizetés saját dátumát konverzió-időpontnak.
- *
- * A Google offline feltöltésnek ablaka van a kattintástól számítva; egy hónapokkal
- * későbbi fizetés már nem köthető a kattintáshoz. A `won_at`-hoz mérünk, mert a
- * kattintás idejét a gateway nem ismeri — a megnyerés viszont mindig a kattintás
- * UTÁN van, tehát ez KONZERVATÍV becslés: ha a `won_at`-tól számítva még belefér,
- * a kattintástól számítva is belefért.
+ * A Google offline-feltöltés ablakai, a KATTINTÁSTÓL a FELTÖLTÉSIG (napokban):
+ *  - kattintásazonosítós (gclid/gbraid/wbraid) feltöltés: 90 nap;
+ *  - csak személyes adaton alapuló (Enhanced Conversions for Leads): 63 nap.
+ * Forrás: Google Ads Help, „Offline conversion imports FAQs" (2026-10-18). A Google
+ * a végső bíró: az ablakon belüli, mégis elutasított feltöltés 'rejected' sor.
  */
-export const OFFLINE_WINDOW_DAYS = 90;
+export const OFFLINE_WINDOW_DAYS = { click_id: 90, user_data: 63 } as const;
+
+export type UploadWindowStatus = 'within' | 'expired' | 'unknown';
+export type UploadIdentification = keyof typeof OFFLINE_WINDOW_DAYS;
+
+export interface UploadWindowAssessment {
+  status: UploadWindowStatus;
+  identification: UploadIdentification;
+  limit_days: number;
+  /** Mihez mértünk; null, ha nem volt bizonyító viszonyítási pont. */
+  reference: 'click_at' | 'lead_first_seen' | 'occurred_at' | null;
+  /** A feltöltésig eltelt idő a viszonyítási ponttól (napok, lefelé kerekítve). */
+  age_days: number | null;
+}
 
 /**
- * Melyik időpont legyen a konverzió ideje. A user döntése (2026-09-09):
- * ablakon belül a fizetés ideje, azon túl a `won_at` — mert egy elveszett
- * konverzió rosszabb, mint egy pontatlan időbélyeg.
+ * Belefér-e a feltöltés a Google ablakába (pure). 2026-10-18 review R8.
+ *
+ * A viszonyítás a FELTÖLTÉS időpontja (`uploadAtIso`, alapból most), nem az
+ * eseményé: egy kattintás után 10 nappal történt, de 100 nappal később feltöltött
+ * konverzió kifutott. Az esemény ideje SOHA nem módosul (nincs visszadátumozás).
+ *
+ *  - Ismert kattintás (`click_at`) → pontos: within / expired.
+ *  - Kattintás nélkül csak ALSÓ becslésünk van a kattintás korára (a lead első
+ *    eseménye és maga a konverzió is a kattintás UTÁN van). Ha már az alsó becslés
+ *    is túllépi az ablakot → expired (biztos). Ha nem → 'unknown': egy fiatal
+ *    leadből NEM következik, hogy a kattintás is belefér. Az 'unknown' feltöltődik,
+ *    a Google dönt.
  */
-export function resolveConversionTimeIso(occurredAtIso: string, wonAtIso?: string): string {
-  if (!wonAtIso) return occurredAtIso;
-  const occurred = Date.parse(occurredAtIso);
-  const won = Date.parse(wonAtIso);
-  if (!Number.isFinite(occurred) || !Number.isFinite(won)) return occurredAtIso;
-  const days = (occurred - won) / 86_400_000;
-  return days > OFFLINE_WINDOW_DAYS ? wonAtIso : occurredAtIso;
+export function assessUploadWindow(
+  occurredAtIso: string,
+  refs: {
+    clickAtIso?: string;
+    leadFirstSeenIso?: string | null;
+    uploadAtIso?: string;
+    hasClickId: boolean;
+  }
+): UploadWindowAssessment {
+  const identification: UploadIdentification = refs.hasClickId ? 'click_id' : 'user_data';
+  const limit = OFFLINE_WINDOW_DAYS[identification];
+  const upload = refs.uploadAtIso ? Date.parse(refs.uploadAtIso) : Date.now();
+  const ageOf = (iso: string | null | undefined): number | null => {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) && Number.isFinite(upload) ? (upload - t) / 86_400_000 : null;
+  };
+  const base = { identification, limit_days: limit };
+
+  const clickAge = ageOf(refs.clickAtIso);
+  if (clickAge !== null) {
+    return { ...base, status: clickAge > limit ? 'expired' : 'within', reference: 'click_at', age_days: Math.floor(clickAge) };
+  }
+  // Alsó becslések: a legrégebbi bizonyított, kattintás UTÁNI pont.
+  const lowerBounds: Array<[UploadWindowAssessment['reference'], number | null]> = [
+    ['lead_first_seen', ageOf(refs.leadFirstSeenIso)],
+    ['occurred_at', ageOf(occurredAtIso)]
+  ];
+  let best: [UploadWindowAssessment['reference'], number] | null = null;
+  for (const [ref, age] of lowerBounds) {
+    if (age !== null && (best === null || age > best[1])) best = [ref, age];
+  }
+  if (best && best[1] > limit) {
+    return { ...base, status: 'expired', reference: best[0], age_days: Math.floor(best[1]) };
+  }
+  return { ...base, status: 'unknown', reference: null, age_days: null };
 }
 
 export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null {
@@ -171,6 +227,9 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
   if (p.won_at !== undefined) {
     if (typeof p.won_at !== 'string' || Number.isNaN(Date.parse(p.won_at))) return null;
   }
+  if (p.click_at !== undefined) {
+    if (typeof p.click_at !== 'string' || Number.isNaN(Date.parse(p.click_at))) return null;
+  }
 
   // user_data_hashed: objektum, de NEM tömb (a mező-tartalmi hash-validáció a
   // handlerben, mapPrehashedUserData-val — az fail-loud hibás mezőnévvel).
@@ -203,6 +262,7 @@ export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null 
     ad_allowed: p.ad_allowed as boolean | undefined,
     occurrence_id: p.occurrence_id as string | undefined,
     won_at: typeof p.won_at === 'string' ? new Date(p.won_at).toISOString() : undefined,
+    click_at: typeof p.click_at === 'string' ? new Date(p.click_at).toISOString() : undefined,
     gclid: clickId(p.gclid),
     gbraid: clickId(p.gbraid),
     wbraid: clickId(p.wbraid)
@@ -430,12 +490,18 @@ export async function handleLeadStatus(
   }
 
   const occurredAtIso = body.occurred_at ?? new Date().toISOString();
-  // P10 §5.4: ablakon belül a fizetés ideje, azon túl a `won_at` — egy elveszett
-  // konverzió rosszabb, mint egy pontatlan időbélyeg. A ledger továbbra is a
-  // VALÓDI `occurred_at`-et őrzi (lásd lentebb): a helyesbítés a platformnak
-  // szól, nem a saját könyvelésünknek.
-  const conversionTimeIso = resolveConversionTimeIso(occurredAtIso, body.won_at);
-  const eventTimeSec = Math.floor(Date.parse(conversionTimeIso) / 1000);
+  // A konverzió ideje a VALÓDI üzleti időpont — nincs automatikus visszadátumozás
+  // (2026-10-18 review R8; a `won_at` csak informatív). Az ablakon kifutott
+  // esemény üzleti bevétel marad (lead_status), a hirdetési láb pedig kifejezett
+  // `conversion_window_expired` skipet kap.
+  const eventTimeSec = Math.floor(Date.parse(occurredAtIso) / 1000);
+  const uploadWindow = assessUploadWindow(occurredAtIso, {
+    clickAtIso: body.click_at,
+    leadFirstSeenIso: body.click_at
+      ? null
+      : await getLeadFirstSeenAt(env, siteConfig.site_id, body.lead_id),
+    hasClickId: Boolean(body.gclid || body.gbraid || body.wbraid)
+  });
 
   // GDPR-kapu, precedencia szerint (2026-07-17 consent-audit):
   //  1. A Worker SAJÁT consent-receiptje, ha EXPLICIT capture-kori jelet hordoz
@@ -448,7 +514,14 @@ export async function handleLeadStatus(
   //     manuális lead, vagy fail-open site consent-objektum nélküli receipttel).
   //  3. require_consent fail-closed: kötelező consent + semmilyen jel → tiltott.
   // A jel nélküli receipt ad_allowed=1-e NEM evidencia (fail-open default is adhatja).
-  const leadConsent = await getLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
+  const leadConsentRead = await readLatestConsentForLead(env, siteConfig.site_id, body.lead_id);
+  // Saját CMP-s site-on egy D1-hiba elrejthetné a consent_log visszavonását
+  // (2026-10-18 review R2) → 503, a CRM újrapróbálja. CookieYes-site-on nincs
+  // consent_log, ott a mai fail-open viselkedés marad.
+  if (leadConsentRead.kind === 'error' && isConsentProviderSbo(siteConfig)) {
+    return consentStateUnavailable(hostname, siteConfig.site_id, startedAt);
+  }
+  const leadConsent = leadConsentRead.kind === 'found' ? leadConsentRead.record : null;
   const receiptSignal =
     leadConsent?.ad_user_data === 'GRANTED' || leadConsent?.ad_user_data === 'DENIED'
       ? leadConsent.ad_user_data
@@ -463,12 +536,18 @@ export async function handleLeadStatus(
   // Ha a lead receiptje consent_id-t hordoz (provider='sbo' site), az upload-
   // döntést NEM a capture-kori receipt adja, hanem a consent_log AKTUÁLIS
   // állapota (legmagasabb revision). A nap-1 GRANTED / nap-3 visszavonás /
-  // nap-10 revenue_confirmed eset csak így skippel helyesen. `null` (nincs
-  // consent_id — a teljes CookieYes-flotta —, ismeretlen consent_id, vagy
-  // D1-hiba) → a MAI precedencia-lánc változatlanul fut tovább.
-  const consentLogState = leadConsent?.consent_id
-    ? await getConsentState(env, siteConfig.site_id, leadConsent.consent_id)
+  // nap-10 revenue_confirmed eset csak így skippel helyesen. Nincs consent_id
+  // (a teljes CookieYes-flotta) vagy ismeretlen consent_id → a MAI precedencia-
+  // lánc változatlanul fut tovább. D1-hiba → 503 (lent).
+  const consentLogRead = leadConsent?.consent_id
+    ? await readConsentState(env, siteConfig.site_id, leadConsent.consent_id)
     : null;
+  // D1-hiba ≠ „nincs consent_id": a régi engedély nem érvényesülhet üzemzavar
+  // alatt (review R2). Mellékhatás eddig nem történt → a 503 tiszta retry.
+  if (consentLogRead?.kind === 'error') {
+    return consentStateUnavailable(hostname, siteConfig.site_id, startedAt);
+  }
+  const consentLogState = consentLogRead?.kind === 'found' ? consentLogRead.state : null;
 
   let consentBlocked: boolean;
   let consentSource: 'consent_log' | 'receipt' | 'crm' | 'fallback';
@@ -501,6 +580,7 @@ export async function handleLeadStatus(
   const orderId = (await sha256Hex(orderIdSeed)).slice(0, 32);
 
   let uploadedToGads = false;
+  let windowExpired = false;
   let gadsErrorCode: string | undefined;
   let gadsRetryQueued = false;
   let deliveryNotDurable = false;
@@ -596,6 +676,33 @@ export async function handleLeadStatus(
           normalizeDelivery('gads', {
             status: 'fulfilled',
             value: { success: true, skipped: true, skip_reason: consentSkipReason }
+          })
+        ]
+      })
+    );
+  } else if (uploadWindow.status === 'expired' && siteConfig.gads?.customer_id) {
+    windowExpired = true;
+    logStructured({
+      level: 'info',
+      message: 'Offline conversion skipped — outside the Google upload window (kept as business revenue)',
+      site_id: siteConfig.site_id,
+      event_name: eventName,
+      window_reference: uploadWindow.reference,
+      age_days: uploadWindow.age_days,
+      window_days: uploadWindow.limit_days,
+      identification: uploadWindow.identification
+    });
+    ctx.waitUntil(
+      recordDeliveries(env, {
+        event_id: orderId,
+        lead_id: body.lead_id,
+        site_id: siteConfig.site_id,
+        event_name: eventName,
+        origin: 'offline',
+        records: [
+          normalizeDelivery('gads', {
+            status: 'fulfilled',
+            value: { success: true, skipped: true, skip_reason: 'conversion_window_expired' }
           })
         ]
       })
@@ -915,10 +1022,23 @@ export async function handleLeadStatus(
       ok: true,
       uploaded_to_gads: uploadedToGads,
       uploaded_to_ga4: false,
-      consent_blocked: consentBlocked
+      consent_blocked: consentBlocked,
+      ...(windowExpired ? { upload_window_expired: true } : {})
     },
     200
   );
+}
+
+function consentStateUnavailable(hostname: string, siteId: string, startedAt: number): Response {
+  logStructured({
+    level: 'error',
+    error_code: TrackingErrorCode.CONSENT_STATE_UNAVAILABLE,
+    message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_STATE_UNAVAILABLE],
+    hostname,
+    site_id: siteId,
+    duration_ms: Date.now() - startedAt
+  });
+  return json({ error: 'consent_state_unavailable', retryable: true }, 503);
 }
 
 function json(obj: unknown, status: number): Response {

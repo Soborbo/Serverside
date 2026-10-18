@@ -127,11 +127,15 @@ describe('computeSiteDrift — coverage drift (Meta only under Model 2)', () => 
   // Run 6: a szándékosan meta-nélküli site (lomtalan, amíg nincs CAPI token)
   // MINDEN eventje őszinte 'skipped' — ez NEM coverage drift, hanem ismert,
   // szándékos állapot. Enélkül minden nap hamis CRITICAL menne.
+  // 2026-10-18 (R4): a szándékosság a skip OKÁBÓL jön (not_expected → excused),
+  // nem a puszta skipped-sorszámból — lásd reconciliation-event-identity.test.ts.
   it('NO drift when every eligible event was deliberately skipped (unconfigured meta leg)', () => {
     const input = site({
       events_total: 50,
       ad_eligible: 50,
-      platforms: [{ platform: 'meta', accepted: 0, rejected: 0, skipped: 50 }]
+      platforms: [
+        { platform: 'meta', accepted: 0, rejected: 0, skipped: 50, coverage: { eligible: 50, delivered: 0, excused: 50 } }
+      ]
     });
     expect(computeSiteDrift(input).filter((x) => x.kind === 'coverage_drift')).toEqual([]);
   });

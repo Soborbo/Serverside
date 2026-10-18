@@ -39,6 +39,7 @@ import type { APIRoute } from 'astro';
 import {
   sendGatewayConversion,
   readConsentFromCookie,
+  consentProviderFromEnv,
   buildConsentSources,
 } from '../../lib/tracking/gateway-dispatch';
 
@@ -82,8 +83,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     // site-okon KÖTELEZŐ: enélkül a szerver-láb elfogadna egy olyan „igen"-t,
     // amit egy korábbi tájékoztató-szövegre adtak, miközben a böngésző-láb
     // ugyanattól a sütitől újrakérdez. CookieYes-site-on nincs szerepe.
+    // A `TRACKING_CONSENT_PROVIDER` (sbo | cookieyes) az aktív CMP: `sbo` mellett
+    // egy hiányzó vagy elavult saját döntést NEM helyettesít a régi CookieYes-süti.
     consent: readConsentFromCookie(request.headers.get('cookie'), {
       expectedPolicyVersion: env.TRACKING_POLICY_VERSION,
+      provider: consentProviderFromEnv(env),
     }),
     // Phase D consent diagnostics: reports WHAT this backend saw, and does not
     // change what is sent. Without it the gateway records NULL sources for every

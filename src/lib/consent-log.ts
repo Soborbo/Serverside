@@ -98,6 +98,7 @@ const VERSION_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const LANG_RE = /^[A-Za-z]{2}(-[A-Za-z]{2})?$/;
 const COUNTRY_RE = /^[A-Za-z]{2}$/;
 const DEVICE_CLASSES = new Set(['mobile', 'tablet', 'desktop']);
+const CONSENT_KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
 
 /**
  * A validált, D1-re írható döntés. Minden mező már normalizált — az író rétegnek
@@ -128,6 +129,15 @@ export interface ConsentLogEntry {
   cky_cookie_marketing?: 0 | 1;
   cky_agreement?: 0 | 1;
   client_decided_at: string;
+  /**
+   * A lánc tulajdonlási titka (review R7) — NYERSEN SOHA nem íródik a D1-be;
+   * a route a SHA-256-ját teszi `key_hash`-ként a sorra.
+   */
+  consent_key?: string;
+  /** A tárolandó hash (a route tölti ki, a parser nem). */
+  key_hash?: string;
+  /** A lánc kulcsa igazolta-e a sort (a route tölti ki; review R7). */
+  verified?: boolean;
 }
 
 /** Banner-megjelenés (ID-MENTES — lásd a migráció kommentjét). */
@@ -276,6 +286,13 @@ export function parseConsentPayload(body: unknown, siteId: string): ConsentPaylo
     return { ok: false, reason: 'invalid_client_decided_at' };
   }
 
+  // A lánc tulajdonlási titka (review R7): 32–128 URL-biztos karakter. Hiánya
+  // NEM hiba (régi kliens / tiltott localStorage) — a route dönti el, kell-e.
+  const consentKey = str(p.consent_key, 128);
+  if (p.consent_key !== undefined && (!consentKey || !CONSENT_KEY_RE.test(consentKey))) {
+    return { ok: false, reason: 'invalid_consent_key' };
+  }
+
   const lang = str(p.lang, MAX_LANG_LEN);
   if (p.lang !== undefined && (!lang || !LANG_RE.test(lang))) {
     return { ok: false, reason: 'invalid_lang' };
@@ -327,7 +344,8 @@ export function parseConsentPayload(body: unknown, siteId: string): ConsentPaylo
       cky_cookie_analytics: ckyAnalytics,
       cky_cookie_marketing: ckyMarketing,
       cky_agreement: ckyAgreement,
-      client_decided_at: new Date(decidedAt).toISOString()
+      client_decided_at: new Date(decidedAt).toISOString(),
+      consent_key: consentKey
     }
   };
 }
@@ -410,8 +428,9 @@ export interface ConsentLogState {
 /**
  * Blokkolja-e az AKTUÁLIS consent-állapot az offline uploadot (pure).
  *
- * `null` (nincs ilyen consent_id, vagy D1-hiba) → a hívó a MEGLÉVŐ receipt-alapú
- * szabályra esik vissza (ledger.isOfflineUploadBlocked). Ez SZÁNDÉKOS: a Fázis 1
+ * `null` (nincs ilyen consent_id) → a hívó a MEGLÉVŐ receipt-alapú szabályra esik
+ * vissza (ledger.isOfflineUploadBlocked). A D1-HIBÁT a hívó külön kezeli
+ * (ledger.readConsentState `error` → nincs küldés, újrapróba). Ez SZÁNDÉKOS: a Fázis 1
  * inert, tehát a CookieYes-oldalak — ahol soha nem lesz consent_id — pontosan úgy
  * viselkednek, mint ma. Fail-closed viselkedést itt bevezetni néma
  * konverzió-vesztés lenne az egész flottán.

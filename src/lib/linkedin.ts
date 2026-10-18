@@ -23,7 +23,40 @@ import { sanitizeErrorMessage } from './log-sanitize';
 
 const LINKEDIN_URL = 'https://api.linkedin.com/rest/conversionEvents';
 const LINKEDIN_TIMEOUT_MS = 5000;
-const DEFAULT_VERSION = '202401';
+/**
+ * A LinkedIn `YYYYMM` verziói LEGALÁBB egy évig támogatottak — a tényleges
+ * megszűnési dátumot a LinkedIn hirdeti meg, és nem feltétlenül a 12. hónap
+ * elején van. A korábbi '202401' 2025-01-22-én megszűnt, és minden config
+ * nélküli kapcsolat azzal indult (2026-10-18 review R11). 202609: a hivatalos
+ * verziózási oldalon ellenőrzött verzió (2026-10-18; azóta már 202610 is van).
+ */
+export const DEFAULT_VERSION = '202609';
+/** A LinkedIn által vállalt MINIMÁLIS támogatási idő hónapokban (becslés alapja). */
+const VERSION_MIN_SUPPORT_MONTHS = 12;
+/** Ennyi hónappal a becsült megszűnés előtt kezdünk figyelmeztetni. */
+const VERSION_WARN_MONTHS_BEFORE = 2;
+
+/**
+ * Egy `YYYYMM` LinkedIn-verzió BECSÜLT állapota adott időpontban (pure). NEM
+ * tényállítás: a valódi dátum a LinkedIn verziózási oldalán áll.
+ *  - 'likely_sunset' = a minimális egyéves támogatás letelt — valószínűleg (de
+ *    nem biztosan) megszűnt, ellenőrizd;
+ *  - 'expiring_soon' = a minimális támogatás 2 hónapon belül letelik;
+ *  - 'invalid' = nem YYYYMM alak.
+ */
+export function linkedInVersionStatus(
+  version: string,
+  now: Date = new Date()
+): 'ok' | 'expiring_soon' | 'likely_sunset' | 'invalid' {
+  const m = /^(\d{4})(0[1-9]|1[0-2])$/.exec(version);
+  if (!m) return 'invalid';
+  const released = Number(m[1]) * 12 + (Number(m[2]) - 1);
+  const current = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  const age = current - released;
+  if (age >= VERSION_MIN_SUPPORT_MONTHS) return 'likely_sunset';
+  if (age >= VERSION_MIN_SUPPORT_MONTHS - VERSION_WARN_MONTHS_BEFORE) return 'expiring_soon';
+  return 'ok';
+}
 
 export interface LinkedInPayload {
   event_name: string;
@@ -80,6 +113,19 @@ export async function sendToLinkedIn(
     body.conversionValue = { currencyCode: payload.currency, amount: payload.value.toFixed(2) };
   }
 
+  const version = cfg.api_version || DEFAULT_VERSION;
+  const versionStatus = linkedInVersionStatus(version);
+  if (versionStatus !== 'ok') {
+    logStructured({
+      level: 'warn',
+      error_code: TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED],
+      site_id: siteConfig.site_id,
+      api_version: version,
+      version_status: versionStatus
+    });
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), LINKEDIN_TIMEOUT_MS);
   const startedAt = Date.now();
@@ -89,7 +135,7 @@ export async function sendToLinkedIn(
       method: 'POST',
       headers: {
         Authorization: `Bearer ${cfg.access_token}`,
-        'LinkedIn-Version': cfg.api_version || DEFAULT_VERSION,
+        'LinkedIn-Version': version,
         'X-Restli-Protocol-Version': '2.0.0',
         'Content-Type': 'application/json'
       },

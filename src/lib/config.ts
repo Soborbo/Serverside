@@ -183,7 +183,7 @@ export interface LinkedInConfig {
   access_token: string;
   // internal event_name → LinkedIn conversion rule URN
   conversion_rules: Record<string, string>;
-  api_version?: string; // pl. "202401"
+  api_version?: string; // pl. "202609" — hiányában lib/linkedin.ts DEFAULT_VERSION
 }
 
 // KV edge-cache TTL másodpercben. A config a forró úton minden requesten olvas;
