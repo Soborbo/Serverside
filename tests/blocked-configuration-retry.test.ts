@@ -187,6 +187,39 @@ describe('A konfigurációs blokk külön retry-keretet kap', () => {
     expect(stored[0].retry_count).toBe(0);
   });
 
+  it('blokkolt rekord, de a consent közben visszavonva → a cron LEZÁRJA (törlés), nem őrzi 7 napig a PII-t', async () => {
+    // Második független utóellenőrzés (HIGH): a blocked_configuration-őr a
+    // consent_withdrawn skipet is nem-terminálisnak vette.
+    const stored: DeadLetterRecord[] = [];
+    const deleted: string[] = [];
+    const record = base({ blocked_configuration: true, consent_id: 'cid-0123456789abcdef' } as Partial<DeadLetterRecord>);
+    const row = {
+      consent_id: 'cid-0123456789abcdef', revision: 2, decision: 'withdrawn', cat_analytics: 0, cat_marketing: 0,
+      ad_user_data: 'DENIED', ad_personalization: 'DENIED', ad_storage: 'DENIED', analytics_storage: 'DENIED',
+      client_decided_at: '2026-10-01T00:00:00.000Z', server_received_at: '2026-10-01T00:00:01.000Z', verified: 1, seq: 1
+    };
+    const stmt = (sql: string): any => ({
+      bind: () => stmt(sql),
+      first: async () => (/FROM consent_log/.test(sql) ? row : sql.includes('INSERT INTO idempotency') ? { seen_count: 1 } : null),
+      all: async () => ({ results: [] }),
+      run: async () => ({ meta: { changes: 1 } })
+    });
+    const env: any = {
+      SITE_CONFIG: { get: async () => ({ site_id: 'lomtalan', country_code: 'HU', consent: { provider: 'sbo' } }) },
+      LEDGER: { prepare: (sql: string) => stmt(sql), batch: async () => [] },
+      DEAD_LETTER: {
+        list: async () => ({ objects: [{ key: 'lomtalan/meta/2026-07-15/r0.json' }], truncated: false }),
+        get: async () => ({ json: async () => record }),
+        put: async (_k: string, body: string) => stored.push(JSON.parse(body)),
+        delete: async (k: string) => deleted.push(k)
+      }
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    await handleScheduledRetry({ scheduledTime: Date.now(), cron: '0 * * * *' } as unknown as ScheduledEvent, env);
+    expect(stored).toHaveLength(0);
+    expect(deleted).toEqual(['lomtalan/meta/2026-07-15/r0.json']);
+  });
+
   it('valódi vendor-hiba UTÁN a retry_count normálisan nő', async () => {
     const stored: DeadLetterRecord[] = [];
     const record = base({ blocked_configuration: true, retry_count: 2 });

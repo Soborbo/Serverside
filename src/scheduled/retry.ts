@@ -267,12 +267,17 @@ export function logSkippedRetry(record: DeadLetterRecord): void {
  * KÖZÖS szabálya (worker.ts). A Data Manager config-skipje `skip_reason` nélkül,
  * csak `error_code`-dal jön: az okot abból vezetjük le (skipReasonFromErrorCode),
  * különben az `isTerminalSkip(undefined) === true` a 7 napos konfigurációs
- * blokkot az első futáson törölné. A `blocked_configuration` rekord SOHA nem
- * terminális skip: azt kifejezetten a config visszaírásáig őrizzük.
+ * blokkot az első futáson törölné. A `blocked_configuration` rekordot ok nélküli
+ * skip nem zárja le (azt a config visszaírásáig őrizzük), egy megnevezett
+ * terminális ok (consent_withdrawn, conversion_window_expired…) viszont igen.
  */
 export function isTerminalRetrySkip(record: DeadLetterRecord, result: VendorResult): boolean {
-  if (result.skipped !== true || record.blocked_configuration === true) return false;
-  return isTerminalSkip(result.skip_reason ?? skipReasonFromErrorCode(result.error_code));
+  if (result.skipped !== true) return false;
+  const reason = result.skip_reason ?? skipReasonFromErrorCode(result.error_code);
+  // Ok nélküli skip (pl. validate-only) a blokkolt rekordon a config-blokk része;
+  // de egy MEGNEVEZETT terminális ok (visszavonás, lejárt határidő) azt is lezárja.
+  if (reason === undefined && record.blocked_configuration === true) return false;
+  return isTerminalSkip(reason);
 }
 
 /**
