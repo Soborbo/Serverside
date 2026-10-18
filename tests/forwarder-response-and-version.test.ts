@@ -61,11 +61,21 @@ describe('R11 — LinkedIn: támogatott alapverzió és lejárat-figyelés', () 
     expect(linkedInVersionStatus(DEFAULT_VERSION, now)).toBe('ok');
   });
 
-  it('a BECSÜLT verzió-állapot: ok / expiring_soon / likely_sunset / invalid', () => {
+  // 2026-10-18 második utóellenőrzés: a megszűnés állítása CSAK hivatalos
+  // forrásból jöhet (LinkedIn versioning oldal); a kor-alapú érték karbantartási
+  // figyelmeztetés, nem tény.
+  it('hivatalos megszűnés: a bejelentett dátum (202511 → 2026-11-16) és a támogatott listán kívüli verzió', () => {
+    expect(linkedInVersionStatus('202511', now)).toBe('sunset_announced');
+    expect(linkedInVersionStatus('202511', new Date('2026-11-16T00:00:00Z'))).toBe('sunset');
+    expect(linkedInVersionStatus('202510', now)).toBe('sunset');
+    expect(linkedInVersionStatus('202401', now)).toBe('sunset');
+  });
+
+  it('kor-alapú becslés: karbantartási figyelmeztetés, NEM megszűnés-állítás', () => {
     expect(linkedInVersionStatus('202609', now)).toBe('ok');
-    expect(linkedInVersionStatus('202512', now)).toBe('expiring_soon');
-    expect(linkedInVersionStatus('202510', now)).toBe('likely_sunset');
-    expect(linkedInVersionStatus('202401', now)).toBe('likely_sunset');
+    expect(linkedInVersionStatus('202512', now)).toBe('maintenance_soon');
+    // Egy év után, hivatalos dátum nélkül: „karbantartás esedékes", nem „megszűnt".
+    expect(linkedInVersionStatus('202512', new Date('2027-01-05T00:00:00Z'))).toBe('maintenance_due');
     expect(linkedInVersionStatus('2026-09', now)).toBe('invalid');
   });
 
@@ -80,7 +90,7 @@ describe('R11 — LinkedIn: támogatott alapverzió és lejárat-figyelés', () 
     expect(headers['LinkedIn-Version']).toBe(DEFAULT_VERSION);
   });
 
-  it('valószínűleg megszűnt, explicit api_version → TRK-830-003 a logban (a hívás ettől még megy, a vendor dönt)', async () => {
+  it('hivatalosan megszűnt, explicit api_version → TRK-830-003 a logban (a hívás ettől még megy, a vendor dönt)', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((m: unknown) => void logs.push(String(m)));
     vi.spyOn(console, 'error').mockImplementation((m: unknown) => void logs.push(String(m)));
@@ -91,6 +101,6 @@ describe('R11 — LinkedIn: támogatott alapverzió és lejárat-figyelés', () 
       { event_name: 'contact_form_submitted', event_id: 'evt-1', event_time: 1750000000, li_fat_id: 'LI' },
       HASHED
     );
-    expect(logs.some((l) => l.includes('TRK-830-003') && l.includes('likely_sunset'))).toBe(true);
+    expect(logs.some((l) => l.includes('TRK-830-003') && l.includes('"version_status":"sunset"'))).toBe(true);
   });
 });
