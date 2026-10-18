@@ -416,10 +416,11 @@ export async function retrySingle(env: Env, record: DeadLetterRecord): Promise<V
     // a határidő előtt sorba került, de utána újraküldött esemény kifutott. Az
     // üzleti esemény és a bevétele (lead_status) ettől érintetlen.
     const gadsPayload = eventPayload as unknown as GAdsPayload;
-    // Hiányzó / hibás event_time (régi rekord) nem dobhat RangeError-t: ilyenkor
+    // Hiányzó / hibás / nulla event_time (régi rekord) nem dobhat RangeError-t,
+    // és nem olvasódhat 1970-nek (az hamis végleges lejárat lenne): ilyenkor
     // csak a click_at-ből ítélünk (ismeretlen → a Google dönt).
     const eventMs = Number(gadsPayload.event_time) * 1000;
-    const window = assessUploadWindow(Number.isFinite(eventMs) ? new Date(eventMs).toISOString() : '', {
+    const window = assessUploadWindow(Number.isFinite(eventMs) && eventMs > 0 ? new Date(eventMs).toISOString() : '', {
       clickAtIso: gadsPayload.click_at,
       hasClickId: Boolean(gadsPayload.gclid || gadsPayload.gbraid || gadsPayload.wbraid)
     });

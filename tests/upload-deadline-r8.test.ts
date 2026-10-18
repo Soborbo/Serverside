@@ -128,3 +128,19 @@ describe('újraküldés — hiányzó event_time nem dob', () => {
     expect(assessUploadWindow('', { uploadAtIso: new Date().toISOString(), hasClickId: true }).status).toBe('unknown');
   });
 });
+
+describe('újraküldés — nulla / null event_time nem 1970', () => {
+  it('event_time: null gads-rekord NEM kap conversion_window_expired skipet', async () => {
+    const env = {
+      SITE_CONFIG: { get: async () => ({ site_id: 'r8site', country_code: 'GB', gads: { customer_id: '1234567890', conversion_actions: {} } }) },
+      LEDGER: { prepare: () => ({ bind: () => ({ first: async () => null, run: async () => undefined, all: async () => ({ results: [] }) }) }) }
+    } as unknown as Env;
+    const result = await retrySingle(env, {
+      platform: 'gads', site_id: 'r8site', hostname: 'r8.example',
+      event_payload: { event_name: 'lead_qualified', event_id: 'order-null', event_time: null },
+      hashed_user_data: {}, failure_reason: 'x', retry_count: 0,
+      first_failed_at: new Date().toISOString(), last_attempted_at: new Date().toISOString()
+    } as unknown as DeadLetterRecord);
+    expect(result.skip_reason).not.toBe('conversion_window_expired');
+  });
+});
