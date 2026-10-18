@@ -19,7 +19,7 @@ A 6.12.0 után két bizonyított rés maradt: (1) a régi, kulcs nélküli lánc
 - A kulcsot a **gateway generálja**, és HttpOnly, SameSite=Strict, Secure sütiben adja ki (`sbo_consent_key`, `Path=/api/consent`, 180 nap — ugyanannyi, mint az `sbo_consent`). A kliens JS-e nem kezeli; a payload `consent_key` mezője megszűnt (a szerver figyelmen kívül hagyja), a régi `localStorage` bejegyzést a kliens törli.
 - Az első kötés és a lánc első döntése **egy tranzakcióban** íródik (0013 migráció, `consent_chain`): párhuzamos kérésnél pontosan egy kulcs nyer.
 - Kulcs nélküli / rossz kulcsú írás — régi láncon is — **csak szigoríthat** (igazolatlan, de érvényes; a visszavonás így kulcsvesztés után is eljut). Bővítés: 403 `consent_key_mismatch`. A régi lánc tulajdonosa a meglévő adatokból **nem igazolható**, ezért oda kulcs utólag sem köthető.
-- Kliens 403-ra: elavult döntésnél nincs teendő; versenynél (másik lap épp most kapta a kulcsot) egy újrapróba; egyébként új lánc a böngésző kulcsával.
+- Kliens 403-ra: elavult döntésnél nincs teendő; versenynél (másik lap épp most kapta a kulcsot) egy újrapróba; egyébként új lánc a böngésző kulcsával, amely `previous_consent_id`-ként megnevezi az elődjét — a gateway a régi lánc állapotát az utódokéval metszi, így egy későbbi visszavonás a régi lánchoz kötött eseményekre is hat.
 - A süti-leltárba bekerült az `sbo_consent_key` és a már eddig is írt `sbo_consent_pending`.
 
 ### Javítva — szerveroldali kapu (gateway, a csomagot nem érinti)

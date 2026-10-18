@@ -784,7 +784,9 @@ export async function handleLeadStatus(
           consent: Object.keys(consentSignals).length > 0 ? consentSignals : undefined,
           gclid: body.gclid,
           gbraid: body.gbraid,
-          wbraid: body.wbraid
+          wbraid: body.wbraid,
+          // A retry-kori határidő-ellenőrzés bemenete (R8) — a Google-nek nem megy.
+          click_at: body.click_at
         } as unknown as Record<string, unknown>,
         hashed_user_data: blockedHashed as unknown as Record<string, unknown>,
         failure_reason: TrackingErrorCode.PLATFORM_NOT_CONFIGURED,

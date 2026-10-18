@@ -122,3 +122,9 @@ describe('újraküldés — a határidőt az AKKORI időpont dönti el', () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 });
+
+describe('újraküldés — hiányzó event_time nem dob', () => {
+  it('event_time nélküli régi gads-rekord: nincs RangeError, a határidő ismeretlen → a Google dönt', () => {
+    expect(assessUploadWindow('', { uploadAtIso: new Date().toISOString(), hasClickId: true }).status).toBe('unknown');
+  });
+});
