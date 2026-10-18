@@ -520,16 +520,16 @@ describe('lead_status — a determinisztikus orderId a soron van (0010)', () => 
       readFile(new URL('../src/lib/reconciliation.ts', import.meta.url), 'utf8'),
       readFile(new URL('../src/lib/business-counts.ts', import.meta.url), 'utf8')
     ]);
-    for (const [name, src] of [
-      ['reconciliation', recon],
-      ['business-counts', counts]
+    // A reconciliation 2026-10-18 óta az orderId-re (oid) csoportosított
+    // eseményhalmazból számol (első beérkezés szerint) — ugyanaz a dedup-kulcs.
+    for (const [name, src, distinct] of [
+      ['reconciliation', recon, 'COUNT(DISTINCT oid)'],
+      ['business-counts', counts, 'COUNT(DISTINCT COALESCE(order_id, id))']
     ] as const) {
       const leadStatusQueries = src
         .split('\n')
         .filter((l) => /COUNT\(\*\)/.test(l) && /lead_status/.test(src));
-      expect(src, `${name}: a lead_status olvasói DISTINCT-et használnak`).toContain(
-        'COUNT(DISTINCT COALESCE(order_id, id))'
-      );
+      expect(src, `${name}: a lead_status olvasói DISTINCT-et használnak`).toContain(distinct);
       expect(leadStatusQueries.join('\n')).not.toContain('COUNT(*) AS received');
     }
   });

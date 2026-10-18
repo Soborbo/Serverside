@@ -805,35 +805,47 @@ export function isSyntheticId(id: string | null | undefined): boolean {
 const notSyntheticSql = (column: string): string =>
   SYNTHETIC_ID_PATTERNS.map((p) => `${column} NOT LIKE '${p}'`).join(' AND ');
 
-const NOT_SYNTHETIC = notSyntheticSql('lead_id');
 const NOT_SYNTHETIC_DELIVERY = notSyntheticSql('event_id');
 
 const OFFLINE_ABSOLUTE_WINDOW_DAYS = 7;
 
 /**
- * Az offline Google-láb kézbesítései: az ABLAKBAN BEÉRKEZETT üzleti események
- * végső kézbesítési állapota (2026-10-18 review R5, utóellenőrzés).
+ * Az ablak üzleti eseményei (2026-10-18 review R5): egy esemény (orderId =
+ * COALESCE(order_id, id)) AHHOZ az időszakhoz tartozik, amelyben ELŐSZÖR
+ * beérkezett. A `lead_status` sorai per-KÍSÉRLET keletkeznek — a CRM egy régi
+ * esemény újraküldésekor ma is ír sort ugyanazzal az orderId-vel. Ha a „ma
+ * beérkezett" a puszta mai sort jelentené, a régi esemény mai sikere egy mai,
+ * kézbesítetlen esemény hiányát fedné el. A régi (order_id NULL) sorok
+ * önmagukban egy-egy esemény — rájuk a szabály bitre a korábbi.
  *
- * Az alap az ablak `lead_status` eseményeinek halmaza (orderId = COALESCE(order_id,
- * id)), és EZEKHEZ keressük meg a kézbesítési eredményt — offline ÉS retry
- * sorokból, időszűrés NÉLKÜL (a retry az ablak után is megtörténhet). Korábban a
- * két oldal más halmazt mért: received = az ablakban beérkezett, accepted = az
- * ablakban kézbesített. Egy mai, kézbesítetlen esemény és egy kétnapos esemény
- * mai sikeres retry-ja így received=1 / accepted=1 lett — a mai hiány eltűnt.
- *
- * Eseményenként EGYSZER:
+ * A received-számlálás ÉS a végső-állapot lekérdezés UGYANEZT a halmazt használja.
+ */
+const OFFLINE_WINDOW_EVENTS_CTE = `recv AS (
+           SELECT w.site_id, w.status AS event_name, COALESCE(w.order_id, w.id) AS oid
+           FROM lead_status w
+           WHERE w.created_at >= ?1 AND ${notSyntheticSql('w.lead_id')}
+             AND (w.order_id IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM lead_status p
+                    WHERE p.site_id = w.site_id AND p.order_id = w.order_id AND p.created_at < ?1))
+           GROUP BY w.site_id, w.status, COALESCE(w.order_id, w.id)
+         )`;
+
+const OFFLINE_RECEIVED_SQL = `WITH ${OFFLINE_WINDOW_EVENTS_CTE}
+         SELECT site_id, event_name, COUNT(DISTINCT oid) AS received FROM recv GROUP BY site_id, event_name`;
+
+/**
+ * Az ablak üzleti eseményeinek VÉGSŐ kézbesítési állapota. A kézbesítési
+ * eredményt offline ÉS retry sorokból, időszűrés NÉLKÜL keressük (a retry az
+ * ablak után is megtörténhet), eseményenként EGYSZER:
  *  - accepted: volt legalább egy elfogadott kísérlete;
  *  - rejected: elutasították, és SOHA nem fogadták el;
  *  - skipped: se accepted, se rejected — a skip oka szerint csoportosítva;
  *  - kézbesítési sor nélkül: egyikben sem (a coverage-számítás hiányként látja).
- * A korábbi beérkezésű, az ablakban helyreállított eseményeket a
- * RECOVERED_EARLIER_SQL külön mutatóként adja.
+ * A próbálkozások története a `deliveries`-ben érintetlen marad. Az „accepted" a
+ * Google API ELFOGADÁSA — nem a platformon való hozzárendelés (az a Google
+ * attribúciós ablakán és a kattintás-egyezésen múlik, amit innen nem látunk).
  */
-const OFFLINE_FINAL_STATE_SQL = `WITH recv AS (
-           SELECT DISTINCT site_id, status AS event_name, COALESCE(order_id, id) AS oid
-           FROM lead_status
-           WHERE created_at >= ?1 AND ${NOT_SYNTHETIC}
-         ),
+const OFFLINE_FINAL_STATE_SQL = `WITH ${OFFLINE_WINDOW_EVENTS_CTE},
          ev AS (
            SELECT r.site_id, r.event_name, r.oid,
                   COALESCE(MAX(d.status = 'accepted'), 0) AS acc,
@@ -855,18 +867,24 @@ const OFFLINE_FINAL_STATE_SQL = `WITH recv AS (
          GROUP BY site_id, event_name, CASE WHEN acc = 1 OR rej = 1 THEN NULL ELSE reason END`;
 
 /**
- * Az ablakban sikeresen helyreállított, de KORÁBBAN beérkezett események
- * (retry accepted, a beérkezés az ablak előtt) — külön mutató, NEM a lefedettség
- * része. Jó hír (a DLQ visszanyert valamit), de nem takarhat el egy mai hiányt.
+ * „Ma helyreállított régi események" — KÜLÖN mutató, NEM a lefedettség része:
+ * az ablakban ELŐSZÖR elfogadott (offline CRM-újraküldés VAGY DLQ-retry), de egy
+ * KORÁBBI időszakban beérkezett esemény. Ami már korábban elfogadott volt, annak
+ * mai ismételt sikere nem helyreállítás.
  */
 const RECOVERED_EARLIER_SQL = `SELECT d.site_id, d.event_name, COUNT(DISTINCT d.event_id) AS recovered
          FROM deliveries d
-         WHERE d.created_at >= ?1 AND d.platform = 'gads' AND d.origin = 'retry'
+         WHERE d.created_at >= ?1 AND d.platform = 'gads' AND d.origin IN ('offline', 'retry')
            AND d.status = 'accepted' AND ${notSyntheticSql('d.event_id')}
            AND NOT EXISTS (
-             SELECT 1 FROM lead_status l
-              WHERE l.site_id = d.site_id AND COALESCE(l.order_id, l.id) = d.event_id
-                AND l.created_at >= ?1)
+             SELECT 1 FROM deliveries a
+              WHERE a.site_id = d.site_id AND a.event_id = d.event_id AND a.platform = 'gads'
+                AND a.origin IN ('offline', 'retry') AND a.status = 'accepted' AND a.created_at < ?1)
+           AND (
+             EXISTS (SELECT 1 FROM lead_status l
+                      WHERE l.site_id = d.site_id AND l.order_id = d.event_id AND l.created_at < ?1)
+             OR NOT EXISTS (SELECT 1 FROM lead_status l
+                      WHERE l.site_id = d.site_id AND l.order_id = d.event_id AND l.created_at >= ?1))
          GROUP BY d.site_id, d.event_name`;
 
 /** Policy-skipek (nem veszteség) — a Meta-lefedettség `excused` halmazához. */
@@ -938,40 +956,10 @@ async function fetchOfflineLegs(
   const since7d = new Date(Date.now() - OFFLINE_ABSOLUTE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const [recv24, recv7d, del24, del7d, lastAcc, recovered] = await Promise.all([
-    ledger
-      .prepare(
-        // COUNT(DISTINCT COALESCE(order_id, id)) — a `lead_status` sorai
-        // per-KISERLET keletkeznek (a beszuras a 503/202 elagazasok ELOTT
-        // utemezodik). Nyers darabszammal egy tranziens Data Manager-kieses
-        // (3 lead, mind 503-azva, majd elfogadva) received=6 / accepted=3 kepet
-        // ad -> HAMIS `offline_coverage_drift` + 50%-os `offline_vendor_failure`,
-        // mindketto CRITICAL: a riasztas pont akkor kialt, amikor minden rendben
-        // van. A regi (order_id IS NULL) sorokra a COALESCE a sor-egyedi `id`-t
-        // adja -> azokra bitre a mai viselkedes. Lasd 0010 migracio.
-        `SELECT site_id, status AS event_name,
-                COUNT(DISTINCT COALESCE(order_id, id)) AS received
-         FROM lead_status WHERE created_at >= ?1 AND ${NOT_SYNTHETIC}
-         GROUP BY site_id, status`
-      )
-      .bind(sinceIso)
-      .all<OfflineReceivedRow>(),
-    ledger
-      .prepare(
-        // COUNT(DISTINCT COALESCE(order_id, id)) — a `lead_status` sorai
-        // per-KISERLET keletkeznek (a beszuras a 503/202 elagazasok ELOTT
-        // utemezodik). Nyers darabszammal egy tranziens Data Manager-kieses
-        // (3 lead, mind 503-azva, majd elfogadva) received=6 / accepted=3 kepet
-        // ad -> HAMIS `offline_coverage_drift` + 50%-os `offline_vendor_failure`,
-        // mindketto CRITICAL: a riasztas pont akkor kialt, amikor minden rendben
-        // van. A regi (order_id IS NULL) sorokra a COALESCE a sor-egyedi `id`-t
-        // adja -> azokra bitre a mai viselkedes. Lasd 0010 migracio.
-        `SELECT site_id, status AS event_name,
-                COUNT(DISTINCT COALESCE(order_id, id)) AS received
-         FROM lead_status WHERE created_at >= ?1 AND ${NOT_SYNTHETIC}
-         GROUP BY site_id, status`
-      )
-      .bind(since7d)
-      .all<OfflineReceivedRow>(),
+    // A received ÉS a végső állapot UGYANAZT az eseményhalmazt méri (lásd
+    // OFFLINE_WINDOW_EVENTS_CTE): egy esemény egyszer, az első beérkezése szerint.
+    ledger.prepare(OFFLINE_RECEIVED_SQL).bind(sinceIso).all<OfflineReceivedRow>(),
+    ledger.prepare(OFFLINE_RECEIVED_SQL).bind(since7d).all<OfflineReceivedRow>(),
     ledger
       .prepare(
 `${OFFLINE_FINAL_STATE_SQL}`
