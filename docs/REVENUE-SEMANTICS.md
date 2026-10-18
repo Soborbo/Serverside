@@ -175,10 +175,14 @@ Storno / teljes jóváírás → RETRACT; részleges jóváírás / felszorzás 
 
 - A Data Manager-esemény ideje **mindig** az `occurred_at` (fizetés / státusz
   valódi ideje). Nincs automatikus visszadátumozás; a `won_at` csak informatív.
-- Az ablak (`OFFLINE_WINDOW_DAYS = 90`) viszonyítási pontja a **kattintás**: a CRM
-  `click_at` mezője, ha ismeri; különben a lead első ismert eseménye
-  (`events_raw`), ami a kattintás UTÁN van — ha ahhoz képest is kifut, a
-  kattintáshoz képest biztosan kifutott. Egyik sincs → feltöltünk, a Google dönt.
+- Az ablak a **kattintástól a FELTÖLTÉSIG** mér (nem az eseményig): kattintás-
+  azonosítóval (gclid/gbraid/wbraid) **90 nap**, csak személyes adattal
+  (Enhanced Conversions for Leads) **63 nap** (`OFFLINE_WINDOW_DAYS`, Google Ads
+  Help „Offline conversion imports FAQs").
+- A kattintás idejét a CRM `click_at` mezője adja. Nélküle csak **alsó becslés**
+  van (a lead első ismert eseménye, ill. maga a konverzió — mindkettő a kattintás
+  UTÁN van): ha már az is kifut → lejárt; ha nem → **ismeretlen**, és feltöltünk
+  (egy fiatal leadből nem következik, hogy a kattintás is belefér; a Google dönt).
 - Kifutott esemény: **nincs feltöltés**, `deliveries` sor
   `skipped / conversion_window_expired`, a válasz `upload_window_expired: true`.
   Az üzleti bevétel (`lead_status`) **megmarad** — a hirdetési visszajelzés lejárt,

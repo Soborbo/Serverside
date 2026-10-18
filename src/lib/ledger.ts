@@ -681,8 +681,8 @@ export async function recordConsentDecision(
           consent_mode, policy_version, banner_version, consent_text_version, ruleset,
           lang, country, client_lib_version,
           cky_cookie_analytics, cky_cookie_marketing, cky_agreement,
-          client_decided_at, server_received_at, key_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          client_decided_at, server_received_at, key_hash, verified)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id(),
@@ -710,7 +710,8 @@ export async function recordConsentDecision(
         entry.cky_agreement ?? null,
         entry.client_decided_at,
         new Date().toISOString(),
-        entry.key_hash ?? null
+        entry.key_hash ?? null,
+        entry.verified === true ? 1 : 0
       )
       .run();
     return 'stored';
@@ -784,57 +785,100 @@ export async function readConsentState(
   consentId: string
 ): Promise<ConsentStateRead> {
   if (!env.LEDGER) return { kind: 'missing' };
+  // Három jelölt (review R7, aszimmetrikus szabály):
+  //  latest   — a legmagasabb revision (régi / kulcs nélküli láncok: ez dönt);
+  //  verified — a legmagasabb revisionű IGAZOLT sor (védett lánc alapállapota);
+  //  unverif  — a legutóbb BEÉRKEZETT igazolatlan sor (szigorítás a védett láncon).
+  const cols = `consent_id, revision, decision, cat_analytics, cat_marketing,
+                ad_user_data, ad_personalization, ad_storage, analytics_storage,
+                client_decided_at, server_received_at, verified`;
   try {
-    const row = await env.LEDGER.prepare(
-      `SELECT consent_id, revision, decision, cat_analytics, cat_marketing,
-              ad_user_data, ad_personalization, ad_storage, analytics_storage,
-              client_decided_at, server_received_at
-         FROM consent_log
-        WHERE site_id = ? AND consent_id = ?
-        ORDER BY revision DESC
-        LIMIT 1`
-    )
-      .bind(siteId, consentId)
-      .first<{
-        consent_id: string;
-        revision: number;
-        decision: string;
-        cat_analytics: number;
-        cat_marketing: number;
-        ad_user_data: string;
-        ad_personalization: string;
-        ad_storage: string;
-        analytics_storage: string;
-        client_decided_at: string;
-        server_received_at: string;
-      }>();
-    if (!row) return { kind: 'missing' };
-    return {
-      kind: 'found',
-      state: {
-        consent_id: row.consent_id,
-        revision: row.revision,
-        decision: row.decision as ConsentLogState['decision'],
-        cat_analytics: row.cat_analytics === 1,
-        cat_marketing: row.cat_marketing === 1,
-        ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
-        ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
-        ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
-        analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
-        client_decided_at: row.client_decided_at,
-        server_received_at: row.server_received_at
-      }
-    };
+    const where = 'FROM consent_log WHERE site_id = ? AND consent_id = ?';
+    const one = (filter: string, order: string) =>
+      env.LEDGER!.prepare(`SELECT ${cols} ${where}${filter} ORDER BY ${order} LIMIT 1`)
+        .bind(siteId, consentId)
+        .first<ConsentRow>();
+    const [latestRow, verifiedRow, unverifiedRow] = await Promise.all([
+      one('', 'revision DESC'),
+      one(' AND verified = 1', 'revision DESC'),
+      one(' AND verified = 0', 'server_received_at DESC, revision DESC')
+    ]);
+    const by = new Map<string, ConsentRow>();
+    if (latestRow) by.set('latest', latestRow);
+    if (verifiedRow) by.set('verified', verifiedRow);
+    if (unverifiedRow) by.set('unverified', unverifiedRow);
+    const latest = by.get('latest');
+    if (!latest) return { kind: 'missing' };
+    const verified = by.get('verified');
+    const unverified = by.get('unverified');
+    let row: ConsentRow = latest;
+    if (verified) {
+      row =
+        unverified &&
+        unverified.server_received_at > verified.server_received_at &&
+        narrowsOrKeeps(unverified, verified)
+          ? unverified
+          : verified;
+    }
+    return { kind: 'found', state: toConsentState(row) };
   } catch (err) {
     ledgerError('getConsentState', err, { site_id: siteId });
     return { kind: 'error' };
   }
 }
 
+interface ConsentRow {
+  consent_id: string;
+  revision: number;
+  decision: string;
+  cat_analytics: number;
+  cat_marketing: number;
+  ad_user_data: string;
+  ad_personalization: string;
+  ad_storage: string;
+  analytics_storage: string;
+  client_decided_at: string;
+  server_received_at: string;
+  verified: number;
+}
+
+function toConsentState(row: ConsentRow): ConsentLogState {
+  return {
+    consent_id: row.consent_id,
+    revision: row.revision,
+    decision: row.decision as ConsentLogState['decision'],
+    cat_analytics: row.cat_analytics === 1,
+    cat_marketing: row.cat_marketing === 1,
+    ad_user_data: row.ad_user_data as ConsentLogState['ad_user_data'],
+    ad_personalization: row.ad_personalization as ConsentLogState['ad_personalization'],
+    ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
+    analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
+    client_decided_at: row.client_decided_at,
+    server_received_at: row.server_received_at
+  };
+}
+
+/**
+ * A `next` döntés SEMMILYEN kategóriát nem bővít a `current`-hez képest (pure).
+ * Ez a „szigorító" döntés definíciója a review R7 aszimmetrikus szabályában:
+ * kulcs nélkül csak ilyen írható egy védett láncra, és csak ilyen léphet egy
+ * igazolt állapot helyébe.
+ */
+export function narrowsOrKeeps(
+  next: { cat_analytics: number | boolean; cat_marketing: number | boolean },
+  current: { cat_analytics: number | boolean; cat_marketing: number | boolean } | null
+): boolean {
+  const on = (v: number | boolean) => v === true || v === 1;
+  const curA = current ? on(current.cat_analytics) : false;
+  const curM = current ? on(current.cat_marketing) : false;
+  return (!on(next.cat_analytics) || curA) && (!on(next.cat_marketing) || curM);
+}
+
 /**
  * Egy consent-lánc írási jogosultságának állapota (review R7): a legmagasabb
- * eddigi revision és a lánc tulajdonlási hash-e (a LEGELSŐ tárolt, hogy egy
- * később becsempészett hash ne írhassa felül). `null` = D1-hiba.
+ * eddigi revision és a lánc tulajdonlási hash-e — KIZÁRÓLAG igazolt sorról (a
+ * lánc első, kulccsal induló döntése). Régi / kulcs nélküli láncon null: azt
+ * utólag senki nem „védheti le", a támadó sem. `null` visszatérés = D1-hiba.
  */
 export async function readConsentChainAuth(
   env: Env,
@@ -846,7 +890,7 @@ export async function readConsentChainAuth(
     const row = await env.LEDGER.prepare(
       `SELECT MAX(revision) AS max_revision,
               (SELECT key_hash FROM consent_log
-                WHERE site_id = ?1 AND consent_id = ?2 AND key_hash IS NOT NULL
+                WHERE site_id = ?1 AND consent_id = ?2 AND key_hash IS NOT NULL AND verified = 1
                 ORDER BY server_received_at ASC, revision ASC LIMIT 1) AS key_hash
          FROM consent_log
         WHERE site_id = ?1 AND consent_id = ?2`

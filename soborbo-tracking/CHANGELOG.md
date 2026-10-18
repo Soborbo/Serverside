@@ -10,6 +10,18 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.12.0 (2026-10-18)
+
+### Javítva — kulcsvesztés után sem vész el a jogos visszavonás; régi lánc nem „védhető le" (review R7, utóellenőrzés)
+
+A 6.11.0 két rést hagyott: (1) ha a böngésző elvesztette a lánc kulcsát, a visszavonása 403-at kapott, kikerült az újraküldési sorból, és a szerveren az engedély maradt érvényben; (2) a kulcs nélküli (régi) láncot az első jelentkező kulcsa kötötte meg — a támadóé is. Az új, **aszimmetrikus** szabály (0012 migráció, `consent_log.verified`):
+
+- Védett láncra kulcs nélkül vagy rossz kulccsal **csak szigorító** döntés írható (semmilyen kategóriát nem bővít), **igazolatlanként** — de érvényes: a replay-kapu tiltásnak veszi. Riasztási jel: TRK-910-010. A tulajdonos későbbi, kulccsal igazolt döntése felülírja (beérkezési sorrend szerint, a revisiontől függetlenül).
+- Engedély-bővítés csak a lánc kulcsával. Kulcsvesztés után a kliens a 403 `consent_key_mismatch`-re **új láncot indít** (új `consent_id`, új kulcs, revision=1) a jelenlegi döntéssel — a döntés nem vész el.
+- Kulcs **csak** új lánc első, kulcsos döntéséhez köthető. A régi / kulcs nélküli láncok a süti lejártáig (180 nap) a régi süti-egyezéses szabályon maradnak, igazolatlan sorokkal.
+
+A 6.11.0 „Ismert korlát" bekezdése ezzel érvényét veszti. **Deploy-sorrend:** 0011 + 0012 migráció → worker → site-csomagok.
+
 ## 6.11.0 (2026-10-18)
 
 ### Biztonság — a consent-lánc tulajdonlási kulcsa (review R7)

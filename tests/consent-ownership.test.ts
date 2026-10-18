@@ -4,9 +4,12 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { handleConsent, MAX_REVISION_STEP } from '../src/routes/consent';
 import { sha256Hex } from '../src/lib/hash';
+import { readConsentState } from '../src/lib/ledger';
 
 /**
- * 2026-10-18 review R7 — a consent-döntés tulajdonlási bizonyítéka.
+ * 2026-10-18 review R7 — a consent-döntés tulajdonlási bizonyítéka, ASZIMMETRIKUS
+ * szabállyal (utóellenőrzés után): kulcs nélkül csak SZIGORÍTANI lehet
+ * (igazolatlan sorként, ami érvényes), engedélyt bővíteni csak a lánc kulcsával.
  *
  * Korábban egy ismert consent_id + kézzel gyártott `sbo_consent` süti elég volt
  * egy hamis `withdrawn` döntéshez, akár revision=10000-rel. Most a védett láncra
@@ -91,19 +94,19 @@ describe('R7 — csak a lánc kulcsa írhat a védett láncra', () => {
     expect(JSON.stringify(db.prepare('SELECT * FROM consent_log').all())).not.toContain(KEY);
   });
 
-  it('ismert consent_id + hamisított süti, kulcs NÉLKÜL → 403, nincs új sor', async () => {
+  it('ismert consent_id + hamisított süti, kulcs NÉLKÜL: engedély-bővítés → 403, nincs új sor', async () => {
     const db = freshDb();
-    await handleConsent(post(decision({ consent_key: KEY })), makeEnv(db));
-    const res = await handleConsent(post(decision({ ...WITHDRAW, revision: 2 })), makeEnv(db));
+    await handleConsent(post(decision({ consent_key: KEY, ...WITHDRAW, decision: 'reject_all' })), makeEnv(db));
+    const res = await handleConsent(post(decision({ revision: 2 })), makeEnv(db));
     expect(res.status).toBe(403);
     expect(await res.text()).toBe('consent_key_mismatch');
     expect(rows(db)).toHaveLength(1);
   });
 
-  it('rossz kulccsal → 403', async () => {
+  it('rossz kulccsal sem bővíthető → 403', async () => {
     const db = freshDb();
-    await handleConsent(post(decision({ consent_key: KEY })), makeEnv(db));
-    const res = await handleConsent(post(decision({ ...WITHDRAW, revision: 2, consent_key: 'x'.repeat(64) })), makeEnv(db));
+    await handleConsent(post(decision({ consent_key: KEY, ...WITHDRAW, decision: 'reject_all' })), makeEnv(db));
+    const res = await handleConsent(post(decision({ revision: 2, consent_key: 'x'.repeat(64) })), makeEnv(db));
     expect(res.status).toBe(403);
   });
 
@@ -154,19 +157,60 @@ describe('R7 — a revision a lánc ismert maximumához kötött', () => {
   });
 });
 
-describe('R7 — régi (kulcs nélküli) láncok és üzemzavar', () => {
-  it('a kulcs nélküli lánc az első kulcsos döntéskor védetté válik', async () => {
+describe('R7 utóellenőrzés — kulcsvesztés: a jogos visszavonás nem vész el', () => {
+  it('védett accept_all, a böngésző ÚJ kulccsal visszavon → 204, az aktuális állapot withdrawn', async () => {
     const db = freshDb();
-    // 6.10 előtti kliens: kulcs nélkül írt.
-    expect((await handleConsent(post(decision()), makeEnv(db))).status).toBe(204);
-    expect(rows(db)[0].key_hash).toBeNull();
-    // Az első kulcsos döntés megköti a láncot…
-    expect((await handleConsent(post(decision({ revision: 2, consent_key: KEY })), makeEnv(db))).status).toBe(204);
-    // …onnantól kulcs nélkül nem írható.
-    expect((await handleConsent(post(decision({ ...WITHDRAW, revision: 3 })), makeEnv(db))).status).toBe(403);
+    const env = makeEnv(db);
+    await handleConsent(post(decision({ consent_key: KEY })), env);
+    const res = await handleConsent(post(decision({ ...WITHDRAW, revision: 2, consent_key: 'n'.repeat(64) })), env);
+    expect(res.status).toBe(204);
+    const state = await readConsentState(env, 'review', CID);
+    expect(state.kind === 'found' && state.state.decision).toBe('withdrawn');
+    // Az igazolatlan sor nem köt új kulcsot a lánchoz.
+    expect(rows(db).map((r) => r.key_hash === null)).toEqual([false, true]);
   });
 
-  it('a lánc-jogosultság olvasási hibája → 503 (a kliens megőrzi és újraküldi), nincs írás', async () => {
+  it('részleges visszavonás (csak a marketing ki) kulcs nélkül is átmegy', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    await handleConsent(post(decision({ consent_key: KEY })), env);
+    const res = await handleConsent(
+      post(decision({ decision: 'custom', cat_analytics: true, cat_marketing: false, revision: 2 })),
+      env
+    );
+    expect(res.status).toBe(204);
+    const state = await readConsentState(env, 'review', CID);
+    expect(state.kind === 'found' && state.state.ad_user_data).toBe('DENIED');
+  });
+
+  it('a tulajdonos későbbi IGAZOLT engedélye felülírja az igazolatlan visszavonást — alacsonyabb revisionnel is', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    await handleConsent(post(decision({ consent_key: KEY })), env);
+    // Harmadik fél (vagy kulcsvesztett böngésző) magas revisionnel szigorít…
+    expect((await handleConsent(post(decision({ ...WITHDRAW, revision: 1 + MAX_REVISION_STEP })), env)).status).toBe(204);
+    // …a tulajdonos a SAJÁT következő revisionjével, kulccsal újra engedélyez.
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await handleConsent(post(decision({ revision: 2, consent_key: KEY })), env)).status).toBe(204);
+    const state = await readConsentState(env, 'review', CID);
+    expect(state.kind === 'found' && state.state.decision).toBe('accept_all');
+  });
+});
+
+describe('R7 utóellenőrzés — a régi (kulcs nélküli) láncot senki nem „védheti le"', () => {
+  it('támadó saját kulccsal visszavon (204, igazolatlan), a valódi látogató saját kulccsal frissít → NEM 403', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    expect((await handleConsent(post(decision()), env)).status).toBe(204); // régi, kulcs nélküli engedély
+    expect((await handleConsent(post(decision({ ...WITHDRAW, revision: 2, consent_key: 'a'.repeat(64) })), env)).status).toBe(204);
+    expect((await handleConsent(post(decision({ revision: 3, consent_key: 'v'.repeat(64) })), env)).status).toBe(204);
+    // Egyik kulcs sem kötődött a lánchoz; a régi szabály szerint a legmagasabb revision dönt.
+    expect(rows(db).every((r) => r.key_hash === null)).toBe(true);
+    const state = await readConsentState(env, 'review', CID);
+    expect(state.kind === 'found' && state.state.decision).toBe('accept_all');
+  });
+
+  it('a lánc-állapot olvasási hibája → 503 (a kliens megőrzi és újraküldi), nincs írás', async () => {
     const db = freshDb();
     const res = await handleConsent(post(decision({ consent_key: KEY })), makeEnv(db, { failReads: true }));
     expect(res.status).toBe(503);

@@ -24,34 +24,37 @@ import { sanitizeErrorMessage } from './log-sanitize';
 const LINKEDIN_URL = 'https://api.linkedin.com/rest/conversionEvents';
 const LINKEDIN_TIMEOUT_MS = 5000;
 /**
- * A LinkedIn `YYYYMM` verziói KB. 12 hónapig támogatottak. A korábbi '202401'
- * 2025-01-22-én megszűnt, és minden config nélküli kapcsolat azzal indult
- * (2026-10-18 review R11). 202609: a hivatalos verziózási oldal szerint a
- * legfrissebb ellenőrzött verzió (2026-10-18); várható megszűnése 2027-09.
- * Frissítsd, mielőtt `linkedInVersionStatus` 'expiring'-et jelez.
+ * A LinkedIn `YYYYMM` verziói LEGALÁBB egy évig támogatottak — a tényleges
+ * megszűnési dátumot a LinkedIn hirdeti meg, és nem feltétlenül a 12. hónap
+ * elején van. A korábbi '202401' 2025-01-22-én megszűnt, és minden config
+ * nélküli kapcsolat azzal indult (2026-10-18 review R11). 202609: a hivatalos
+ * verziózási oldalon ellenőrzött verzió (2026-10-18; azóta már 202610 is van).
  */
 export const DEFAULT_VERSION = '202609';
-/** A LinkedIn által vállalt minimális támogatási idő hónapokban. */
-const VERSION_SUPPORT_MONTHS = 12;
-/** Ennyi hónappal a megszűnés előtt kezdünk figyelmeztetni. */
+/** A LinkedIn által vállalt MINIMÁLIS támogatási idő hónapokban (becslés alapja). */
+const VERSION_MIN_SUPPORT_MONTHS = 12;
+/** Ennyi hónappal a becsült megszűnés előtt kezdünk figyelmeztetni. */
 const VERSION_WARN_MONTHS_BEFORE = 2;
 
 /**
- * Egy `YYYYMM` LinkedIn-verzió állapota adott időpontban (pure).
- * 'invalid' = nem YYYYMM alak; 'expired' = a 12 hónapos támogatás letelt;
- * 'expiring' = 2 hónapon belül lejár.
+ * Egy `YYYYMM` LinkedIn-verzió BECSÜLT állapota adott időpontban (pure). NEM
+ * tényállítás: a valódi dátum a LinkedIn verziózási oldalán áll.
+ *  - 'likely_sunset' = a minimális egyéves támogatás letelt — valószínűleg (de
+ *    nem biztosan) megszűnt, ellenőrizd;
+ *  - 'expiring_soon' = a minimális támogatás 2 hónapon belül letelik;
+ *  - 'invalid' = nem YYYYMM alak.
  */
 export function linkedInVersionStatus(
   version: string,
   now: Date = new Date()
-): 'ok' | 'expiring' | 'expired' | 'invalid' {
+): 'ok' | 'expiring_soon' | 'likely_sunset' | 'invalid' {
   const m = /^(\d{4})(0[1-9]|1[0-2])$/.exec(version);
   if (!m) return 'invalid';
   const released = Number(m[1]) * 12 + (Number(m[2]) - 1);
   const current = now.getUTCFullYear() * 12 + now.getUTCMonth();
   const age = current - released;
-  if (age >= VERSION_SUPPORT_MONTHS) return 'expired';
-  if (age >= VERSION_SUPPORT_MONTHS - VERSION_WARN_MONTHS_BEFORE) return 'expiring';
+  if (age >= VERSION_MIN_SUPPORT_MONTHS) return 'likely_sunset';
+  if (age >= VERSION_MIN_SUPPORT_MONTHS - VERSION_WARN_MONTHS_BEFORE) return 'expiring_soon';
   return 'ok';
 }
 
@@ -114,7 +117,7 @@ export async function sendToLinkedIn(
   const versionStatus = linkedInVersionStatus(version);
   if (versionStatus !== 'ok') {
     logStructured({
-      level: versionStatus === 'expiring' ? 'warn' : 'error',
+      level: 'warn',
       error_code: TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED,
       message: ERROR_DESCRIPTIONS[TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED],
       site_id: siteConfig.site_id,

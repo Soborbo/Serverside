@@ -183,7 +183,15 @@ function removePending(consentEventId: string): void {
 
 // ── POST ────────────────────────────────────────────────────────────────────
 
-type PostOutcome = 'stored' | 'rejected' | 'retryable';
+type PostOutcome = 'stored' | 'rejected' | 'retryable' | 'key_mismatch';
+
+async function responseText(res: Response): Promise<string> {
+  try {
+    return typeof res.text === 'function' ? await res.text() : '';
+  } catch {
+    return '';
+  }
+}
 
 async function postConsent(payload: SboConsentWirePayload): Promise<PostOutcome> {
   try {
@@ -196,6 +204,12 @@ async function postConsent(payload: SboConsentWirePayload): Promise<PostOutcome>
     if (res.status === 204) {
       report('CONSENT_STORED', { revision: payload.revision, decision: payload.decision });
       return 'stored';
+    }
+    if (res.status === 403 && (await responseText(res)) === 'consent_key_mismatch') {
+      // A lánc kulccsal védett, és a mi kulcsunk nem illik (elveszett): a szerver
+      // csak SZIGORÍTÁST fogad el tőlünk, engedély-bővítést nem. Lásd rotateChain.
+      report('CONSENT_POST_REJECTED', { status: res.status, decision: payload.decision, reason: 'key_mismatch' });
+      return 'key_mismatch';
     }
     if (res.status >= 400 && res.status < 500 && res.status !== 429) {
       // 400 = hibás payload (megnevezett okkal), 403 = origin/provider-tiltás.
@@ -213,8 +227,50 @@ async function postConsent(payload: SboConsentWirePayload): Promise<PostOutcome>
 
 async function submitWithPending(payload: SboConsentWirePayload): Promise<void> {
   const outcome = await postConsent(payload);
-  if (outcome === 'stored' || outcome === 'rejected') removePending(payload.consent_event_id);
+  if (outcome !== 'retryable') removePending(payload.consent_event_id);
+  if (outcome === 'key_mismatch') await rotateChain(payload);
   // 'retryable' → marad a pending sorban; a következő oldalletöltés flushol.
+}
+
+/**
+ * Kulcsvesztés utáni ÚJ lánc (2026-10-18 review R7). A szerver a védett láncra
+ * kulcs nélkül csak szigorítást fogad el (azt igazolatlanul, de érvényesen);
+ * egy ENGEDÉLY-bővítést elutasít. Ilyenkor a böngésző aktuális döntését egy új
+ * `consent_id`-vel, új kulccsal, revision=1-ről rögzítjük — a döntés így nem vész
+ * el, és az új konverziók már az új lánchoz kötődnek. A régi lánc a szerveren a
+ * korábbi (szigorúbb vagy azonos) állapotában marad, ami a régi leadekre
+ * adatvédelmi szempontból a biztonságos irány.
+ *
+ * Csak akkor fordulunk, ha a süti még a 403-at kapott láncon áll (közben nem
+ * született újabb döntés), és csak egyszer: az új lánc kulccsal indul.
+ */
+async function rotateChain(rejected: SboConsentWirePayload): Promise<void> {
+  const current = readSboConsent();
+  if (!current || current.consentId !== rejected.consent_id) return;
+  const fresh: SboConsentState = {
+    ...current,
+    consentId: generateUUID(),
+    revision: 1,
+    decision: decisionKind({ analytics: current.analytics, marketing: current.marketing }, null),
+    decidedAtSec: Math.floor(Date.now() / 1000)
+  };
+  writeSboConsentCookie(fresh);
+  const payload: SboConsentWirePayload = {
+    ...rejected,
+    consent_id: fresh.consentId,
+    consent_event_id: generateUUID(),
+    revision: 1,
+    decision: fresh.decision,
+    cat_analytics: fresh.analytics,
+    cat_marketing: fresh.marketing,
+    client_decided_at: new Date(fresh.decidedAtSec * 1000).toISOString()
+  };
+  delete payload.consent_key;
+  const key = consentKeyFor(fresh.consentId);
+  if (key) payload.consent_key = key;
+  writePending([...readPending(), payload]);
+  const outcome = await postConsent(payload);
+  if (outcome !== 'retryable') removePending(payload.consent_event_id);
 }
 
 /**
@@ -228,6 +284,7 @@ export async function flushPendingSboConsent(): Promise<void> {
     const outcome = await postConsent(payload);
     if (outcome === 'retryable') return;
     removePending(payload.consent_event_id);
+    if (outcome === 'key_mismatch') await rotateChain(payload);
   }
 }
 

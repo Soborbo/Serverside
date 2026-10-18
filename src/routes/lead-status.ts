@@ -110,60 +110,77 @@ interface LeadStatusBody {
 }
 
 /**
- * A Google offline-feltöltés ablaka a KATTINTÁSTÓL számítva (napokban). Felső
- * korlát: a Google a végső bíró (az ablakon belüli, de mégis elutasított
- * feltöltés 'rejected' delivery-sorként látszik).
+ * A Google offline-feltöltés ablakai, a KATTINTÁSTÓL a FELTÖLTÉSIG (napokban):
+ *  - kattintásazonosítós (gclid/gbraid/wbraid) feltöltés: 90 nap;
+ *  - csak személyes adaton alapuló (Enhanced Conversions for Leads): 63 nap.
+ * Forrás: Google Ads Help, „Offline conversion imports FAQs" (2026-10-18). A Google
+ * a végső bíró: az ablakon belüli, mégis elutasított feltöltés 'rejected' sor.
  */
-export const OFFLINE_WINDOW_DAYS = 90;
+export const OFFLINE_WINDOW_DAYS = { click_id: 90, user_data: 63 } as const;
 
 export type UploadWindowStatus = 'within' | 'expired' | 'unknown';
+export type UploadIdentification = keyof typeof OFFLINE_WINDOW_DAYS;
 
 export interface UploadWindowAssessment {
   status: UploadWindowStatus;
-  /** Mihez mértünk: a kattintáshoz (pontos) vagy a lead első eseményéhez (alsó becslés). */
-  reference: 'click_at' | 'lead_first_seen' | null;
+  identification: UploadIdentification;
+  limit_days: number;
+  /** Mihez mértünk; null, ha nem volt bizonyító viszonyítási pont. */
+  reference: 'click_at' | 'lead_first_seen' | 'occurred_at' | null;
+  /** A feltöltésig eltelt idő a viszonyítási ponttól (napok, lefelé kerekítve). */
   age_days: number | null;
 }
 
 /**
- * Belefér-e a konverzió a feltöltési ablakba (pure). 2026-10-18 review R8.
+ * Belefér-e a feltöltés a Google ablakába (pure). 2026-10-18 review R8.
  *
- * KORÁBBAN (P10 §5.4, 2026-09-09) a kód a fizetés és a `won_at` különbségéből
- * következtetett, és 90 nap felett a VALÓDI eseményidőt `won_at`-ra cserélte. Ez
- * két hibát hordozott: (1) a platform hamis időbélyeget kapott — egy október 18-i
- * fizetés július 1-jére dátumozva; (2) a feltöltés jogosultságát mégsem
- * biztosította, mert a kattintás kora ismeretlen maradt (július 1-i kattintás,
- * október 1-i nyerés, október 18-i fizetés: a régi kód 17 napot látott, a
- * kattintás 109 napos).
+ * A viszonyítás a FELTÖLTÉS időpontja (`uploadAtIso`, alapból most), nem az
+ * eseményé: egy kattintás után 10 nappal történt, de 100 nappal később feltöltött
+ * konverzió kifutott. Az esemény ideje SOHA nem módosul (nincs visszadátumozás).
  *
- * MOST: az esemény ideje SOHA nem módosul. A viszonyítási pont a kattintás
- * (`click_at`), ha a CRM ismeri — különben a lead első ismert eseménye, ami a
- * kattintás UTÁN van, tehát ha AHHOZ képest is kifut, a kattintáshoz képest
- * biztosan kifutott. Egyik sincs → 'unknown': feltöltünk, a Google dönt.
+ *  - Ismert kattintás (`click_at`) → pontos: within / expired.
+ *  - Kattintás nélkül csak ALSÓ becslésünk van a kattintás korára (a lead első
+ *    eseménye és maga a konverzió is a kattintás UTÁN van). Ha már az alsó becslés
+ *    is túllépi az ablakot → expired (biztos). Ha nem → 'unknown': egy fiatal
+ *    leadből NEM következik, hogy a kattintás is belefér. Az 'unknown' feltöltődik,
+ *    a Google dönt.
  */
 export function assessUploadWindow(
   occurredAtIso: string,
-  refs: { clickAtIso?: string; leadFirstSeenIso?: string | null }
+  refs: {
+    clickAtIso?: string;
+    leadFirstSeenIso?: string | null;
+    uploadAtIso?: string;
+    hasClickId: boolean;
+  }
 ): UploadWindowAssessment {
-  const occurred = Date.parse(occurredAtIso);
-  const pick = (
-    iso: string | null | undefined,
-    reference: 'click_at' | 'lead_first_seen'
-  ): UploadWindowAssessment | null => {
+  const identification: UploadIdentification = refs.hasClickId ? 'click_id' : 'user_data';
+  const limit = OFFLINE_WINDOW_DAYS[identification];
+  const upload = refs.uploadAtIso ? Date.parse(refs.uploadAtIso) : Date.now();
+  const ageOf = (iso: string | null | undefined): number | null => {
     if (!iso) return null;
     const t = Date.parse(iso);
-    if (!Number.isFinite(t) || !Number.isFinite(occurred)) return null;
-    const age = (occurred - t) / 86_400_000;
-    return {
-      status: age > OFFLINE_WINDOW_DAYS ? 'expired' : 'within',
-      reference,
-      age_days: Math.floor(age)
-    };
+    return Number.isFinite(t) && Number.isFinite(upload) ? (upload - t) / 86_400_000 : null;
   };
-  return (
-    pick(refs.clickAtIso, 'click_at') ??
-    pick(refs.leadFirstSeenIso, 'lead_first_seen') ?? { status: 'unknown', reference: null, age_days: null }
-  );
+  const base = { identification, limit_days: limit };
+
+  const clickAge = ageOf(refs.clickAtIso);
+  if (clickAge !== null) {
+    return { ...base, status: clickAge > limit ? 'expired' : 'within', reference: 'click_at', age_days: Math.floor(clickAge) };
+  }
+  // Alsó becslések: a legrégebbi bizonyított, kattintás UTÁNI pont.
+  const lowerBounds: Array<[UploadWindowAssessment['reference'], number | null]> = [
+    ['lead_first_seen', ageOf(refs.leadFirstSeenIso)],
+    ['occurred_at', ageOf(occurredAtIso)]
+  ];
+  let best: [UploadWindowAssessment['reference'], number] | null = null;
+  for (const [ref, age] of lowerBounds) {
+    if (age !== null && (best === null || age > best[1])) best = [ref, age];
+  }
+  if (best && best[1] > limit) {
+    return { ...base, status: 'expired', reference: best[0], age_days: Math.floor(best[1]) };
+  }
+  return { ...base, status: 'unknown', reference: null, age_days: null };
 }
 
 export function validateLeadStatusBody(payload: unknown): LeadStatusBody | null {
@@ -482,7 +499,8 @@ export async function handleLeadStatus(
     clickAtIso: body.click_at,
     leadFirstSeenIso: body.click_at
       ? null
-      : await getLeadFirstSeenAt(env, siteConfig.site_id, body.lead_id)
+      : await getLeadFirstSeenAt(env, siteConfig.site_id, body.lead_id),
+    hasClickId: Boolean(body.gclid || body.gbraid || body.wbraid)
   });
 
   // GDPR-kapu, precedencia szerint (2026-07-17 consent-audit):
@@ -671,7 +689,8 @@ export async function handleLeadStatus(
       event_name: eventName,
       window_reference: uploadWindow.reference,
       age_days: uploadWindow.age_days,
-      window_days: OFFLINE_WINDOW_DAYS
+      window_days: uploadWindow.limit_days,
+      identification: uploadWindow.identification
     });
     ctx.waitUntil(
       recordDeliveries(env, {

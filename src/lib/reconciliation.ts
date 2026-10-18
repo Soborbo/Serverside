@@ -343,6 +343,11 @@ export interface OfflineLegInput {
   blocked_by: OfflineBlockReason | null;
   /** A legutóbbi BIZONYÍTOTT feltöltés (accepted + non-NULL http_status + nem szintetikus). */
   last_accepted_at: string | null;
+  /**
+   * Az ablakban helyreállított (retry accepted), de KORÁBBAN beérkezett
+   * események száma — külön mutató, a lefedettségbe NEM számít bele (R5).
+   */
+  recovered_earlier?: number;
 }
 
 export interface OfflineThresholds {
@@ -388,6 +393,8 @@ export interface OfflineLegReport {
   delivered: number;
   rejected: number;
   last_successful_upload: string | null;
+  /** Ma helyreállított, korábban beérkezett események (nem része a lefedettségnek). */
+  recovered_earlier: number;
 }
 
 export function reportOfflineLeg(
@@ -403,7 +410,8 @@ export function reportOfflineLeg(
     expected: expectedDelivery(leg.received, leg.skips),
     delivered: leg.accepted,
     rejected: leg.rejected,
-    last_successful_upload: leg.last_accepted_at
+    last_successful_upload: leg.last_accepted_at,
+    recovered_earlier: leg.recovered_earlier ?? 0
   };
 }
 
@@ -571,6 +579,12 @@ export interface OfflineDeliveryRow {
   skipped: number;
   skip_reason: string | null;
 }
+/** Az ablakban helyreállított, korábban beérkezett események (R5 külön mutató). */
+export interface OfflineRecoveredRow {
+  site_id: string;
+  event_name: string;
+  recovered: number;
+}
 /** A legutóbbi BIZONYÍTOTT feltöltés (accepted + non-NULL http_status + nem szintetikus). */
 export interface OfflineLastAcceptedRow {
   site_id: string;
@@ -601,9 +615,11 @@ export function assembleOfflineLegs(
   delivered24: OfflineDeliveryRow[],
   delivered7d: OfflineDeliveryRow[],
   lastAccepted: OfflineLastAcceptedRow[],
-  resolveBlock: (siteId: string, eventName: string) => OfflineBlockReason | null
+  resolveBlock: (siteId: string, eventName: string) => OfflineBlockReason | null,
+  recoveredRows: OfflineRecoveredRow[] = []
 ): Map<string, OfflineLegInput[]> {
   const key = (s: string, e: string) => `${s}\u0000${e}`;
+  const recoveredByKey = new Map(recoveredRows.map((r) => [key(r.site_id, r.event_name), r.recovered]));
 
   const agg = (rows: OfflineDeliveryRow[]) => {
     const m = new Map<string, { accepted: number; rejected: number; skips: Record<string, number> }>();
@@ -662,7 +678,8 @@ export function assembleOfflineLegs(
       accepted_7d: a7?.accepted ?? 0,
       skips_7d: a7?.skips ?? {},
       blocked_by: resolveBlock(site_id, event_name),
-      last_accepted_at: la.get(k) ?? null
+      last_accepted_at: la.get(k) ?? null,
+      recovered_earlier: recoveredByKey.get(k) ?? 0
     };
     if (!bySite.has(site_id)) bySite.set(site_id, []);
     bySite.get(site_id)!.push(leg);
@@ -794,29 +811,40 @@ const NOT_SYNTHETIC_DELIVERY = notSyntheticSql('event_id');
 const OFFLINE_ABSOLUTE_WINDOW_DAYS = 7;
 
 /**
- * Az offline Google-láb kézbesítései EGYEDI eseményenként, a VÉGSŐ állapot
- * szerint (2026-10-18 review R5).
+ * Az offline Google-láb kézbesítései: az ABLAKBAN BEÉRKEZETT üzleti események
+ * végső kézbesítési állapota (2026-10-18 review R5, utóellenőrzés).
  *
- * Korábban csak `origin='offline'` sorokat számoltunk: a DLQ-ból visszanyert
- * feltöltés (`origin='retry'`) láthatatlan maradt — sikeres helyreállás mellett
- * is accepted=0 és hamis kiesés-riasztás. Most mindkét origin számít, de
- * eseményenként (event_id = a determinisztikus orderId) EGYSZER:
- *  - accepted: volt legalább egy elfogadott kísérlete (offline vagy retry);
+ * Az alap az ablak `lead_status` eseményeinek halmaza (orderId = COALESCE(order_id,
+ * id)), és EZEKHEZ keressük meg a kézbesítési eredményt — offline ÉS retry
+ * sorokból, időszűrés NÉLKÜL (a retry az ablak után is megtörténhet). Korábban a
+ * két oldal más halmazt mért: received = az ablakban beérkezett, accepted = az
+ * ablakban kézbesített. Egy mai, kézbesítetlen esemény és egy kétnapos esemény
+ * mai sikeres retry-ja így received=1 / accepted=1 lett — a mai hiány eltűnt.
+ *
+ * Eseményenként EGYSZER:
+ *  - accepted: volt legalább egy elfogadott kísérlete;
  *  - rejected: elutasították, és SOHA nem fogadták el;
- *  - skipped: se accepted, se rejected — a skip oka szerint csoportosítva.
- * Így egy bukott első küldés + sikeres retry EGY elfogadott esemény, és a
- * többszöri retry sem számol többszörös konverziót.
+ *  - skipped: se accepted, se rejected — a skip oka szerint csoportosítva;
+ *  - kézbesítési sor nélkül: egyikben sem (a coverage-számítás hiányként látja).
+ * A korábbi beérkezésű, az ablakban helyreállított eseményeket a
+ * RECOVERED_EARLIER_SQL külön mutatóként adja.
  */
-const OFFLINE_FINAL_STATE_SQL = `WITH ev AS (
-           SELECT site_id, event_name, event_id,
-                  MAX(status = 'accepted') AS acc,
-                  MAX(status = 'rejected') AS rej,
-                  MAX(status = 'skipped') AS skp,
-                  MAX(CASE WHEN status = 'skipped' THEN skip_reason END) AS reason
-           FROM deliveries
-           WHERE created_at >= ?1 AND origin IN ('offline', 'retry') AND platform = 'gads'
-             AND ${NOT_SYNTHETIC_DELIVERY}
-           GROUP BY site_id, event_name, event_id
+const OFFLINE_FINAL_STATE_SQL = `WITH recv AS (
+           SELECT DISTINCT site_id, status AS event_name, COALESCE(order_id, id) AS oid
+           FROM lead_status
+           WHERE created_at >= ?1 AND ${NOT_SYNTHETIC}
+         ),
+         ev AS (
+           SELECT r.site_id, r.event_name, r.oid,
+                  COALESCE(MAX(d.status = 'accepted'), 0) AS acc,
+                  COALESCE(MAX(d.status = 'rejected'), 0) AS rej,
+                  COALESCE(MAX(d.status = 'skipped'), 0) AS skp,
+                  MAX(CASE WHEN d.status = 'skipped' THEN d.skip_reason END) AS reason
+           FROM recv r
+           LEFT JOIN deliveries d
+             ON d.site_id = r.site_id AND d.event_id = r.oid
+            AND d.platform = 'gads' AND d.origin IN ('offline', 'retry')
+           GROUP BY r.site_id, r.event_name, r.oid
          )
          SELECT site_id, event_name,
                 CASE WHEN acc = 1 OR rej = 1 THEN NULL ELSE reason END AS skip_reason,
@@ -825,6 +853,21 @@ const OFFLINE_FINAL_STATE_SQL = `WITH ev AS (
                 COALESCE(SUM(acc = 0 AND rej = 0 AND skp = 1), 0) AS skipped
          FROM ev
          GROUP BY site_id, event_name, CASE WHEN acc = 1 OR rej = 1 THEN NULL ELSE reason END`;
+
+/**
+ * Az ablakban sikeresen helyreállított, de KORÁBBAN beérkezett események
+ * (retry accepted, a beérkezés az ablak előtt) — külön mutató, NEM a lefedettség
+ * része. Jó hír (a DLQ visszanyert valamit), de nem takarhat el egy mai hiányt.
+ */
+const RECOVERED_EARLIER_SQL = `SELECT d.site_id, d.event_name, COUNT(DISTINCT d.event_id) AS recovered
+         FROM deliveries d
+         WHERE d.created_at >= ?1 AND d.platform = 'gads' AND d.origin = 'retry'
+           AND d.status = 'accepted' AND ${notSyntheticSql('d.event_id')}
+           AND NOT EXISTS (
+             SELECT 1 FROM lead_status l
+              WHERE l.site_id = d.site_id AND COALESCE(l.order_id, l.id) = d.event_id
+                AND l.created_at >= ?1)
+         GROUP BY d.site_id, d.event_name`;
 
 /** Policy-skipek (nem veszteség) — a Meta-lefedettség `excused` halmazához. */
 const POLICY_SKIP_SQL_LIST = SKIP_REASONS.filter((r) => !OFFLINE_SKIP_COUNTS_AS_LOSS[r])
@@ -894,7 +937,7 @@ async function fetchOfflineLegs(
   const ledger = env.LEDGER!;
   const since7d = new Date(Date.now() - OFFLINE_ABSOLUTE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const [recv24, recv7d, del24, del7d, lastAcc] = await Promise.all([
+  const [recv24, recv7d, del24, del7d, lastAcc, recovered] = await Promise.all([
     ledger
       .prepare(
         // COUNT(DISTINCT COALESCE(order_id, id)) — a `lead_status` sorai
@@ -952,7 +995,8 @@ async function fetchOfflineLegs(
            AND http_status IS NOT NULL AND ${NOT_SYNTHETIC_DELIVERY}
          GROUP BY site_id, event_name`
       )
-      .all<OfflineLastAcceptedRow>()
+      .all<OfflineLastAcceptedRow>(),
+    ledger.prepare(RECOVERED_EARLIER_SQL).bind(sinceIso).all<OfflineRecoveredRow>()
   ]);
 
   // `monitoring: false` site-ok kihagyása — ugyanaz a szabály, mint a digestben: egy
@@ -991,7 +1035,8 @@ async function fetchOfflineLegs(
     del24.results ?? [],
     del7d.results ?? [],
     lastAcc.results ?? [],
-    resolveBlock
+    resolveBlock,
+    recovered.results ?? []
   );
 }
 

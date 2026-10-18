@@ -480,7 +480,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.11.0';
+export const BACKEND_LIB_VERSION = '6.12.0';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;

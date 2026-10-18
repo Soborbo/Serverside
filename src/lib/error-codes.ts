@@ -207,7 +207,7 @@ export enum TrackingErrorCode {
   TIKTOK_API_TIMEOUT = 'TRK-820-002',
   LINKEDIN_DISPATCH_FAILED = 'TRK-830-001',
   LINKEDIN_API_TIMEOUT = 'TRK-830-002',
-  /** A használt LinkedIn-Version lejárt / 2 hónapon belül lejár / érvénytelen alakú. */
+  /** A használt LinkedIn-Version BECSLÉS szerint lejárhatott / hamarosan lejár / érvénytelen alakú. */
   LINKEDIN_API_VERSION_UNSUPPORTED = 'TRK-830-003',
 
   DLQ_WRITE_FAILED = 'TRK-900-001',
@@ -273,6 +273,12 @@ export enum TrackingErrorCode {
    * egy D1-kiesés nem érvényesítheti a régi engedélyt (2026-10-18 review R2).
    */
   CONSENT_STATE_UNAVAILABLE = 'TRK-910-009',
+  /**
+   * Kulcs nélküli / rossz kulcsú SZIGORÍTÓ consent-döntés egy kulccsal védett
+   * láncon (review R7). Tárolva és érvényes — jogos visszavonás kulcsvesztés
+   * után, VAGY egy azonosítót ismerő harmadik fél. Ugrás esetén vizsgálandó.
+   */
+  CONSENT_UNVERIFIED_DECISION = 'TRK-910-010',
 
   RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
   RECON_COVERAGE_DRIFT = 'TRK-950-002',
@@ -532,7 +538,7 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.LINKEDIN_DISPATCH_FAILED]: 'LinkedIn Conversions API call failed',
   [TrackingErrorCode.LINKEDIN_API_TIMEOUT]: 'LinkedIn Conversions API call exceeded timeout',
   [TrackingErrorCode.LINKEDIN_API_VERSION_UNSUPPORTED]:
-    'LinkedIn-Version header is expired, about to expire (<2 months) or malformed — bump DEFAULT_VERSION / the site api_version',
+    'LinkedIn-Version header is likely sunset or near its estimated sunset (minimum 1-year support), or malformed — verify on LinkedIn\'s versioning page and bump DEFAULT_VERSION / the site api_version',
   [TrackingErrorCode.DLQ_WRITE_FAILED]: 'Failed to write event to R2 dead letter queue',
   [TrackingErrorCode.DLQ_LIST_FAILED]: 'Failed to list pending DLQ records',
   [TrackingErrorCode.DLQ_DELETE_FAILED]: 'Failed to delete DLQ record after successful retry',
@@ -561,6 +567,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'A delivery was skipped while its consent receipt says GRANTED — the exact anomaly Phase D exists to explain; check the skip_reason breakdown',
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]:
     'Current consent state could not be read before a replay — send withheld, record stays retryable',
+  [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]:
+    'Unverified (no/wrong consent_key) restricting decision stored on a key-protected consent chain — a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look',
   [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]:
     'An EXPECTED platform has a config block, but its identifier is malformed (unfilled placeholder or typo) — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the identifier is fixed in KV',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
@@ -780,6 +788,7 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   // léteznie — a napi ellenőrzés ezen riaszt, ha nem nulla.
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'warning',
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]: 'warning',
+  [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]: 'warning',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',
@@ -988,6 +997,7 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.CONSENT_CROSS_CHECK_FAILED]: 'RETRYABLE',
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'OPERATOR_ACTION',
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]: 'RETRYABLE',
+  [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]: 'OPERATOR_ACTION',
 
   // 950 — reconciliation. A findingek definíció szerint emberi döntést kérnek;
   // a „query failed" ágak viszont átmenetiek.

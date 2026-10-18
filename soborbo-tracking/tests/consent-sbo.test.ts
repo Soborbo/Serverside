@@ -315,3 +315,37 @@ describe('lánc-kulcs (2026-10-18 review R7)', () => {
     expect(b.consent_key).not.toBe(a.consent_key);
   });
 });
+
+describe('kulcsvesztés utáni lánc-forgatás (2026-10-18 review R7)', () => {
+  it('a 403 consent_key_mismatch-re a döntés ÚJ láncon, új kulccsal, revision=1-ről megy újra', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let call = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      call++;
+      return call === 1
+        ? ({ status: 403, ok: false, text: async () => 'consent_key_mismatch' } as unknown as Response)
+        : ({ status: 204, ok: true } as Response);
+    }));
+    applySboDecision({ analytics: true, marketing: true }, CTX);
+    await flushAsync();
+    await flushAsync();
+    expect(bodies).toHaveLength(2);
+    const [rejected, rotated] = bodies;
+    expect(rotated.consent_id).not.toBe(rejected.consent_id);
+    expect(rotated.revision).toBe(1);
+    expect(rotated.decision).toBe('accept_all');
+    expect(rotated.consent_key).not.toBe(rejected.consent_key);
+    // A süti az új láncra áll — az új konverziók már ahhoz kötődnek.
+    expect(readSboConsent()?.consentId).toBe(rotated.consent_id);
+    expect(localStorage.getItem('sbo_consent_pending')).toBeNull();
+  });
+
+  it('más 403 (pl. origin) nem forgat láncot', async () => {
+    const fn = vi.fn(async () => ({ status: 403, ok: false, text: async () => 'Forbidden origin' }) as unknown as Response);
+    vi.stubGlobal('fetch', fn);
+    applySboDecision({ analytics: true, marketing: true }, CTX);
+    await flushAsync();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});

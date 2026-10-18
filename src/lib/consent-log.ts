@@ -136,6 +136,8 @@ export interface ConsentLogEntry {
   consent_key?: string;
   /** A tárolandó hash (a route tölti ki, a parser nem). */
   key_hash?: string;
+  /** A lánc kulcsa igazolta-e a sort (a route tölti ki; review R7). */
+  verified?: boolean;
 }
 
 /** Banner-megjelenés (ID-MENTES — lásd a migráció kommentjét). */

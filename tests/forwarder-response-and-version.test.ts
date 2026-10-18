@@ -61,11 +61,11 @@ describe('R11 — LinkedIn: támogatott alapverzió és lejárat-figyelés', () 
     expect(linkedInVersionStatus(DEFAULT_VERSION, now)).toBe('ok');
   });
 
-  it('a verzió-állapot: ok / expiring (2 hónapon belül) / expired (12 hónap) / invalid', () => {
+  it('a BECSÜLT verzió-állapot: ok / expiring_soon / likely_sunset / invalid', () => {
     expect(linkedInVersionStatus('202609', now)).toBe('ok');
-    expect(linkedInVersionStatus('202512', now)).toBe('expiring');
-    expect(linkedInVersionStatus('202510', now)).toBe('expired');
-    expect(linkedInVersionStatus('202401', now)).toBe('expired');
+    expect(linkedInVersionStatus('202512', now)).toBe('expiring_soon');
+    expect(linkedInVersionStatus('202510', now)).toBe('likely_sunset');
+    expect(linkedInVersionStatus('202401', now)).toBe('likely_sunset');
     expect(linkedInVersionStatus('2026-09', now)).toBe('invalid');
   });
 
@@ -80,7 +80,7 @@ describe('R11 — LinkedIn: támogatott alapverzió és lejárat-figyelés', () 
     expect(headers['LinkedIn-Version']).toBe(DEFAULT_VERSION);
   });
 
-  it('lejárt, explicit api_version → TRK-830-003 a logban (a hívás ettől még megy, a vendor dönt)', async () => {
+  it('valószínűleg megszűnt, explicit api_version → TRK-830-003 a logban (a hívás ettől még megy, a vendor dönt)', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((m: unknown) => void logs.push(String(m)));
     vi.spyOn(console, 'error').mockImplementation((m: unknown) => void logs.push(String(m)));
@@ -91,6 +91,6 @@ describe('R11 — LinkedIn: támogatott alapverzió és lejárat-figyelés', () 
       { event_name: 'contact_form_submitted', event_id: 'evt-1', event_time: 1750000000, li_fat_id: 'LI' },
       HASHED
     );
-    expect(logs.some((l) => l.includes('TRK-830-003') && l.includes('expired'))).toBe(true);
+    expect(logs.some((l) => l.includes('TRK-830-003') && l.includes('likely_sunset'))).toBe(true);
   });
 });

@@ -199,3 +199,40 @@ describe('R5 — az offline Google-láb látja a sikeres retry-t, eseményenkén
     expect(leg).toMatchObject({ accepted: 0, rejected: 1, skips: { consent_withdrawn: 1 } });
   });
 });
+
+describe('R5 utóellenőrzés — a lefedettség az ABLAK eseményeihez köt', () => {
+  function insertLeadStatusAt(db: DatabaseSync, orderId: string, createdAt: string) {
+    db.prepare(
+      `INSERT INTO lead_status (id, lead_id, site_id, status, order_id, occurred_at, created_at)
+       VALUES (?, 'lead-12345678', 'review', 'lead_qualified', ?, ?, ?)`
+    ).run(`ls${++seq}`, orderId, createdAt, createdAt);
+  }
+
+  it('mai kézbesítetlen esemény + kétnapos esemény mai sikeres retry-ja → accepted=0, recovered_earlier=1', async () => {
+    const db = freshDb();
+    const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    insertLeadStatusAt(db, 'order-old', twoDaysAgo);
+    insertLeadStatusAt(db, 'order-today', now());
+    insertDelivery(db, { event_id: 'order-old', event_name: 'lead_qualified', platform: 'gads', status: 'accepted', origin: 'retry' });
+
+    const env = { LEDGER: d1(db) } as unknown as Env;
+    const inputs = await fetchReconInputs(env, since(), [SITE], true);
+    const leg = inputs!.find((i) => i.site_id === 'review')!.offline_legs![0];
+    expect(leg).toMatchObject({ received: 1, accepted: 0, rejected: 0, recovered_earlier: 1 });
+    // A régi esemény a 7 napos ablakban helyesen elfogadottként számít.
+    expect(leg.received_7d).toBe(2);
+    expect(leg.accepted_7d).toBe(1);
+  });
+
+  it('az ablak eseményének az ablak UTÁN (vagy előtte) íródott kézbesítése is beszámít', async () => {
+    const db = freshDb();
+    insertLeadStatusAt(db, 'order-x', now());
+    db.prepare(
+      `INSERT INTO deliveries (id, event_id, site_id, event_name, platform, status, http_status, origin, created_at)
+       VALUES ('dx', 'order-x', 'review', 'lead_qualified', 'gads', 'accepted', 200, 'offline', ?)`
+    ).run(new Date(Date.now() - 3 * 86_400_000).toISOString());
+    const env = { LEDGER: d1(db) } as unknown as Env;
+    const inputs = await fetchReconInputs(env, since(), [SITE], true);
+    expect(inputs!.find((i) => i.site_id === 'review')!.offline_legs![0].accepted).toBe(1);
+  });
+});
