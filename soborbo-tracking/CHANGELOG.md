@@ -10,6 +10,24 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.13.0 (2026-10-18)
+
+### Biztonság — a lánc-kulcsot a szerver adja ki; igazolatlan írás csak szigoríthat (review R7, második utóellenőrzés)
+
+A 6.12.0 után két bizonyított rés maradt: (1) a régi, kulcs nélküli láncon az azonosító és egy hamisított süti **bővíthette** az engedélyt; (2) a kulcs a `localStorage`-ban élt — letiltott tárhelynél a lánc kulcs nélkül indult és örökre védtelen maradt, két egyidejű első döntés pedig két kulcsot köthetett.
+
+- A kulcsot a **gateway generálja**, és HttpOnly, SameSite=Strict, Secure sütiben adja ki (`sbo_consent_key`, `Path=/api/consent`, 180 nap — ugyanannyi, mint az `sbo_consent`). A kliens JS-e nem kezeli; a payload `consent_key` mezője megszűnt (a szerver figyelmen kívül hagyja), a régi `localStorage` bejegyzést a kliens törli.
+- Az első kötés és a lánc első döntése **egy tranzakcióban** íródik (0013 migráció, `consent_chain`): párhuzamos kérésnél pontosan egy kulcs nyer.
+- Kulcs nélküli / rossz kulcsú írás — régi láncon is — **csak szigoríthat** (igazolatlan, de érvényes; a visszavonás így kulcsvesztés után is eljut). Bővítés: 403 `consent_key_mismatch`. A régi lánc tulajdonosa a meglévő adatokból **nem igazolható**, ezért oda kulcs utólag sem köthető.
+- Kliens 403-ra: elavult döntésnél nincs teendő; versenynél (másik lap épp most kapta a kulcsot) egy újrapróba; egyébként új lánc a böngésző kulcsával.
+- A süti-leltárba bekerült az `sbo_consent_key` és a már eddig is írt `sbo_consent_pending`.
+
+### Javítva — szerveroldali kapu (gateway, a csomagot nem érinti)
+
+Saját CMP alatt a capture-kapu `require_consent` configtól függetlenül fail-closed, és CookieYes-forrású jelet nem fogad el; az offline és replay utak egy közös szabályt kérdeznek (`decideAdConsent`). Lásd `docs/CONSENT-DECISIONS.md`.
+
+**Deploy-sorrend:** 0011 + 0012 + 0013 migráció → worker → site-csomagok (6.13.0). A worker a 6.12-es klienssel is működik (a body-kulcsot figyelmen kívül hagyja, a kulcsot sütiben adja ki).
+
 ## 6.12.0 (2026-10-18)
 
 ### Javítva — kulcsvesztés után sem vész el a jogos visszavonás; régi lánc nem „védhető le" (review R7, utóellenőrzés)
