@@ -73,6 +73,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     userData: {
       email: String(form.get('email') || '') || undefined,
       phone_number: String(form.get('phone') || '') || undefined,
+      // 6.16.0: the visitor's `sb_uid` (empty without marketing consent). PLAIN —
+      // the gateway hashes it; a client/backend hash here = double hash = no match.
+      external_id: String(form.get('external_id') || '') || undefined,
     },
     attribution: {
       gclid: String(form.get('gclid') || '') || undefined,

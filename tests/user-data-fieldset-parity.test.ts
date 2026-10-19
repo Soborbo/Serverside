@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 const TRANSPORT = fileURLToPath(new URL('../soborbo-tracking/lib/gateway.ts', import.meta.url));
 const WORKER = fileURLToPath(new URL('../src/types.ts', import.meta.url));
+const BACKEND = fileURLToPath(new URL('../soborbo-tracking/server/backend/gateway-dispatch.ts', import.meta.url));
 
 /**
  * Egy megnevezett `export interface` mezőneveit adja vissza.
@@ -67,8 +68,8 @@ describe('user_data mezőkészlet — transport ↔ Worker-elfogadás', () => {
 
   it('a D1 mezőkészlet mind a két oldalon megvan', () => {
     // A D1-döntés magva: em + ph + fn + ln + zp + country. A `city` opcionális
-    // (CSAK valódi strukturált forrásból), az `external_id` DEFERRED (D5) — de
-    // amíg a típusban van, mindkét oldalon ott a helye.
+    // (CSAK valódi strukturált forrásból). Az `external_id` 6.16.0 óta ÉLŐ mező
+    // (`sb_uid`) — lásd a lenti külön blokkot.
     for (const field of ['email', 'phone_number', 'first_name', 'last_name', 'postal_code', 'country']) {
       expect(transport).toContain(field);
       expect(worker).toContain(field);
@@ -78,5 +79,23 @@ describe('user_data mezőkészlet — transport ↔ Worker-elfogadás', () => {
   it('a `street` egyik oldalon SINCS — a Worker sosem fogadta, a transport némán eldobatta', () => {
     expect(transport).not.toContain('street');
     expect(worker).not.toContain('street');
+  });
+});
+
+describe('user_data mezőkészlet — SZERVER-láb (gateway-dispatch) ↔ Worker-elfogadás', () => {
+  const backend = interfaceFields(BACKEND, 'GatewayUserData');
+  const worker = interfaceFields(WORKER, 'PlainUserDataPayload');
+
+  it('a backend-láb nem hirdet olyan mezőt, amit a Worker NEM fogad', () => {
+    expect(backend.length).toBeGreaterThan(4);
+    expect(backend.filter((f) => !worker.includes(f))).toEqual([]);
+  });
+
+  it('az `external_id` (6.16.0, `sb_uid`) mindhárom oldalon megvan — böngésző, backend, Worker', () => {
+    // A skinlab-fork a backend-lábon `userData.external_id`-t küld; a kit típusa
+    // enélkül excess-property hibát adott, a Worker viszont fogadja és hash-eli.
+    expect(interfaceFields(TRANSPORT, 'UserData')).toContain('external_id');
+    expect(backend).toContain('external_id');
+    expect(worker).toContain('external_id');
   });
 });

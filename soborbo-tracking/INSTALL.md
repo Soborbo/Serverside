@@ -166,6 +166,10 @@ site's form conversions have NO server leg at all.
    (silent-drop → NO tracking), forward to the CRM, then `sendGatewayConversion`
    with the browser `event_id` (hidden field) and the CRM's id as `lead_id` —
    the exact pattern in `server/backend/README.md`.
+   Forward the `external_id` hidden field (6.16.0, the visitor's `sb_uid`; empty
+   without marketing consent) as `userData.external_id` — **plain**, the gateway
+   hashes it. `<TrackedForm>` renders the input; on a custom form add
+   `<input type="hidden" name="external_id">` and the lib fills it.
 4. Set worker vars/secrets: `TRACKING_GATEWAY_TOKEN` (from Step 4's
    `crm-secret.env`), `SITE_URL`, `TRACKING_SITE_ID` (the `site_id` from Step 0
    — the same value you register in `SMOKE_SITES` in Step 4),

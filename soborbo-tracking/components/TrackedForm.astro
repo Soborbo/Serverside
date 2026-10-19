@@ -100,6 +100,9 @@ const {
   <input type="hidden" name="utm_campaign" />
   <input type="hidden" name="utm_content" />
   <input type="hidden" name="utm_term" />
+  <!-- 6.16.0: Meta external_id (`sb_uid`) — consent nélkül üres. A backend
+       PLAIN-ként adja tovább (`GatewayUserData.external_id`); a Worker hash-el. -->
+  <input type="hidden" name="external_id" />
 </form>
 
 <script>

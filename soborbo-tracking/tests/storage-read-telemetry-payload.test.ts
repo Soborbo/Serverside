@@ -63,9 +63,12 @@ describe('sendToWorker — storage_read_blocked telemetria', () => {
     // A `__sb_attribution` IS benne van: a collectAttribution ugyanezt a kaput
     // használja, és a pillanatkép SZÁNDÉKOSAN utána készül — különben pont az a
     // hozzáférés maradna ki a jelentésből, amiért a műszer készült.
+    // 6.16.0: a `sb_uid` (Meta external_id) olvasása is ugyanezen a kapun megy,
+    // tehát a blokkja ugyanúgy jelentve van.
     expect((body.storage_read_blocked_keys as string[]).sort()).toEqual([
-      '__sb_attribution', '_fbc', '_fbp',
+      '__sb_attribution', '_fbc', '_fbp', 'sb_uid',
     ]);
+    expect((body.user_data as Record<string, unknown> | undefined)?.external_id).toBeUndefined();
   });
 
   it('a payload csak KULCSNEVEKET hordoz, értéket soha', async () => {

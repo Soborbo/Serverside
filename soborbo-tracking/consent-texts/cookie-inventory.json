@@ -1,6 +1,6 @@
 {
   "_comment": "A KOZZETEENDO suti-/tarolo-tabla kanonikus forrasa (GDPR Art 13(1)(e), PECR reg. 6, NAIH). MIERT ITT: a jogi kotelezettseg az, hogy amit KIIRUNK, azt le is irjuk, es amit a visszavonaskor IGERUNK torolni, azt torolju is. Ezt a ket allitast a `tests/cookie-inventory-parity.test.ts` KETIRANYBAN meri a `lib/persistence.ts` VALODI purge-kodjahoz kepest — a tabla igy nem tud elcsuszni a kodtol. Kezzel irt suti-tabla mindig elcsuszik; ez a fajl a kod parja.",
-  "version": "2026-10-a",
+  "version": "2026-10-b",
   "_fields": {
     "name": "A suti/kulcs neve. `match: prefix` eseten nev-elotag (a per-property utotag miatt).",
     "storage": "cookie | localStorage | sessionStorage",
@@ -252,6 +252,24 @@
       "purpose": {
         "hu": "Az attribúciós rekord (első és utolsó érintés egyben), a hirdetési mérés pontosságához.",
         "en": "The attribution record (first and last touch together) for advertising measurement accuracy."
+      }
+    },
+    {
+      "name": "sb_uid",
+      "match": "exact",
+      "storage": "localStorage",
+      "category": "marketing",
+      "issuer": "first_party",
+      "lifetime": {
+        "hu": "a hozzájárulás visszavonásáig (nincs időalapú lejárat)",
+        "en": "until you withdraw consent (no time-based expiry)"
+      },
+      "transfer": "USA (Meta Platforms Inc.; csak SHA-256 hash-elve / SHA-256 hashed only), SCC",
+      "purged_on_withdrawal": true,
+      "provider": "any",
+      "purpose": {
+        "hu": "Véletlenszerű azonosító, amellyel a hirdetési platformok (Meta) a konverziókat a hirdetéseinkhez tudják kötni. Csak a marketing-hozzájárulás után jön létre, a hirdetési platformhoz kizárólag hash-elt formában jut el, és a hozzájárulás visszavonásakor töröljük.",
+        "en": "Random identifier that lets advertising platforms (Meta) match conversions to our ads. Created only after marketing consent, sent to the ad platform in hashed form only, and deleted when you withdraw consent."
       }
     },
     {

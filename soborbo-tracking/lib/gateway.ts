@@ -23,7 +23,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
 import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
-  getFbp, getFbcCookie, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
+  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
 } from './persistence';
 import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
@@ -62,6 +62,8 @@ export interface UserData {
   country?: string;
   // Stable user/cookie identifier (Meta external_id → EMQ improvement). The Worker
   // hashes it; pass the same value to the browser Pixel too for deduplication.
+  // 6.16.0: `sendToWorker` fills it from `getExternalId()` (`sb_uid`) when the
+  // caller gives none — and STRIPS it (caller value too) without marketing consent.
   external_id?: string;
 }
 
@@ -530,6 +532,28 @@ export function collectAttribution(): AttributionParams {
 }
 
 /**
+ * A böngésző-láb `user_data`-ja a Meta `external_id`-vel kiegészítve.
+ *
+ *  - marketing-hozzájárulás nélkül az `external_id` KIESIK (a hívóé is), és
+ *    `getExternalId()` sem hoz létre semmit (a read-gate a blokkot rögzíti);
+ *  - hozzájárulással: hívó értéke > tárolt/újonnan létrehozott `sb_uid`.
+ *
+ * A többi mező érintetlen. Üres eredmény → `undefined` (a mező ki sem megy).
+ */
+function withExternalId(userData: UserData | undefined): UserData | undefined {
+  const callerId = typeof userData?.external_id === 'string' ? userData.external_id.trim() : '';
+  // Hívói érték mellett nem verünk saját azonosítót: minek tárolnánk, ha nem megy ki.
+  const ownId = callerId ? null : getExternalId();
+  const granted = hasMarketingConsent();
+  const externalId = granted ? callerId || ownId || undefined : undefined;
+
+  const out: UserData = { ...(userData || {}) };
+  if (externalId) out.external_id = externalId;
+  else delete out.external_id;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
  * Browser dispatch to the gateway (`/api/event/conversion`).
  *
  * GUARDRAIL: only `BROWSER_GATEWAY_EVENTS` pass. A `server_ingress_only` event
@@ -560,6 +584,12 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   const fbc = getFbcCookie() || undefined;
   const clientId = extractGAClientId(getCookie('_ga'));
   const sessionId = extractGASessionId();
+  // Meta `external_id` (6.16.0). A hívó értéke nyer; ha nincs, a saját `sb_uid`
+  // (marketing read-gate mögött, és CSAK hozzájárulás mellett jön létre).
+  // Hozzájárulás nélkül SEMMILYEN external_id nem hagyja el a böngészőt — a
+  // hívóé sem: ez hirdetési azonosító, a jogalapja ugyanaz, mint az fbp-é.
+  // A Worker hash-eli; itt NINCS hash (CLAUDE.md §1).
+  const userData = withExternalId(payload.user_data);
   // Az attribúció-gyűjtés IS olvas storage-ot (`__sb_attribution`) — ezért előbb
   // fut le, és CSAK utána készül a telemetria-pillanatkép. Fordítva a saját
   // blokkja kimaradna a jelentésből, vagyis a mérőműszer pont azt a hozzáférést
@@ -569,6 +599,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
 
   const body = JSON.stringify({
     ...payload,
+    user_data: userData,
     fbp,
     fbc,
     client_id: clientId,

@@ -38,7 +38,7 @@ export {
 export { isSboConsentProvider, type ConsentProvider } from './config';
 export {
   persistTrackingParams, captureUrlParams, getGclid, getFbclid, getFbp, getFbc,
-  getAllTrackingData, getStoredData, getAttribution, getSourceType,
+  getExternalId, getAllTrackingData, getStoredData, getAttribution, getSourceType,
   getSessionId, getDevice, getPageUrl, clearTrackingData,
   purgeMarketingStorage, purgeAnalyticsStorage, registerMarketingPurgeHook,
   getStorageReadBlocked, resetStorageReadBlocked, readMarketingLocalStorage,
@@ -116,7 +116,7 @@ import {
   persistTrackingParams, captureUrlParams,
   getGclid, getFbclid, getSessionId, getSourceType, getAttribution, getAllTrackingData,
   purgeMarketingStorage, purgeAnalyticsStorage, resetStorageReadBlocked,
-  normalizePhone,
+  normalizePhone, getExternalId,
 } from './persistence';
 import {
   generateEventId, pushLeadConversion, pushContactConversion,
@@ -548,6 +548,35 @@ function writeHiddenFields(form: HTMLFormElement, fields: Record<string, string 
   }
 }
 
+/**
+ * Opcionális rejtett mezők: CSAK akkor írjuk, ha az űrlapon MÁR van ilyen nevű
+ * input (pl. a `<TrackedForm>` rendereli, vagy a site maga tette ki). A fenti
+ * `writeHiddenFields`-szel ellentétben itt NEM hozunk létre új inputot: egy
+ * hirdetési azonosító (`external_id`) ne kerüljön olyan backend POST-jába, amelyik
+ * nem kérte. Az érték LUSTA — ha nincs input, a getter (pl. a `sb_uid`
+ * létrehozása) le sem fut.
+ */
+function writeOptionalHiddenFields(
+  form: HTMLFormElement,
+  fields: Record<string, () => string | null | undefined>,
+): void {
+  for (const [name, read] of Object.entries(fields)) {
+    const input = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+    if (input) input.value = read() || '';
+  }
+}
+
+/**
+ * A marketing-azonosítók opcionális rejtett mezői (mindkét form-író közös része).
+ * `external_id` (6.16.0): a `getExternalId()` — consent nélkül üres string. A
+ * backend ezt `GatewayUserData.external_id`-ként adja tovább (PLAIN; a Worker hash-el).
+ */
+function writeOptionalIdentifierFields(form: HTMLFormElement): void {
+  writeOptionalHiddenFields(form, {
+    external_id: () => getExternalId(),
+  });
+}
+
 export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitResult): void {
   // Last-touch UTM/click context for the hidden form fields. getAttribution()
   // returns first_/last_-prefixed keys (for the Sheets sink), NOT bare utm_*;
@@ -558,6 +587,7 @@ export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitRe
     utm_source: t.utm_source, utm_medium: t.utm_medium,
     utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
   });
+  writeOptionalIdentifierFields(form);
 }
 
 /**
@@ -577,6 +607,7 @@ export function attachEventIdToForm(form: HTMLFormElement, eventId: string): voi
     utm_source: t.utm_source, utm_medium: t.utm_medium,
     utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
   });
+  writeOptionalIdentifierFields(form);
 }
 
 // ── Sheets payload (optional CRM/Sheets sink) ────────────────────

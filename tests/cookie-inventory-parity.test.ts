@@ -254,7 +254,7 @@ describe('süti-tábla ↔ purge-kód paritás', () => {
     // írása (`gateway.ts`) timestampet sem tesz bele. Vagyis mindkettő a
     // visszavonásig él. Amíg ez így van, a táblának EZT kell mondania — ha valaki
     // lejáratot épít be, ez a teszt bukik, és a szöveget is javítani KELL.
-    for (const key of ['sb_first_touch', '__sb_attribution'] as const) {
+    for (const key of ['sb_first_touch', '__sb_attribution', 'sb_uid'] as const) {
       it(`${key}: a tábla a valóságot mondja (nincs idő-alapú lejárat)`, () => {
         const e = byName.get(key);
         expect(e, `${key} hiányzik a táblából`).toBeDefined();
@@ -272,6 +272,16 @@ describe('süti-tábla ↔ purge-kód paritás', () => {
       const read = persistenceSrc.slice(persistenceSrc.indexOf('export function getAttribution'));
       const body = read.slice(0, read.indexOf('\n}'));
       expect(body).not.toMatch(/EXPIRY_DAYS/);
+    });
+
+    it('a sb_uid olvasásán/létrehozásán sincs lejárat-ellenőrzés (6.16.0)', () => {
+      // Ugyanaz a horgony, mint a first touch-nál: ha a `getExternalId` TTL-t kap,
+      // a tábla „nincs időalapú lejárat" mondata hamis lesz — akkor a szöveget is
+      // javítani KELL.
+      const read = persistenceSrc.slice(persistenceSrc.indexOf('export function getExternalId'));
+      const body = read.slice(0, read.indexOf('\n}'));
+      expect(body.length, 'getExternalId nem található a persistence.ts-ben').toBeGreaterThan(50);
+      expect(body).not.toMatch(/EXPIRY_DAYS|timestamp/);
     });
   });
 

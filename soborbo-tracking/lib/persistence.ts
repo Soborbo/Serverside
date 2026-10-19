@@ -25,10 +25,17 @@
 import { hasMarketingConsent, hasAnalyticsConsent } from './consent';
 import { trackingConfig, type Market } from './config';
 import { GOOGLE_CLICK_KEYS, resolveGoogleClickId, applyGoogleClickId } from './google-click-id';
+import { generateUUID } from './uuid';
 
 const TRACKING_KEY = 'sb_tracking';
 const FIRST_TOUCH_KEY = 'sb_first_touch';
 const SESSION_KEY = 'sb_session';
+/**
+ * Az első féltől származó, VÉLETLEN hirdetési azonosító (Meta `external_id`)
+ * localStorage-kulcsa — lásd `getExternalId()`. Marketing-scope: csak
+ * hozzájárulás után jön létre, és a visszavonás törli.
+ */
+const EXTERNAL_ID_KEY = 'sb_uid';
 /**
  * A gateway-attribúció localStorage kulcsa (`collectAttribution` írja/olvassa).
  * NEM új kulcs — a `gateway.ts` eddig is ezt használta; itt él, mert a
@@ -559,6 +566,46 @@ export function getFbc(): string | null {
   return `fb.1.${stored.fbclidAt}.${stored.fbclid}`;
 }
 
+// ── External ID (Meta `external_id`) ───────────────────────────────
+
+/**
+ * Elfogadott tárolt alak: egy UUID vagy egy korábbi fork rövid fallback-azonosítója
+ * (`uid_<ts>_<rand>`). Ami ennél hosszabb vagy idegen karaktert tartalmaz, az nem a
+ * mi azonosítónk — nem küldjük tovább, hanem újat verünk helyette.
+ */
+const EXTERNAL_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/**
+ * Stabil, első féltől származó látogató-azonosító (`sb_uid`) a Meta
+ * `external_id`-hez.
+ *
+ * MIÉRT: a `_fbp` a Pixel sütije, az ITP Safarin 7 napra vágja, és csak a Pixel
+ * futása UTÁN létezik. A saját véletlen azonosítónk a látogató eseményeit
+ * összeköti (böngésző-láb klikkek + a backend-láb űrlap-konverziója), ami
+ * pontosan az, amit a Meta EMQ-diagnosztika kér. A nyers érték SOHA nem megy
+ * gyártóhoz: a Worker hash-eli (`src/lib/hash.ts`) — a kliens NEM hash-el.
+ *
+ * KONZENT (PECR / ICO 2026-04 — ugyanaz, mint a többi marketing-kulcsnál):
+ *  - LÉTREHOZÁS csak `hasMarketingConsent()` mellett (mint `persistTrackingParams`).
+ *  - OLVASÁS is csak a marketing read-gate-en át: hozzájárulás nélkül `null`, és
+ *    a blokk bekerül a `storage_read_blocked_keys` telemetriába. (A skinlab-fork
+ *    gate nélkül olvasott — a kit szándékosan szigorúbb.)
+ *  - A visszavonás (`purgeMarketingStorage`) és a `clearTrackingData` törli.
+ *
+ * Sosem dob: nem-biztonságos kontextusban (nincs `crypto`) `null`.
+ */
+export function getExternalId(): string | null {
+  const existing = marketingRead(EXTERNAL_ID_KEY, () => lsGet(EXTERNAL_ID_KEY), null);
+  if (existing && EXTERNAL_ID_RE.test(existing)) return existing;
+  // A read-gate már eldöntötte és rögzítette a blokkot; hozzájárulás nélkül nem
+  // is írunk (a hibás tárolt értéket sem takarítjuk — az a purge dolga).
+  if (!hasMarketingConsent()) return null;
+  let id: string;
+  try { id = generateUUID(); } catch { return null; }
+  lsSet(EXTERNAL_ID_KEY, id);
+  return id;
+}
+
 export function getPageUrl(): string {
   return window.location.origin + window.location.pathname;
 }
@@ -626,6 +673,8 @@ function expireCookie(name: string): void {
  */
 function removeMarketingLocalStorage(): void {
   lsRm(TRACKING_KEY); lsRm(FIRST_TOUCH_KEY); lsRm(ATTR_STORAGE_KEY);
+  // `sb_uid` (6.16.0): hirdetési azonosító, ugyanazon a jogalapon él.
+  lsRm(EXTERNAL_ID_KEY);
 }
 
 /**
@@ -668,7 +717,7 @@ function matchingCookieNames(match: VendorCookieMatch): string[] {
 
 /**
  * Marketing consent withdrawn → drop the attribution at rest: `sb_tracking`,
- * `sb_first_touch`, `__sb_attribution`, the Meta `_fbp` / `_fbc` cookies, and the
+ * `sb_first_touch`, `__sb_attribution`, `sb_uid`, the Meta `_fbp` / `_fbc` cookies, and the
  * Google Ads linker cookies (`_gcl_*`) where technically possible (see
  * `expireCookie` limits).
  *
