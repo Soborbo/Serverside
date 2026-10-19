@@ -62,7 +62,12 @@ describe('gateway contract (browser path, Run 6)', () => {
     expect(body.value).toBe(380);
     expect(body.currency).toBe('GBP');
     // raw user_data for server-side hashing (Meta CAPI contract)
-    expect(body.user_data).toEqual({ email: 'a@b.com', phone_number: '07123456789' });
+    // + the PLAIN first-party `external_id` (6.16.0, `sb_uid`) under granted
+    // marketing consent — the Worker hashes it, the client never does.
+    expect(body.user_data).toEqual({
+      email: 'a@b.com', phone_number: '07123456789', external_id: localStorage.getItem('sb_uid'),
+    });
+    expect(body.user_data.external_id).toMatch(/^[0-9a-f-]{36}$/);
     // NO bot token — the Turnstile gate is retired; Origin allow-list is server-side
     expect(body.turnstile_token).toBeUndefined();
     // Meta cookies + GA ids parsed from cookies

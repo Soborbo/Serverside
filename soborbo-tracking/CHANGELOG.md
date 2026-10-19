@@ -10,6 +10,80 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.16.0 (2026-10-19)
+
+Három kis csomag-változás az attribúció köré — a skinlab kanonikus kitre
+váltásának (S1) utolsó kit-oldali előfeltételei (port-mátrix K2 / K3 / K7).
+Gateway-változás nincs: a Worker az `external_id`-t eddig is fogadta és
+hash-elte (`src/lib/hash.ts`).
+
+### Hozzáadva — Meta `external_id` végponttól végpontig: `sb_uid` (K2)
+
+`getExternalId()` (`lib/persistence.ts`, exportálva a `lib/index.ts`-ből): első
+féltől származó, véletlen UUID a `sb_uid` localStorage-kulcsban. **Csak
+marketing-hozzájárulással jön létre**, és az OLVASÁSA is a marketing
+read-gate-en megy (hozzájárulás nélkül `null`, a blokk a
+`storage_read_blocked_keys` telemetriában — a skinlab-fork gate nélkül olvasott,
+a kit szándékosan szigorúbb). A visszavonás (`purgeMarketingStorage`) és a
+`clearTrackingData` törli.
+
+- Böngésző-láb: a `sendToWorker` a `user_data.external_id`-t a hívó értékéből,
+  ennek hiányában a `getExternalId()`-ből tölti. Hozzájárulás nélkül SEMMILYEN
+  `external_id` nem megy ki — a hívóé sem. PLAIN, a Worker hash-el. Az advanced
+  mód süti nélküli pingjei változatlanul azonosító-mentesek.
+- Rejtett mezők: a `populateHiddenFields` / `attachEventIdToForm` az
+  `external_id` mezőt is kitölti, HA az űrlapon van ilyen input (újat nem hoz
+  létre); a `<TrackedForm>` rendereli.
+- Szerver-láb: `GatewayUserData.external_id` — a `buildGatewayPayload`
+  változatlanul továbbítja (a skinlab backendje eddig típushibát kapott volna).
+- Süti-tábla: új `sb_uid` sor (localStorage, marketing, visszavonásig, törlődik
+  a visszavonáskor); az inventory `version` → `2026-10-b`. A tájékoztató-/banner
+  szöveg verziója NEM változik: a banner nem sorol fel kulcsokat, a táblát a
+  `<CookiePolicy />` az inventoryból rendereli.
+
+**Változott a telemetria:** megtagadott marketing mellett a
+`storage_read_blocked_keys` mostantól a `sb_uid`-t is tartalmazza (az olvasás
+ugyanazon a kapun megy, mint a `_fbp`/`_fbc`-é).
+
+### Javítva — a `collectAttribution` hivatkozója csak KÜLSŐ lehet (K3)
+
+A first-touch `attribution.referrer` nyers `document.referrer` volt, ami a 2.
+oldaltól a SAJÁT előző oldalunk (skinlab CRM: 95 sorból 86 belső hivatkozó).
+Most csak eltérő hosztú hivatkozó fogadható el (`www.` és apex ugyanaz a
+webhely), origin+útvonal alakban (query/hash nélkül), max 500 karakter. Olvasáskor
+a tárolt belső referrer törlődik (régi blobok gyógyítása). A `landing_page`
+first-touch szemantikája változatlan.
+
+Új, opcionális horog: `setEntryContextProvider(fn)` (`lib/index.ts`). A site saját
+belépési-attribúció modulja adhatja a first-touch `landing_page` / `referrer`
+értékét; elsőbbség: tárolt first touch > a szolgáltató nem üres értéke >
+beépített fallback. A szolgáltató hivatkozója is a külső-only szűrőn megy át, a
+`landing_page`-nek saját webhelyre kell mutatnia.
+
+### Javítva — klikk-ID higiénia (K7)
+
+- A `sb_first_touch` az összecsukott Google klikk-ID-t kapja: egy
+  `?gclid=…&gbraid=…` URL eddig mindkettőt beírta (a first touch soha nem íródik
+  felül). Ma csak a `first_gclid`-et olvassa bármi, tehát élő torzulás nem volt.
+- A rejtett mezők `gbraid` / `wbraid` értéket is kapnak (a `getAllTrackingData()`
+  kizárólagos ID-jéből), ha az űrlapon van ilyen input; a `<TrackedForm>`
+  rendereli őket. Az iOS-forgalom klikk-ID-je eddig kimaradt a backend POST-ból.
+
+### Site-teendő
+
+- **Süti-tábla:** a `<CookiePolicy />` automatikusan mutatja az új `sb_uid`
+  sort. Ahol a site KÉZZEL írt süti-táblát tart (vagy a CookieYes
+  süti-listáját kézzel tölti), ott a `sb_uid` sort fel kell venni (localStorage,
+  marketing, visszavonásig).
+- **Backend:** a form-POST route a `form.get('external_id')`-t adja tovább
+  `userData.external_id`-ként (PLAIN), a `gbraid` / `wbraid` mezőket az
+  `attribution`-be — lásd `server/backend/README.md`. Saját (nem `TrackedForm`)
+  űrlapon a három rejtett inputot fel kell venni.
+- **Belépési-attribúció modullal rendelkező site-ok** (pl. skinlab
+  `entry-attribution.ts`): bootkor
+  `setEntryContextProvider(() => ({ landing_page: getEntryLandingUrl(), referrer: getEntryReferrer() }))`,
+  hogy a böngésző-láb ugyanazt a belépési oldalt/hivatkozót küldje, mint a CRM.
+
 ## 6.15.0 (2026-10-19)
 
 ### Hozzáadva — advanced Consent Mode az sbo CMP alatt (`PUBLIC_TRACKING_CONSENT_MODE`)

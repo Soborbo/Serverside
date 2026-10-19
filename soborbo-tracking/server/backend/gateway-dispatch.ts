@@ -128,6 +128,14 @@ export interface GatewayUserData {
   city?: string;
   postal_code?: string;
   country?: string;
+  /**
+   * Meta `external_id` (6.16.0) — a böngésző `sb_uid`-ja, a rejtett `external_id`
+   * mezőből (`populateHiddenFields` / `attachEventIdToForm` tölti, consent
+   * nélkül üres). PLAIN-ként küldd: a Worker hash-eli (`src/lib/hash.ts`,
+   * trim+lowercase+SHA-256). Kliens-oldali hash = dupla hash = néma match-vesztés.
+   * Üres stringet a `compact()` kihagy.
+   */
+  external_id?: string;
 }
 
 export interface GatewayConversionInput {
@@ -492,7 +500,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.15.0';
+export const BACKEND_LIB_VERSION = '6.16.0';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;

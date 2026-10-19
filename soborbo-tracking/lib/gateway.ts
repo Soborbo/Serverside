@@ -23,7 +23,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
 import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
-  getFbp, getFbcCookie, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
+  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
 } from './persistence';
 import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
@@ -62,6 +62,8 @@ export interface UserData {
   country?: string;
   // Stable user/cookie identifier (Meta external_id → EMQ improvement). The Worker
   // hashes it; pass the same value to the browser Pixel too for deduplication.
+  // 6.16.0: `sendToWorker` fills it from `getExternalId()` (`sb_uid`) when the
+  // caller gives none — and STRIPS it (caller value too) without marketing consent.
   external_id?: string;
 }
 
@@ -445,6 +447,86 @@ function healGoogleClickIds(
   applyGoogleClickId(merged as Record<string, unknown>, resolved);
 }
 
+// ── Belépési kontextus (landing_page / referrer) ────────────────────────────
+
+/** A CRM `referrer` oszlopa max 500 karakter. */
+const MAX_REFERRER_LEN = 500;
+
+/** `www.` és az apex ugyanaz a webhely — a hivatkozó-szűrés szempontjából. */
+function siteHostKey(host: string): string {
+  return host.toLowerCase().replace(/^www\./, '');
+}
+
+/**
+ * Egy hivatkozó-érték KÜLSŐ hivatkozóként: `origin + pathname`, query és hash
+ * nélkül (a hivatkozó URL paraméterei a hivatkozó dolga, hordozhatják az ő
+ * azonosítóikat), max 500 karakter. Belső (saját host, `www.`/apex lazán
+ * egyezően), nem-http(s) vagy értelmezhetetlen értékre `undefined`. Sosem dob.
+ */
+function sanitizeExternalReferrer(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw) return undefined;
+  if (typeof window === 'undefined' || !window.location?.href) return undefined;
+  try {
+    const u = new URL(raw, window.location.href);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    if (siteHostKey(u.host) === siteHostKey(window.location.host)) return undefined;
+    return `${u.origin}${u.pathname}`.slice(0, MAX_REFERRER_LEN);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A szolgáltatótól kapott belépési oldal: csak SAJÁT webhelyre mutató abszolút
+ * URL vagy `/`-rel (nem `//`-rel) kezdődő útvonal fogadható el — egy idegen
+ * origin a CRM lead-kartonjára kerülne. Az útvonalat abszolút URL-lé egészítjük.
+ */
+function sanitizeEntryLanding(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw) return undefined;
+  if (typeof window === 'undefined' || !window.location?.href) return undefined;
+  if (raw[0] === '/' && raw[1] !== '/') return `${window.location.origin}${raw}`;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    if (siteHostKey(u.host) !== siteHostKey(window.location.host)) return undefined;
+    return u.href;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A site által adott belépési kontextus (lásd `setEntryContextProvider`). */
+export interface EntryContext {
+  landing_page?: string;
+  referrer?: string;
+}
+
+let entryContextProvider: (() => EntryContext | null | undefined) | null = null;
+
+/**
+ * Opcionális horog: a site saját belépési-attribúció modulja (pl. a skinlab
+ * `entry-attribution.ts`-e, ami a first touch-ot oldalak között URL-ben is
+ * átviszi) adhatja a first-touch `landing_page` / `referrer` értékét.
+ *
+ * Elsőbbség: tárolt first touch > a szolgáltató NEM ÜRES értéke > beépített
+ * fallback (`location.href` / `document.referrer`). A szolgáltató hivatkozója is
+ * ugyanazon a külső-only + query-vágó szűrőn megy át; a belépési oldalnak saját
+ * webhelyre kell mutatnia. `null` leveszi a horgot. A szolgáltató hibája sosem
+ * buktatja a dispatch-et (→ fallback).
+ */
+export function setEntryContextProvider(fn: (() => EntryContext | null | undefined) | null): void {
+  entryContextProvider = typeof fn === 'function' ? fn : null;
+}
+
+function readEntryContext(): EntryContext {
+  if (!entryContextProvider) return {};
+  try {
+    return entryContextProvider() || {};
+  } catch {
+    return {};
+  }
+}
+
 export function collectAttribution(): AttributionParams {
   const stored = readStoredAttribution();
   const fresh: AttributionParams = {};
@@ -498,8 +580,30 @@ export function collectAttribution(): AttributionParams {
   healGoogleClickIds(merged, resolved);
 
   // First-touch landing context (don't overwrite if already present).
-  if (!merged.landing_page) merged.landing_page = window.location.href;
-  if (!merged.referrer && document.referrer) merged.referrer = document.referrer;
+  //
+  // A HIVATKOZÓ CSAK KÜLSŐ LEHET (6.16.0). A korábbi kód nyers
+  // `document.referrer`-t írt ide, ami a 2. oldaltól a SAJÁT előző oldalunk: egy
+  // GRANTED látogató, akinek a blobjában még nem volt referrer, a belső oldalt
+  // kapta first-touch hivatkozónak. A skinlab CRM-mérése: 95 sorból 86 belső.
+  // Egy tele oszlop, ami nem hordoz információt, rosszabb a bevallott üresnél.
+  //
+  // Olvasáskor GYÓGYÍTUNK is: egy régi blob belső `referrer`-e törlődik, a
+  // külső pedig origin+útvonal alakra áll (query/hash nélkül).
+  if (merged.referrer !== undefined) {
+    const healed = sanitizeExternalReferrer(merged.referrer);
+    if (healed) merged.referrer = healed;
+    else delete merged.referrer;
+  }
+  const entry = !merged.landing_page || !merged.referrer ? readEntryContext() : {};
+  if (!merged.landing_page) {
+    merged.landing_page = sanitizeEntryLanding(entry.landing_page) || window.location.href;
+  }
+  if (!merged.referrer) {
+    const referrer =
+      sanitizeExternalReferrer(entry.referrer) ||
+      (typeof document !== 'undefined' ? sanitizeExternalReferrer(document.referrer) : undefined);
+    if (referrer) merged.referrer = referrer;
+  }
 
   if (adGranted) {
     writeStoredAttribution(merged);
@@ -527,6 +631,28 @@ export function collectAttribution(): AttributionParams {
   const outgoing: AttributionParams = { ...merged };
   for (const k of ATTR_CLICK_PARAMS) delete outgoing[k];
   return outgoing;
+}
+
+/**
+ * A böngésző-láb `user_data`-ja a Meta `external_id`-vel kiegészítve.
+ *
+ *  - marketing-hozzájárulás nélkül az `external_id` KIESIK (a hívóé is), és
+ *    `getExternalId()` sem hoz létre semmit (a read-gate a blokkot rögzíti);
+ *  - hozzájárulással: hívó értéke > tárolt/újonnan létrehozott `sb_uid`.
+ *
+ * A többi mező érintetlen. Üres eredmény → `undefined` (a mező ki sem megy).
+ */
+function withExternalId(userData: UserData | undefined): UserData | undefined {
+  const callerId = typeof userData?.external_id === 'string' ? userData.external_id.trim() : '';
+  // Hívói érték mellett nem verünk saját azonosítót: minek tárolnánk, ha nem megy ki.
+  const ownId = callerId ? null : getExternalId();
+  const granted = hasMarketingConsent();
+  const externalId = granted ? callerId || ownId || undefined : undefined;
+
+  const out: UserData = { ...(userData || {}) };
+  if (externalId) out.external_id = externalId;
+  else delete out.external_id;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -560,6 +686,12 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
   const fbc = getFbcCookie() || undefined;
   const clientId = extractGAClientId(getCookie('_ga'));
   const sessionId = extractGASessionId();
+  // Meta `external_id` (6.16.0). A hívó értéke nyer; ha nincs, a saját `sb_uid`
+  // (marketing read-gate mögött, és CSAK hozzájárulás mellett jön létre).
+  // Hozzájárulás nélkül SEMMILYEN external_id nem hagyja el a böngészőt — a
+  // hívóé sem: ez hirdetési azonosító, a jogalapja ugyanaz, mint az fbp-é.
+  // A Worker hash-eli; itt NINCS hash (CLAUDE.md §1).
+  const userData = withExternalId(payload.user_data);
   // Az attribúció-gyűjtés IS olvas storage-ot (`__sb_attribution`) — ezért előbb
   // fut le, és CSAK utána készül a telemetria-pillanatkép. Fordítva a saját
   // blokkja kimaradna a jelentésből, vagyis a mérőműszer pont azt a hozzáférést
@@ -569,6 +701,7 @@ export async function sendToWorker(payload: ConversionPayload): Promise<boolean>
 
   const body = JSON.stringify({
     ...payload,
+    user_data: userData,
     fbp,
     fbc,
     client_id: clientId,

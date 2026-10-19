@@ -131,6 +131,17 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
    - Custom browser-path points: `trackServerEvent('<name>')` — ONLY the
      browser-allowed names (`lib/event-contract.ts`); server-only names are
      blocked with TRK-1005.
+   - **Entry attribution (optional, 6.16.0):** the browser leg's first-touch
+     `attribution.landing_page` / `referrer` default to `location.href` and an
+     **external-only** `document.referrer` (own host — `www.` and apex alike — is
+     dropped, query/hash stripped, max 500 chars; stored internal referrers are
+     healed on read). A site that already has its own entry-attribution module
+     (e.g. one that carries the landing page across pages in the URL) registers it
+     once at boot so both legs report the same value:
+     `setEntryContextProvider(() => ({ landing_page: getEntryLandingUrl(), referrer: getEntryReferrer() }))`.
+     Stored first touch still wins; the provider's non-empty values replace only
+     the built-in fallback, and its referrer goes through the same external-only
+     filter (`landing_page` must be a same-site URL or a `/path`).
 6. **GTM**: import `gtm/container.json` into the user's GTM container and wire the
    GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`).
 7. **Verify locally**: `npm test` + `npm run typecheck` +
@@ -166,6 +177,10 @@ site's form conversions have NO server leg at all.
    (silent-drop → NO tracking), forward to the CRM, then `sendGatewayConversion`
    with the browser `event_id` (hidden field) and the CRM's id as `lead_id` —
    the exact pattern in `server/backend/README.md`.
+   Forward the `external_id` hidden field (6.16.0, the visitor's `sb_uid`; empty
+   without marketing consent) as `userData.external_id` — **plain**, the gateway
+   hashes it. `<TrackedForm>` renders the input; on a custom form add
+   `<input type="hidden" name="external_id">` and the lib fills it.
 4. Set worker vars/secrets: `TRACKING_GATEWAY_TOKEN` (from Step 4's
    `crm-secret.env`), `SITE_URL`, `TRACKING_SITE_ID` (the `site_id` from Step 0
    — the same value you register in `SMOKE_SITES` in Step 4),
