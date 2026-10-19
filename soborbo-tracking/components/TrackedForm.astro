@@ -103,6 +103,9 @@ const {
   <!-- 6.16.0: Meta external_id (`sb_uid`) — consent nélkül üres. A backend
        PLAIN-ként adja tovább (`GatewayUserData.external_id`); a Worker hash-el. -->
   <input type="hidden" name="external_id" />
+  <!-- 6.16.0: a Google iOS klikk-ID-k — a gclid-del KIZÁRÓLAGOSAK (legfeljebb egy kitöltve). -->
+  <input type="hidden" name="gbraid" />
+  <input type="hidden" name="wbraid" />
 </form>
 
 <script>

@@ -118,7 +118,7 @@ import {
   persistTrackingParams, captureUrlParams,
   getGclid, getFbclid, getSessionId, getSourceType, getAttribution, getAllTrackingData,
   purgeMarketingStorage, purgeAnalyticsStorage, resetStorageReadBlocked,
-  normalizePhone, getExternalId,
+  normalizePhone, getExternalId, type TrackingData,
 } from './persistence';
 import {
   generateEventId, pushLeadConversion, pushContactConversion,
@@ -570,12 +570,18 @@ function writeOptionalHiddenFields(
 
 /**
  * A marketing-azonosítók opcionális rejtett mezői (mindkét form-író közös része).
- * `external_id` (6.16.0): a `getExternalId()` — consent nélkül üres string. A
- * backend ezt `GatewayUserData.external_id`-ként adja tovább (PLAIN; a Worker hash-el).
+ *  - `external_id` (6.16.0): a `getExternalId()` — consent nélkül üres string. A
+ *    backend ezt `GatewayUserData.external_id`-ként adja tovább (PLAIN; a Worker hash-el).
+ *  - `gbraid` / `wbraid` (6.16.0): a `getAllTrackingData()` KIZÁRÓLAGOS Google
+ *    klikk-ID-jéből — egy kattintás egy ID, tehát legfeljebb egy van kitöltve
+ *    (a `gclid` mezővel együtt is). Az iOS-forgalom (gbraid/wbraid) eddig a
+ *    rejtett mezőkből teljesen kimaradt.
  */
-function writeOptionalIdentifierFields(form: HTMLFormElement): void {
+function writeOptionalIdentifierFields(form: HTMLFormElement, t: Partial<TrackingData>): void {
   writeOptionalHiddenFields(form, {
     external_id: () => getExternalId(),
+    gbraid: () => t.gbraid,
+    wbraid: () => t.wbraid,
   });
 }
 
@@ -589,7 +595,7 @@ export function populateHiddenFields(form: HTMLFormElement, result: LeadSubmitRe
     utm_source: t.utm_source, utm_medium: t.utm_medium,
     utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
   });
-  writeOptionalIdentifierFields(form);
+  writeOptionalIdentifierFields(form, t);
 }
 
 /**
@@ -609,7 +615,7 @@ export function attachEventIdToForm(form: HTMLFormElement, eventId: string): voi
     utm_source: t.utm_source, utm_medium: t.utm_medium,
     utm_campaign: t.utm_campaign, utm_content: t.utm_content, utm_term: t.utm_term,
   });
-  writeOptionalIdentifierFields(form);
+  writeOptionalIdentifierFields(form, t);
 }
 
 // ── Sheets payload (optional CRM/Sheets sink) ────────────────────

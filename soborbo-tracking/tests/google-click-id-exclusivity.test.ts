@@ -168,3 +168,86 @@ describe('`_gcl_aw` cookie-fallback', () => {
     expect(stored().gclid, 'a tárolóban is csak egy klikk-ID maradhat').toBeUndefined();
   });
 });
+
+/**
+ * K7 (6.16.0) — a first touch és a rejtett mezők is egy kattintás = egy ID.
+ *
+ * A `persistTrackingParams` a last touch-ot már összecsukta, a `sb_first_touch`
+ * viszont a NYERS URL-paramétereket kapta: `?gclid=A&gbraid=B` mindkettőt
+ * beírta, és a first touch soha többé nem íródik felül. A rejtett mezők pedig
+ * gbraid/wbraid-et egyáltalán nem vittek — az iOS-forgalom kimaradt.
+ */
+describe('K7 — first touch és rejtett mezők', () => {
+  function realUrl(search: string) {
+    // A persistence.ts a `window.location.search`-öt olvassa; a jsdom history-n
+    // keresztül állítjuk (a fenti `setUrl` egy URL-objektumot tesz a helyére).
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: new URL(`https://painlessremovals.com/${search}`) as unknown as Location
+    });
+  }
+
+  it('URL gclid+gbraid → a sb_first_touch CSAK a gclid-et őrzi', async () => {
+    const { persistTrackingParams, captureUrlParams } = await import('../lib/persistence');
+    realUrl('?gclid=A-GCLID&gbraid=B-GBRAID&utm_source=google');
+    captureUrlParams();
+    persistTrackingParams();
+    const ft = JSON.parse(localStorage.getItem('sb_first_touch') || '{}');
+    expect(ft.gclid).toBe('A-GCLID');
+    expect(ft.gbraid, 'a first touch két Google klikk-ID-t őriz').toBeUndefined();
+    expect(ft.wbraid).toBeUndefined();
+    expect(ft.utm_source).toBe('google');
+    const last = JSON.parse(localStorage.getItem('sb_tracking') || '{}');
+    expect(last.gclid).toBe('A-GCLID');
+    expect(last.gbraid).toBeUndefined();
+  });
+
+  it('URL gbraid+wbraid → a first touch a gbraid-et őrzi', async () => {
+    const { persistTrackingParams, captureUrlParams } = await import('../lib/persistence');
+    realUrl('?gbraid=B&wbraid=W');
+    captureUrlParams();
+    persistTrackingParams();
+    const ft = JSON.parse(localStorage.getItem('sb_first_touch') || '{}');
+    expect(ft.gbraid).toBe('B');
+    expect(ft.wbraid).toBeUndefined();
+  });
+
+  function formWith(...names: string[]): HTMLFormElement {
+    const f = document.createElement('form');
+    f.innerHTML = names.map((n) => `<input type="hidden" name="${n}" />`).join('');
+    document.body.appendChild(f);
+    return f;
+  }
+  const val = (f: HTMLFormElement, n: string) => f.querySelector<HTMLInputElement>(`input[name="${n}"]`)?.value;
+
+  it('populateHiddenFields: csak gbraid → a gbraid mező kitöltve, gclid/wbraid üres', async () => {
+    const { populateHiddenFields, getGclid, getFbclid } = await import('../lib/index');
+    realUrl('?gbraid=IOS-GBRAID');
+    const f = formWith('gclid', 'gbraid', 'wbraid');
+    populateHiddenFields(f, { success: true, consentBlocked: false, eventId: 'E1', gclid: getGclid(), fbclid: getFbclid() });
+    expect(val(f, 'gbraid')).toBe('IOS-GBRAID');
+    expect(val(f, 'gclid')).toBe('');
+    expect(val(f, 'wbraid')).toBe('');
+  });
+
+  it('attachEventIdToForm: friss URL-gbraid mellett a TÁROLT gclid nem kerül a mezőbe', async () => {
+    const { attachEventIdToForm, persistTrackingParams, captureUrlParams } = await import('../lib/index');
+    realUrl('?gclid=REGI-GCLID');
+    captureUrlParams();
+    persistTrackingParams();
+    realUrl('?gbraid=UJ-GBRAID');
+    const f = formWith('gclid', 'gbraid', 'wbraid');
+    attachEventIdToForm(f, 'E2');
+    expect(val(f, 'gbraid')).toBe('UJ-GBRAID');
+    expect(val(f, 'gclid')).toBe('');
+  });
+
+  it('gbraid/wbraid inputot NEM hoz létre, ha az űrlapon nincs', async () => {
+    const { attachEventIdToForm } = await import('../lib/index');
+    realUrl('?wbraid=W');
+    const f = formWith('gclid');
+    attachEventIdToForm(f, 'E3');
+    expect(f.querySelector('input[name="wbraid"]')).toBeNull();
+    expect(f.querySelector('input[name="gbraid"]')).toBeNull();
+  });
+});

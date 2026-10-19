@@ -79,6 +79,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     },
     attribution: {
       gclid: String(form.get('gclid') || '') || undefined,
+      // 6.16.0: iOS click ids — exclusive with gclid (at most one is filled).
+      gbraid: String(form.get('gbraid') || '') || undefined,
+      wbraid: String(form.get('wbraid') || '') || undefined,
       fbclid: String(form.get('fbclid') || '') || undefined,
       utm_source: String(form.get('utm_source') || '') || undefined,
       utm_medium: String(form.get('utm_medium') || '') || undefined,

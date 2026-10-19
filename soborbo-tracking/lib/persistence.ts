@@ -338,7 +338,16 @@ export function persistTrackingParams(): void {
   if (!hasMarketingConsent()) return;
   const fresh = capturedParams || urlTrackingParams();
   if (!fresh) return;
-  persistFirstTouch(fresh);
+  const clickIdsOf = (o: Partial<TrackingData> | null | undefined) => ({
+    gclid: o?.gclid, gbraid: o?.gbraid, wbraid: o?.wbraid,
+  });
+  // A first touch is EGY kattintás: egy URL-ben érkező `gclid`+`gbraid` páros
+  // (6.16.0 előtt) nyersen került a `sb_first_touch`-ba, és a first touch utána
+  // SOHA nem íródik felül — a két ID ott ragadt. Ugyanaz a primitív dönt, mint a
+  // last touch-nál (gclid > gbraid > wbraid), a `fresh` másolatán.
+  const freshFirstTouch: Partial<TrackingData> = { ...fresh };
+  applyGoogleClickId(freshFirstTouch, resolveGoogleClickId({ url: clickIdsOf(fresh) }));
+  persistFirstTouch(freshFirstTouch);
   const stored = getStoredData();
   // Stamp the fbclid capture time only when fbclid is new — needed to
   // reconstruct Meta's `_fbc` cookie with the original click timestamp.
@@ -358,9 +367,6 @@ export function persistTrackingParams(): void {
     timestamp: Date.now(),
     landingPage: stored?.landingPage || window.location.pathname,
   } satisfies TrackingData;
-  const clickIdsOf = (o: Partial<TrackingData> | null | undefined) => ({
-    gclid: o?.gclid, gbraid: o?.gbraid, wbraid: o?.wbraid,
-  });
   applyGoogleClickId(merged, resolveGoogleClickId({
     url: clickIdsOf(fresh), stored: clickIdsOf(stored),
   }));
