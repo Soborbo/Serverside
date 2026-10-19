@@ -1,7 +1,7 @@
 {
   "_comment": "Deliberate-edit lock a KANONIKUS src/events.json-hoz. A gateway a source of truth: az events.json ITT él, ezt fogyasztja a worker build-időben és tartatja be futásidőben (server_ingress_only kapuzás, név-kanonizálás). A lock véletlen/néma szerkesztés ellen véd — a contract_hash a NORMALIZÁLT tartalomból képződik (scripts/contract-hash.mjs: kulcssorrend/tömb-sorrend/formázás NEM bemenete). Szerkesztés menete: módosítsd az events.json-t, majd node scripts/contract-hash.mjs --update — a lock-diff a PR-ben láthatóvá teszi, hogy a szerződés változott. Ellenőrzés: npm run check:contract. 2026-07-21: a soborbo-tracking kliens-csomag BEOLVADT ebbe a repóba (soborbo-tracking/) — NINCS TÖBBÉ vendor-másolat és külön repó. A csomag ugyanezt a fájlt olvassa közvetlenül (../src/events.json), tehát nincs kereszt-repó drift, amit --engine-nel kellene guardolni; a lock innentől tisztán intra-repó tripwire.",
   "role": "canonical-source",
-  "contract_hash": "sha256:9ddbbb086dd58206d62a54d484d1943a72a4cdb2115b3c7d8ec35604d5ec0662",
+  "contract_hash": "sha256:47a557cb096e3f5422f02edf9b227b2ff5ef82dd4a4ce1fc724a914da5c6b09b",
   "in_repo_consumers": [
     {
       "path": "soborbo-tracking/",
@@ -9,5 +9,5 @@
       "note": "Client-lib package, consolidated in 2026-07-21; reads this exact file (no copy). tests/event-contract.test.ts + server/gen-event-aliases.mjs + server/check-event-contract.mjs."
     }
   ],
-  "generated_at": "2026-09-09T11:32:24.152Z"
+  "generated_at": "2026-10-19T08:32:41.596Z"
 }

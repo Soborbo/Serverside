@@ -10,6 +10,21 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.13.1 (2026-10-19)
+### Javítva — két leadgen-esemény hiányzott a kanonikus listából
+A skinlab 2026-08-14 óta két saját eseménynevet küld a szerver-lábon:
+`training_signup_submitted` (Meta: CompleteRegistration) és
+`consultation_request_submitted` (Meta: Schedule). A gateway-oldali párjuk
+(`meta-conversion-mapping`, 6f08675) sosem olvadt be, így az `events.json`-ból
+hiányoztak, és a gateway ismeretlen névként (TRK-EVT-001) némán 204-gyel eldobta
+őket — a konzultáció- és képzés-leadek 2026-09-15 óta nem jutottak el a
+Metához / Google Adshez. Most mindkettő kanonikus, `server_ingress_only`
+leadgen-konverzió (`SERVER_INGRESS_ONLY_EVENTS`, `GatewayEventName`).
+
+A 6f08675 két további része SZÁNDÉKOSAN nincs benne: az `order_request_submitted`
+→ Meta Purchase átállás (a trapezlemezest is érintené) és a `content_name`-címke
+(minden site Meta-payloadját változtatná) — ezek külön döntést igényelnek.
+
 ## 6.13.0 (2026-10-18)
 
 ### Biztonság — a lánc-kulcsot a szerver adja ki; igazolatlan írás csak szigoríthat (review R7, második utóellenőrzés)
