@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.15.0",
+  "version": "6.16.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "7703050e634aadde0e3b1bf3903e3d4115aa6842db04f5bd5c02bd39abc18d04",
+      "sha256": "7d026ac671f6517028b88b52f65ffd14a597c2ee2374c04bc09c9d3ed68b0033",
       "bytes": 6594,
       "role": "browser"
     },
@@ -65,8 +65,8 @@
       "role": "browser"
     },
     "lib/gateway.ts": {
-      "sha256": "4498a484f1a9012fca566657164c7e87c28443f9d2035e061449567f5c491526",
-      "bytes": 28112,
+      "sha256": "71258fd4d77b6c711a99dae5ea43e094b172a7a8ddb9f06ecd1f6d0a266f6c56",
+      "bytes": 34192,
       "role": "browser"
     },
     "lib/google-click-id.ts": {
@@ -75,8 +75,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "b26f180205bec291ae7b5ebacdebebcfdd6056b317a48f73ed6aeadab8d140a9",
-      "bytes": 28940,
+      "sha256": "059f4776bd093a87c927ea11ab559261fd1e5d5dd351c19e7ad64c5257c97295",
+      "bytes": 30697,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -85,8 +85,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "3f5c3d80211d277d3cceda7278c4725d66852b59fc482b7087b12c9579ced9db",
-      "bytes": 34205,
+      "sha256": "288d5d09f2901c5354c55ad6b7b643cf915ec12ff02cbdeb09df361ccfc0e7d6",
+      "bytes": 37188,
       "role": "browser"
     },
     "lib/submit.ts": {
@@ -135,8 +135,8 @@
       "role": "browser"
     },
     "components/TrackedForm.astro": {
-      "sha256": "f664a1156ad145fa7d0fdbb172ef751e7afcd60383a8353bb6ea5a2e5d1fb80b",
-      "bytes": 11550,
+      "sha256": "4d2ddae03a5aaf2aaae1b14bf2181985da2527a45819f310f6325b1671c32943",
+      "bytes": 11946,
       "role": "browser"
     },
     "components/Tracking.astro": {
@@ -150,8 +150,8 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "fbbe3ee2aa2ea3cc9e7536499aa7dace83500159ce0b2384dda792f57a91c98c",
-      "bytes": 36959,
+      "sha256": "d6142bea5fc9e2172f61ffb7d402719f8eb7cde06d3629e3fba3d61a461e8733",
+      "bytes": 37370,
       "role": "backend"
     },
     "server/backend/smoke.ts": {
