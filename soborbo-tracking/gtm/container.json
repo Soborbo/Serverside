@@ -1128,9 +1128,10 @@
         ],
         "fingerprint": "0",
         "firingTriggerId": [
-          "2147479553"
+          "2147479553",
+          "14"
         ],
-        "tagFiringOption": "ONCE_PER_EVENT",
+        "tagFiringOption": "ONCE_PER_LOAD",
         "consentSettings": {
           "consentStatus": "NEEDED",
           "consentType": {
@@ -1936,6 +1937,31 @@
                 "type": "TEMPLATE",
                 "key": "arg1",
                 "value": "training_signup_submitted"
+              }
+            ]
+          }
+        ],
+        "fingerprint": "0"
+      },
+      {
+        "accountId": "0",
+        "containerId": "0",
+        "triggerId": "14",
+        "name": "CE - sbo_consent_update",
+        "type": "CUSTOM_EVENT",
+        "customEventFilter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{_event}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "sbo_consent_update"
               }
             ]
           }

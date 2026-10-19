@@ -7,11 +7,15 @@
  *    Mode v2 default + GTM azonnali betöltéssel (advanced mód, wait_for_update).
  *    Ez az ág BITRE a Fázis 2 előtti — a defaultot átállítani tilos.
  *  - consentProvider="sbo" (pilot): NINCS CookieYes-vezérlés. Inline, SZINKRON
- *    consent-boot: default mind DENIED, majd a `sbo_consent` süti dönt — döntés
- *    (vagy reject) esetén a GTM EL SEM INDUL (basic mód, wait_for_update nélkül:
- *    nincs mire várni, a süti-olvasás szinkron). A banner/panel a
- *    <ConsentBanner /> komponens (body vége), a pozitív döntés után az itt
- *    definiált idempotens `window.__sboLoadGtm()`-et hívja.
+ *    consent-boot: default mind DENIED, majd a `sbo_consent` süti dönt. Két
+ *    mód (PUBLIC_TRACKING_CONSENT_MODE, lib/config.ts ConsentModeKind):
+ *      · basic (default): döntés híján vagy reject esetén a GTM EL SEM INDUL.
+ *      · advanced: a GTM MINDIG indul, a denied default alatt a Google-tagek
+ *        süti nélküli pingeket küldenek (modellezés). A pozitív döntés update-je
+ *        a GTM ELŐTT kerül a dataLayer-be, szinkron.
+ *    wait_for_update egyik módban sem kell: a süti-olvasás szinkron, nincs mire
+ *    várni. A banner/panel a <ConsentBanner /> komponens (body vége), döntés
+ *    után az itt definiált idempotens `window.__sboLoadGtm()`-et hívja.
  *    A `cookieYesId` sbo alatt is renderelhető marad: a párhuzamos mérési ablak
  *    (2.4) alatt a CookieYes szkript KIKAPCSOLT bannerrel bent marad, hogy a
  *    sütije olvasható legyen — az ablak végén a prop lekerül. ⚠️ GTM Preview-ban
@@ -69,12 +73,12 @@ const isSbo = consentProvider === 'sbo';
 )}
 
 {isSbo && (
-  <script is:inline define:vars={{ gtmId, policyVersion: trackingConfig.policyVersion }}>
+  <script is:inline define:vars={{ gtmId, policyVersion: trackingConfig.policyVersion, consentMode: trackingConfig.consentMode }}>
     /* Soborbo consent-boot (CMP Fázis 2.1) — inline, SZINKRON, minden más előtt.
        A parser a lib/consent-sbo-state.ts párja (formátum:
        v2.<a>.<m>.<rev>.<decision>.<consent_id>.<ts>.<policy_version>) — bundler
        nélkül, mert a döntésnek a GTM-ről AZELŐTT kell megszületnie, hogy bármi
-       aszinkron betöltődne. Basic mód: nincs wait_for_update — nincs mire várni.
+       aszinkron betöltődne. Nincs wait_for_update — nincs mire várni.
 
        ⚠️ EZ A PARSER KÉZZEL DUPLIKÁLT. A `tests/consent-boot-parity.test.ts`
        kiemeli ezt a szkriptet a komponensből, és UGYANAZOKRA a fixture-ökre
@@ -90,6 +94,9 @@ const isSbo = consentProvider === 'sbo';
         'functionality_storage': 'denied', 'personalization_storage': 'denied',
         'security_storage': 'granted'
       });
+      /* Advanced módban a denied ad_storage alatt is mennek pingek — a
+         hirdetési klikk-azonosítók ilyenkor ne utazzanak velük. */
+      if (consentMode === 'advanced') gtag('set', 'ads_data_redaction', true);
       /* Idempotens GTM-loader — a boot ÉS a banner (pozitív döntés után) hívja. */
       var loaded = false;
       w.__sboLoadGtm = function(){
@@ -129,17 +136,20 @@ const isSbo = consentProvider === 'sbo';
           }
         }
       } catch (e) { /* nincs döntés */ }
-      if (st && (st.a || st.m)) {
+      var granted = !!(st && (st.a || st.m));
+      if (granted) {
         gtag('consent', 'update', {
           'ad_storage': st.m ? 'granted' : 'denied',
           'ad_user_data': st.m ? 'granted' : 'denied',
           'ad_personalization': st.m ? 'granted' : 'denied',
           'analytics_storage': st.a ? 'granted' : 'denied'
         });
-        w.__sboLoadGtm();
       }
-      /* nincs döntés VAGY reject/withdrawn → a GTM NEM töltődik. A banner
-         (ConsentBanner) kérdez; pozitív döntés után hívja a loadert. */
+      /* basic: nincs döntés VAGY reject/withdrawn → a GTM NEM töltődik; a banner
+         (ConsentBanner) kérdez, pozitív döntés után hívja a loadert.
+         advanced: a GTM mindig indul — a fenti default/update már előtte a
+         dataLayer-ben van, a tagek tehát a helyes consent-állapotot látják. */
+      if (granted || consentMode === 'advanced') w.__sboLoadGtm();
     })(window,document);
   </script>
 )}

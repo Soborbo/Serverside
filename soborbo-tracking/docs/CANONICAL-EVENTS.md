@@ -76,6 +76,12 @@ One name flows through `events.ts` (dataLayer) → GTM trigger → GA4 event →
 | `form_abandoned` | form abandonment (`form_id`) | — |
 | `scroll_depth` (25/50/75/100) | scroll milestone (≠ GA4 reserved `scroll`) | — |
 
+## Consent signal (CMP, NOT a conversion, NOT a Key Event)
+
+| Canonical event name | Purpose | Meta |
+|---|---|---|
+| `sbo_consent_update` | the own (sbo) CMP recorded a decision (`consent_analytics`, `consent_marketing`); GTM re-fires consent-gated loader tags (Meta Pixel base) on the same page — needed under advanced Consent Mode | — |
+
 ## Offline (server-only, CRM `/api/event/lead-status`)
 
 `lead_validated`, `lead_qualified`, `quote_sent`, `booking_confirmed`,
