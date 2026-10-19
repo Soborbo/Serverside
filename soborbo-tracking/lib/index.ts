@@ -60,6 +60,8 @@ export {
   sendToWorker,
   collectAttribution,
   getMarketingConsentState,
+  setEntryContextProvider,
+  type EntryContext,
   type ConversionPayload,
   type UserData,
   type MarketingConsentState

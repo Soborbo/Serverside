@@ -131,6 +131,17 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
    - Custom browser-path points: `trackServerEvent('<name>')` — ONLY the
      browser-allowed names (`lib/event-contract.ts`); server-only names are
      blocked with TRK-1005.
+   - **Entry attribution (optional, 6.16.0):** the browser leg's first-touch
+     `attribution.landing_page` / `referrer` default to `location.href` and an
+     **external-only** `document.referrer` (own host — `www.` and apex alike — is
+     dropped, query/hash stripped, max 500 chars; stored internal referrers are
+     healed on read). A site that already has its own entry-attribution module
+     (e.g. one that carries the landing page across pages in the URL) registers it
+     once at boot so both legs report the same value:
+     `setEntryContextProvider(() => ({ landing_page: getEntryLandingUrl(), referrer: getEntryReferrer() }))`.
+     Stored first touch still wins; the provider's non-empty values replace only
+     the built-in fallback, and its referrer goes through the same external-only
+     filter (`landing_page` must be a same-site URL or a `/path`).
 6. **GTM**: import `gtm/container.json` into the user's GTM container and wire the
    GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`).
 7. **Verify locally**: `npm test` + `npm run typecheck` +

@@ -447,6 +447,86 @@ function healGoogleClickIds(
   applyGoogleClickId(merged as Record<string, unknown>, resolved);
 }
 
+// ── Belépési kontextus (landing_page / referrer) ────────────────────────────
+
+/** A CRM `referrer` oszlopa max 500 karakter. */
+const MAX_REFERRER_LEN = 500;
+
+/** `www.` és az apex ugyanaz a webhely — a hivatkozó-szűrés szempontjából. */
+function siteHostKey(host: string): string {
+  return host.toLowerCase().replace(/^www\./, '');
+}
+
+/**
+ * Egy hivatkozó-érték KÜLSŐ hivatkozóként: `origin + pathname`, query és hash
+ * nélkül (a hivatkozó URL paraméterei a hivatkozó dolga, hordozhatják az ő
+ * azonosítóikat), max 500 karakter. Belső (saját host, `www.`/apex lazán
+ * egyezően), nem-http(s) vagy értelmezhetetlen értékre `undefined`. Sosem dob.
+ */
+function sanitizeExternalReferrer(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw) return undefined;
+  if (typeof window === 'undefined' || !window.location?.href) return undefined;
+  try {
+    const u = new URL(raw, window.location.href);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    if (siteHostKey(u.host) === siteHostKey(window.location.host)) return undefined;
+    return `${u.origin}${u.pathname}`.slice(0, MAX_REFERRER_LEN);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A szolgáltatótól kapott belépési oldal: csak SAJÁT webhelyre mutató abszolút
+ * URL vagy `/`-rel (nem `//`-rel) kezdődő útvonal fogadható el — egy idegen
+ * origin a CRM lead-kartonjára kerülne. Az útvonalat abszolút URL-lé egészítjük.
+ */
+function sanitizeEntryLanding(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || !raw) return undefined;
+  if (typeof window === 'undefined' || !window.location?.href) return undefined;
+  if (raw[0] === '/' && raw[1] !== '/') return `${window.location.origin}${raw}`;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    if (siteHostKey(u.host) !== siteHostKey(window.location.host)) return undefined;
+    return u.href;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A site által adott belépési kontextus (lásd `setEntryContextProvider`). */
+export interface EntryContext {
+  landing_page?: string;
+  referrer?: string;
+}
+
+let entryContextProvider: (() => EntryContext | null | undefined) | null = null;
+
+/**
+ * Opcionális horog: a site saját belépési-attribúció modulja (pl. a skinlab
+ * `entry-attribution.ts`-e, ami a first touch-ot oldalak között URL-ben is
+ * átviszi) adhatja a first-touch `landing_page` / `referrer` értékét.
+ *
+ * Elsőbbség: tárolt first touch > a szolgáltató NEM ÜRES értéke > beépített
+ * fallback (`location.href` / `document.referrer`). A szolgáltató hivatkozója is
+ * ugyanazon a külső-only + query-vágó szűrőn megy át; a belépési oldalnak saját
+ * webhelyre kell mutatnia. `null` leveszi a horgot. A szolgáltató hibája sosem
+ * buktatja a dispatch-et (→ fallback).
+ */
+export function setEntryContextProvider(fn: (() => EntryContext | null | undefined) | null): void {
+  entryContextProvider = typeof fn === 'function' ? fn : null;
+}
+
+function readEntryContext(): EntryContext {
+  if (!entryContextProvider) return {};
+  try {
+    return entryContextProvider() || {};
+  } catch {
+    return {};
+  }
+}
+
 export function collectAttribution(): AttributionParams {
   const stored = readStoredAttribution();
   const fresh: AttributionParams = {};
@@ -500,8 +580,30 @@ export function collectAttribution(): AttributionParams {
   healGoogleClickIds(merged, resolved);
 
   // First-touch landing context (don't overwrite if already present).
-  if (!merged.landing_page) merged.landing_page = window.location.href;
-  if (!merged.referrer && document.referrer) merged.referrer = document.referrer;
+  //
+  // A HIVATKOZÓ CSAK KÜLSŐ LEHET (6.16.0). A korábbi kód nyers
+  // `document.referrer`-t írt ide, ami a 2. oldaltól a SAJÁT előző oldalunk: egy
+  // GRANTED látogató, akinek a blobjában még nem volt referrer, a belső oldalt
+  // kapta first-touch hivatkozónak. A skinlab CRM-mérése: 95 sorból 86 belső.
+  // Egy tele oszlop, ami nem hordoz információt, rosszabb a bevallott üresnél.
+  //
+  // Olvasáskor GYÓGYÍTUNK is: egy régi blob belső `referrer`-e törlődik, a
+  // külső pedig origin+útvonal alakra áll (query/hash nélkül).
+  if (merged.referrer !== undefined) {
+    const healed = sanitizeExternalReferrer(merged.referrer);
+    if (healed) merged.referrer = healed;
+    else delete merged.referrer;
+  }
+  const entry = !merged.landing_page || !merged.referrer ? readEntryContext() : {};
+  if (!merged.landing_page) {
+    merged.landing_page = sanitizeEntryLanding(entry.landing_page) || window.location.href;
+  }
+  if (!merged.referrer) {
+    const referrer =
+      sanitizeExternalReferrer(entry.referrer) ||
+      (typeof document !== 'undefined' ? sanitizeExternalReferrer(document.referrer) : undefined);
+    if (referrer) merged.referrer = referrer;
+  }
 
   if (adGranted) {
     writeStoredAttribution(merged);
