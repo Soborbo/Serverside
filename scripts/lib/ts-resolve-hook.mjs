@@ -12,7 +12,7 @@
  * továbbra is a szokásos, érthető hibát adja — nem nyeljük el a hibát azért,
  * hogy „működjön".
  *
- * Használat: `node --experimental-transform-types --import ./scripts/lib/ts-resolve-hook.mjs …`
+ * Használat: `node --import ./scripts/lib/ts-resolve-hook.mjs …`
  */
 import { registerHooks } from 'node:module';
 

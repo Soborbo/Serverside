@@ -21,7 +21,7 @@
  *     nem gratulálunk magunknak.
  *
  * Használat (a `npm test` UTÁN, mert annak a melléktermékét olvassa):
- *   node --experimental-transform-types scripts/check-error-code-emission.mjs
+ *   node scripts/check-error-code-emission.mjs
  *   … --update-baseline   → az alapvonal újraírása (szándékos változásnál)
  */
 
@@ -80,7 +80,7 @@ if (process.argv.includes('--update-baseline')) {
 
 if (!fs.existsSync(BASELINE)) {
   console.error(`ERROR_CODE_EMISSION_NO_BASELINE — hiányzik: ${path.relative(ROOT, BASELINE)}`);
-  console.error('Futtasd: npm run test && node --experimental-transform-types scripts/check-error-code-emission.mjs --update-baseline');
+  console.error('Futtasd: npm run test && node scripts/check-error-code-emission.mjs --update-baseline');
   process.exit(1);
 }
 
@@ -105,7 +105,7 @@ if (nowCovered.length > 0) {
   failed = true;
   console.error('ERROR_CODE_EMISSION_BASELINE_STALE — ezek MÁR lefedettek, szűkítsd az alapvonalat:');
   for (const c of nowCovered) console.error(`  - ${c}`);
-  console.error('Futtasd: node --experimental-transform-types scripts/check-error-code-emission.mjs --update-baseline');
+  console.error('Futtasd: node scripts/check-error-code-emission.mjs --update-baseline');
 }
 
 if (failed) process.exit(1);

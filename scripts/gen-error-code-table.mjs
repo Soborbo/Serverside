@@ -18,8 +18,8 @@
  * keletkezik, illetve amit egyetlen teszt sem érint.
  *
  * Használat:
- *   node --experimental-transform-types scripts/gen-error-code-table.mjs
- *   node --experimental-transform-types scripts/gen-error-code-table.mjs --check
+ *   node scripts/gen-error-code-table.mjs
+ *   node scripts/gen-error-code-table.mjs --check
  */
 
 import fs from 'node:fs';

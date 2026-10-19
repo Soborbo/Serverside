@@ -17,7 +17,7 @@
  * ökkel CI-ban is tesztelhető.
  *
  * Használat:
- *   node --experimental-transform-types scripts/check-live-gtm.mjs \
+ *   node scripts/check-live-gtm.mjs \
  *     --export <gtm-export.json> --expect <expected.json> [--site <hostname>]
  *
  * Az `--expect` alakja (lásd ExpectedContract):
@@ -47,7 +47,7 @@ const expectPath = arg('expect');
 const site = arg('site') ?? 'unknown-site';
 
 if (!exportPath) {
-  console.error('Használat: node --experimental-transform-types scripts/check-live-gtm.mjs --export <fájl> [--expect <fájl>] [--site <hostname>]');
+  console.error('Használat: node scripts/check-live-gtm.mjs --export <fájl> [--expect <fájl>] [--site <hostname>]');
   console.error('\nAz exportot a GTM UI adja: Admin → Export Container → a legfrissebb verzió.');
   process.exit(2);
 }
