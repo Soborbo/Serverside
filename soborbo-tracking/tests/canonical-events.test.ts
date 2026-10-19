@@ -3,6 +3,7 @@ import {
   trackCalculatorStart, trackCalculatorStep, trackCalculatorOption, trackCalculatorComplete,
   trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick,
   pushLeadConversion, pushContactConversion,
+  pushConsultationConversion, pushTrainingSignupConversion,
 } from '../lib/events';
 import { CLICK_GATEWAY_EVENT } from '../lib/index';
 import { BROWSER_GATEWAY_EVENTS } from '../lib/event-contract';
@@ -13,6 +14,7 @@ import { setCkyConsent, resetAll, getDataLayer } from './helpers';
 const BROWSER_EVENTS = [
   'quote_calculator_opened', 'quote_calculator_step_completed', 'quote_calculator_option_selected', 'quote_calculator_submitted',
   'contact_form_submitted', 'phone_number_clicked', 'callback_request_submitted',
+  'consultation_request_submitted', 'training_signup_submitted',
   'email_address_clicked', 'whatsapp_button_clicked', 'form_abandoned', 'scroll_depth',
 ];
 
@@ -29,6 +31,8 @@ describe('contract — browser dataLayer event names', () => {
     trackCalculatorComplete('c');
     pushLeadConversion({ email: 'a@b.com', eventId: 'E1' });
     pushContactConversion({ email: 'a@b.com', eventId: 'E2' });
+    pushConsultationConversion({ email: 'a@b.com', eventId: 'E3' });
+    pushTrainingSignupConversion({ email: 'a@b.com', eventId: 'E4' });
     trackPhoneClick();
     trackCallbackClick();
     trackEmailClick();
@@ -36,7 +40,8 @@ describe('contract — browser dataLayer event names', () => {
 
     const emitted = new Set(getDataLayer().map((e) => e.event as string));
     for (const name of ['quote_calculator_opened', 'quote_calculator_step_completed', 'quote_calculator_option_selected', 'quote_calculator_submitted',
-      'contact_form_submitted', 'phone_number_clicked', 'callback_request_submitted', 'email_address_clicked', 'whatsapp_button_clicked']) {
+      'contact_form_submitted', 'consultation_request_submitted', 'training_signup_submitted',
+      'phone_number_clicked', 'callback_request_submitted', 'email_address_clicked', 'whatsapp_button_clicked']) {
       expect(emitted.has(name)).toBe(true);
     }
     // no emitted name falls outside the documented list

@@ -2,14 +2,15 @@
 
 The gateway rejects `server_ingress_only` events on the browser path (403,
 TRK-400-017): `quote_calculator_submitted`, `callback_request_submitted`,
-`contact_form_submitted`, `order_request_submitted`, `purchase`. Their gateway
+`contact_form_submitted`, `consultation_request_submitted`,
+`training_signup_submitted`, `order_request_submitted`, `purchase`. Their gateway
 leg is sent by the **site backend** — the API route that receives the form POST —
 using the modules in this directory:
 
 | file | copy to | what it is |
 |---|---|---|
 | `gateway-dispatch.ts` | `src/lib/tracking/gateway-dispatch.ts` | authenticated server-to-server dispatch (service binding + per-site token) |
-| `smoke.ts` | `src/lib/tracking/smoke.ts` | daily synthetic-lead cron body (set `SITE`) |
+| `smoke.ts` | `src/lib/tracking/smoke.ts` | daily synthetic-lead cron body — copy unchanged; the site id comes from the `TRACKING_SITE_ID` var |
 | `worker.ts` | `src/worker.ts` | custom Worker entry exporting `scheduled()` |
 
 These are verbatim from the production sites (lomtalan.hu, painlessremovals.com,
@@ -28,8 +29,10 @@ beautyflow.hu) — do not "simplify" them; every odd-looking line is a fixed inc
    site-config and the plaintext into `crm-secret.env`. Set the plaintext as the
    site worker's `TRACKING_GATEWAY_TOKEN` secret.
 3. **Smoke cron**: `main = "./src/worker.ts"`, `[triggers] crons = ["43 4 * * *"]`,
-   `TRACKING_TEST_LEAD_EMAIL` + `TRACKING_TEST_EVENT_CODE` vars, and add the
-   `site_id` to the gateway's `SMOKE_SITES` var.
+   `TRACKING_SITE_ID` (the gateway `site_id`) + `TRACKING_TEST_LEAD_EMAIL` +
+   `TRACKING_TEST_EVENT_CODE` vars, and add the SAME `site_id` to the gateway's
+   `SMOKE_SITES` var. smoke.ts refuses to run (loud log, no send) when any of
+   the three is missing.
 
 ## The API-route pattern (contact/lead form)
 

@@ -44,7 +44,10 @@
 
 import { hasMarketingConsent } from './consent';
 import { registerMarketingPurgeHook } from './persistence';
-import { pushLeadConversion, pushContactConversion } from './events';
+import {
+  pushLeadConversion, pushContactConversion,
+  pushConsultationConversion, pushTrainingSignupConversion,
+} from './events';
 import { report } from './observability';
 
 const PENDING_KEY = 'sb_pending_conversion';
@@ -57,7 +60,13 @@ const PENDING_MAX = 5;
 /** Ennyi commit-azonosítót őrzünk az újratöltés-védelemhez. */
 const COMMITTED_MAX = 20;
 
-export type ConversionKind = 'lead' | 'contact';
+/**
+ * A commitkor eltüzelt dataLayer-esemény fajtája. A két leadgen-pár
+ * (`consultation` → `consultation_request_submitted`, `training` →
+ * `training_signup_submitted`) 6.14.0 óta — ugyanaz a staging/commit
+ * szerződés, csak a kanonikus név más.
+ */
+export type ConversionKind = 'lead' | 'contact' | 'consultation' | 'training';
 
 /**
  * Az Enhanced-Conversions identity. SOHA nem kerül `sessionStorage`-ba,
@@ -253,6 +262,8 @@ export function commitPendingConversion(
   };
 
   if (entry.kind === 'contact') pushContactConversion(data);
+  else if (entry.kind === 'consultation') pushConsultationConversion(data);
+  else if (entry.kind === 'training') pushTrainingSignupConversion(data);
   else pushLeadConversion(data);
 
   // Előbb a jelölés, aztán a takarítás: ha az írás félúton elhasal, inkább

@@ -57,6 +57,18 @@ export interface TrackingConfig {
    * megfelelő alapkészlet (ga4, google_ads, meta).
    */
   vendors: string[];
+  /**
+   * A saját CMP consent-végpontjának ALAPJA (PUBLIC_TRACKING_CONSENT_ENDPOINT,
+   * default `/api/consent`). Minden consent-URL ebből épül
+   * (`lib/consent-sbo.ts` `consentEndpointUrl`): a döntés POST-ja maga az
+   * alap, a banner-megjelenés pingje `<alap>/shown`.
+   *
+   * A ZÁRÓ PERJEL TISZTELETBEN TARTVA: egy `trailingSlash: 'always'` Astro-site
+   * (skinlab) a `/api/consent/*`-ot perjellel proxyzza, ezért ott
+   * `/api/consent/` → POST `/api/consent/`, shown `/api/consent/shown/`.
+   * Perjel nélkül a mai URL-ek bájtra változatlanok.
+   */
+  consentEndpoint: string;
 }
 
 function readEnv(key: string): string | undefined {
@@ -77,7 +89,7 @@ function readEnv(key: string): string | undefined {
  * böngészőbe másolódik, nincs bundler-injektálás). A gateway minimuma:
  * Serverside `src/lib/consent.ts` MIN_CLIENT_LIB_VERSION.
  */
-export const CLIENT_LIB_VERSION = '6.13.1';
+export const CLIENT_LIB_VERSION = '6.14.0';
 
 export const trackingConfig: TrackingConfig = {
   country: (readEnv('PUBLIC_TRACKING_COUNTRY') as Market) || 'GB',
@@ -88,6 +100,7 @@ export const trackingConfig: TrackingConfig = {
   ruleset: readEnv('PUBLIC_TRACKING_RULESET') || 'eea_uk',
   devConsentAllow: readEnv('PUBLIC_TRACKING_DEV_CONSENT_ALLOW') === '1',
   vendors: parseVendors(readEnv('PUBLIC_TRACKING_VENDORS')),
+  consentEndpoint: readEnv('PUBLIC_TRACKING_CONSENT_ENDPOINT')?.trim() || '/api/consent',
 };
 
 /** EGY helyen definiált provider-kérdés — ne szóródjon `=== 'sbo'` összehasonlítás. */

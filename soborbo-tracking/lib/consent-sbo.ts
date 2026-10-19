@@ -57,7 +57,29 @@ export interface SboDecisionInput {
 export interface SboDecisionContext {
   bannerVersion: string;
   consentTextVersion: string;
+  /**
+   * Az OLDAL nyelve (`<html lang>`), ahol a döntés született — a banner ezt
+   * adja át (6.14.0). Hiányában a build-szintű `trackingConfig.locale`. A wire
+   * felé a `normalizeConsentLang` alakja megy.
+   */
   lang?: string;
+}
+
+/**
+ * A gateway `lang` mezője CSAK `xx` vagy `xx-YY` alakot fogad (consent-log
+ * `LANG_RE`), és egy rossz alak a TELJES döntés-POST-ot 400-zal utasítja el —
+ * a döntés bizonyítéka veszne el egy nyelvi címke miatt. Egy többnyelvű site
+ * `<html lang>`-ja viszont lehet `zh-Hant` vagy `sr-Latn-RS` is. Ezért:
+ *   `hu` / `en-GB`      → változatlan
+ *   `zh-Hant` / `de-DE-x` → az elsődleges altag (`zh` / `de`)
+ *   üres / értelmezhetetlen → undefined (a hívó a locale-ra esik vissza)
+ */
+export function normalizeConsentLang(raw: string | undefined | null): string | undefined {
+  const s = (raw ?? '').trim();
+  if (!s) return undefined;
+  if (/^[A-Za-z]{2}(-[A-Za-z]{2})?$/.test(s)) return s;
+  const primary = s.split('-')[0];
+  return /^[A-Za-z]{2}$/.test(primary) ? primary : undefined;
 }
 
 /** A `POST /api/consent` wire-payloadja (a szerver parseConsentPayload párja). */
@@ -84,6 +106,28 @@ export interface SboConsentWirePayload {
    * későbbi visszavonás így a régi consent_id-hoz kötött eseményekre is hat.
    */
   previous_consent_id?: string;
+}
+
+// ── Consent-végpont (6.14.0) ────────────────────────────────────────────────
+
+/**
+ * MINDEN consent-URL egy helyről. Az alap a `PUBLIC_TRACKING_CONSENT_ENDPOINT`
+ * (default `/api/consent`); a `path` egy csupasz szegmens (`'shown'`), üresen
+ * maga az alap jön vissza.
+ *
+ * A záró perjel az alapon TISZTELETBEN TARTOTT, és a szegmensre is átöröklődik:
+ *   `/api/consent`  → `/api/consent`,  `/api/consent/shown`
+ *   `/api/consent/` → `/api/consent/`, `/api/consent/shown/`
+ * Erre a `trailingSlash: 'always'` Astro-site-oknak van szüksége (skinlab), ahol
+ * a `/api/consent/*` proxy csak perjeles útvonalra illeszkedik. Perjel nélkül a
+ * kimenő kérések bájtra a 6.13-asak.
+ */
+export function consentEndpointUrl(path = ''): string {
+  const base = trackingConfig.consentEndpoint || '/api/consent';
+  if (!path) return base;
+  const trailing = base.endsWith('/');
+  const root = trailing ? base.slice(0, -1) : base;
+  return `${root}/${path}${trailing ? '/' : ''}`;
 }
 
 // ── CookieYes párhuzamos ablak (2.4) ────────────────────────────────────────
@@ -185,7 +229,7 @@ async function responseText(res: Response): Promise<string> {
 
 async function postConsent(payload: SboConsentWirePayload): Promise<PostOutcome> {
   try {
-    const res = await fetch('/api/consent', {
+    const res = await fetch(consentEndpointUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -371,7 +415,7 @@ export function applySboDecision(
     banner_version: ctx.bannerVersion,
     consent_text_version: ctx.consentTextVersion,
     ruleset: trackingConfig.ruleset,
-    lang: ctx.lang ?? trackingConfig.locale,
+    lang: normalizeConsentLang(ctx.lang) ?? trackingConfig.locale,
     client_lib_version: CLIENT_LIB_VERSION,
     ...readCkyParallelWindow(),
     client_decided_at: new Date(state.decidedAtSec * 1000).toISOString()
@@ -400,12 +444,16 @@ export function postBannerShown(m: {
   interaction_ms?: number;
 }): void {
   try {
-    const body = JSON.stringify(m);
+    // A `lang` itt is a gateway alakjára szűkül; alak nélkül kimarad (a
+    // metrika-sor nyelv nélkül is érvényes, egy 400 viszont az egészet elvinné).
+    const lang = normalizeConsentLang(m.lang);
+    const body = JSON.stringify({ ...m, lang });
+    const url = consentEndpointUrl('shown');
     if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-      navigator.sendBeacon('/api/consent/shown', new Blob([body], { type: 'application/json' }));
+      navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
       return;
     }
-    void fetch('/api/consent/shown', {
+    void fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,

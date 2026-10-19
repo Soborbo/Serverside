@@ -24,6 +24,7 @@ describe('gtm/container.json — importable export', () => {
     for (const name of [
       'contact_form_submitted', 'callback_request_submitted', 'phone_number_clicked',
       'email_address_clicked', 'whatsapp_button_clicked', 'quote_calculator_submitted',
+      'consultation_request_submitted', 'training_signup_submitted',
     ]) {
       expect(ga4Names).toContain(name);
     }
@@ -37,6 +38,7 @@ describe('gtm/container.json — importable export', () => {
     for (const name of [
       'quote_calculator_submitted', 'contact_form_submitted', 'callback_request_submitted', 'phone_number_clicked',
       'email_address_clicked', 'whatsapp_button_clicked', 'quote_calculator_submitted',
+      'consultation_request_submitted', 'training_signup_submitted',
     ]) {
       expect(events).toContain(name);
     }
@@ -47,6 +49,33 @@ describe('gtm/container.json — importable export', () => {
     const lead = pixelTags.find((t: { name: string }) => t.name.endsWith('Lead'));
     const html = lead.parameter.find((p: { key: string }) => p.key === 'html').value as string;
     expect(html).toContain('{{DLV - event_id}}');
+  });
+
+  // 6.14.0 — a két további leadgen-konverzió Meta standard eseménye UGYANAZ,
+  // mint amit a gateway CAPI-lába küld (events.json `meta`): Schedule /
+  // CompleteRegistration. Más név = a Pixel↔CAPI dedup-pár sosem találkozik.
+  it('Meta Pixel Schedule / CompleteRegistration tags fire on the canonical triggers with the shared event_id', () => {
+    const triggerIdByEvent = new Map<string, string>(
+      cv.trigger
+        .filter((t: { type: string }) => t.type === 'CUSTOM_EVENT')
+        .map((t: { triggerId: string; customEventFilter: { parameter: { key: string; value: string }[] }[] }) =>
+          [t.customEventFilter[0].parameter.find((p) => p.key === 'arg1')?.value, t.triggerId]),
+    );
+    const cases = [
+      ['Meta Pixel - Schedule', 'Schedule', 'consultation_request_submitted'],
+      ['Meta Pixel - CompleteRegistration', 'CompleteRegistration', 'training_signup_submitted'],
+    ] as const;
+    for (const [tagName, metaEvent, dlEvent] of cases) {
+      const tag = cv.tag.find((t: { name: string }) => t.name === tagName);
+      expect(tag, tagName).toBeTruthy();
+      const html = tag.parameter.find((p: { key: string }) => p.key === 'html').value as string;
+      expect(html).toContain(`fbq('track','${metaEvent}'`);
+      expect(html).toContain('{{DLV - event_id}}');
+      expect(tag.firingTriggerId).toEqual([triggerIdByEvent.get(dlEvent)]);
+      const adTypes = tag.consentSettings.consentType.list.map((x: { value: string }) => x.value);
+      expect(adTypes).toContain('ad_storage');
+      expect(adTypes).toContain('ad_user_data');
+    }
   });
 
   it('User-Provided Data variable reads the side-channel, NOT a Data Layer Variable', () => {

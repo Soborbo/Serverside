@@ -29,13 +29,22 @@ import enTexts from '../consent-texts/2026-09-a/en.json';
 interface Props {
   /** Az adatkezelési tájékoztató útvonala (a panel alján hivatkozva). */
   policyHref?: string;
+  /**
+   * A banner szövegének nyelve (6.14.0). A kit szövege magyar és angol; egy
+   * többnyelvű site (skinlab: 9 nyelv, egy build) oldalanként adja át — a
+   * magyar oldalakon `hu`, minden más nyelven `en`. Alapból a build-szintű
+   * `trackingConfig.locale` (PUBLIC_TRACKING_LOCALE), tehát egynyelvű site-on
+   * nincs teendő. A consent_log `lang` oszlopa ettől FÜGGETLENÜL az OLDAL
+   * nyelvét kapja (`<html lang>`), lásd a szkriptben.
+   */
+  lang?: 'hu' | 'en';
 }
-const { policyHref = '/adatkezelesi-tajekoztato' } = Astro.props;
+const { policyHref = '/adatkezelesi-tajekoztato', lang = trackingConfig.locale } = Astro.props;
 
 // A szöveg a site PUBLIC_TRACKING_VENDORS listájából áll össze (lib/consent-vendors.ts).
 // BUILD-időben strict: egy ismeretlen eszköz-azonosító itt hangos build-hiba.
 const vendors = parseVendors(import.meta.env.PUBLIC_TRACKING_VENDORS, { strict: true });
-const template = (trackingConfig.locale === 'hu' ? huTexts : enTexts) as VendorTextTemplate;
+const template = (lang === 'hu' ? huTexts : enTexts) as VendorTextTemplate;
 const texts: ConsentBannerTexts = composeBannerTexts(template, vendors);
 // Opcionális A/B teszt (b3): ha a site megad egy B-címet, az oldalbetöltések
 // fele ezt a címet és a balról beúszó kártyát látja. Üres = nincs teszt.
@@ -104,7 +113,11 @@ const css = consentBannerCss();
     const catMarketing = root.querySelector<HTMLInputElement>('[data-sb-category="marketing"]')!;
     const bannerVersion = root.dataset.bannerVersion || 'unknown';
     const textVersion = root.dataset.textVersion || 'unknown';
-    const ctx = { bannerVersion, consentTextVersion: textVersion };
+    // A consent_log `lang` mezője az OLDAL nyelve (`<html lang>`), nem a
+    // banner-szövegé: egy többnyelvű site-on (skinlab, 9 nyelv) a döntés
+    // bizonyítéka azt rögzíti, milyen nyelvű oldalon született. Hiányzó
+    // attribútumnál a lib a build-szintű locale-ra esik vissza.
+    const ctx = { bannerVersion, consentTextVersion: textVersion, lang: document.documentElement.lang || undefined };
 
     // 503 után őrzött döntések újraküldése — minden oldalletöltésen.
     void flushPendingSboConsent();

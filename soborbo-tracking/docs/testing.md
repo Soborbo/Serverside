@@ -96,8 +96,9 @@
 
 ## 11. End-to-end synthetic proof (the smoke chain — replaces live-pixel testing)
 
-- [ ] Site worker vars set: `TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`,
-      `TRACKING_GATEWAY_TOKEN`, `SITE_URL`; cron in the generated wrangler.json
+- [ ] Site worker vars set: `TRACKING_SITE_ID`, `TRACKING_TEST_LEAD_EMAIL`,
+      `TRACKING_TEST_EVENT_CODE`, `TRACKING_GATEWAY_TOKEN`, `SITE_URL`; cron in
+      the generated wrangler.json
 - [ ] Trigger once (`wrangler dev --test-scheduled` → `/__scheduled`, or wait for
       04:4x UTC) → worker log: `[smoke] daily synthetic lead dispatched`
 - [ ] D1 ledger: `SELECT platform,status,http_status FROM deliveries WHERE event_id

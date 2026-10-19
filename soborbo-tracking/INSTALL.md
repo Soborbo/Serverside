@@ -20,8 +20,10 @@ file is the spine that calls them in order.
 ## The five hard rules (violating any of these has already cost real money)
 
 1. **Server-ingress-only events never leave the browser.** `quote_calculator_submitted`,
-   `callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`,
-   `purchase` get **403 (TRK-400-017)** on the browser path. Their gateway leg is
+   `callback_request_submitted`, `contact_form_submitted`,
+   `consultation_request_submitted`, `training_signup_submitted`,
+   `order_request_submitted`, `purchase` get **403 (TRK-400-017)** on the browser
+   path. Their gateway leg is
    sent by the site BACKEND (`server/backend/gateway-dispatch.ts`) with the
    browser's `event_id` (hidden field). The client lib blocks them too (TRK-1005).
 2. **`lead_id` is the CRM's id or absent** — from the CRM webhook RESPONSE. Never a
@@ -150,8 +152,8 @@ Reference: `server/backend/README.md` — this step is NOT optional; without it 
 site's form conversions have NO server leg at all.
 
 1. Copy `server/backend/gateway-dispatch.ts` + `smoke.ts` into the site's
-   `src/lib/tracking/`, `server/backend/worker.ts` to `src/worker.ts`. Set `SITE`
-   in smoke.ts to the `site_id`.
+   `src/lib/tracking/`, `server/backend/worker.ts` to `src/worker.ts` — all
+   three UNCHANGED (the smoke site id is the `TRACKING_SITE_ID` var, step 4).
 2. Site wrangler config: `main = "./src/worker.ts"`,
    `[[services]] binding = "GATEWAY" service = "event-gateway"`,
    `[triggers] crons = ["4X 4 * * *"]` (pick a distinct minute per site).
@@ -165,8 +167,9 @@ site's form conversions have NO server leg at all.
    with the browser `event_id` (hidden field) and the CRM's id as `lead_id` —
    the exact pattern in `server/backend/README.md`.
 4. Set worker vars/secrets: `TRACKING_GATEWAY_TOKEN` (from Step 4's
-   `crm-secret.env`), `SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`,
-   `TRACKING_TEST_EVENT_CODE`.
+   `crm-secret.env`), `SITE_URL`, `TRACKING_SITE_ID` (the `site_id` from Step 0
+   — the same value you register in `SMOKE_SITES` in Step 4),
+   `TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`.
 5. **Call-site audit (repo-wide, mandatory):** grep the SITE REPO for every
    conversion dispatch and confirm no server-only event is sent from browser code,
    and no flow relies on a browser-only leg for its money conversion. The deployed
@@ -305,6 +308,11 @@ changes when set to `sbo`:
   loads ONLY after a positive decision) instead of the CookieYes+advanced flow.
 - `<ConsentBanner policyHref=... />` goes at the end of `<body>`; a footer link
   with `data-sb-consent-open` is the withdrawal path on every page.
+- Multi-language sites (one build, many locales): pass `lang="hu" | "en"` per
+  page to pick the banner copy (default: `PUBLIC_TRACKING_LOCALE`). The
+  consent-log `lang` column independently records the PAGE language
+  (`<html lang>`), narrowed to the gateway's `xx` / `xx-YY` shape (`zh-Hant` →
+  `zh`); with no `lang` attribute it falls back to the build locale.
 - `<TrackingNoscript />` must be REMOVED on sbo sites (no consent decision
   exists under noscript, so the GTM iframe would run pre-consent).
 - The backend dispatch passes `consentId:
@@ -314,3 +322,4 @@ changes when set to `sbo`:
 - Optional A/B test: `PUBLIC_TRACKING_BANNER_B_TITLE` gives half of the page views an alternative banner title with a slide-in card (banner `2026-09-a-b3`). Buttons stay identical; nothing is stored to assign the variant. Compare with `scripts/consent-rate-report.mjs`; remove the variable to end the test.
 - Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
   it is a mandatory field of every consent-log row.
+- `PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`) is the base of every consent URL; a trailing slash is honoured (`/api/consent/` → POST `/api/consent/`, shown ping `/api/consent/shown/`) for Astro `trailingSlash: 'always'` sites whose `/api/consent/*` proxy only matches slashed paths. Unset = today's URLs, byte for byte.

@@ -140,6 +140,12 @@ const T_CALC_STEP = customEventTrigger('quote_calculator_step_completed');
 const T_CALC_OPT = customEventTrigger('quote_calculator_option_selected');
 const T_ABANDON = customEventTrigger('form_abandoned');
 const T_SCROLL = customEventTrigger('scroll_depth');
+// The two further canonical leadgen conversions (events.json 6.13.1): the
+// consultation wizard (Meta Schedule) and the training signup (Meta
+// CompleteRegistration). Same browser contract as the contact form. Appended
+// AFTER the original set so existing trigger/tag ids stay stable across exports.
+const T_CONSULTATION = customEventTrigger('consultation_request_submitted');
+const T_TRAINING = customEventTrigger('training_signup_submitted');
 
 // ── Base tags ────────────────────────────────────────────────────────
 // NOTE: the Consent Mode v2 DEFAULT (denied) is intentionally NOT shipped as a GTM
@@ -272,9 +278,43 @@ tag('Google Ads - Conversion', 'awct', [
   tmpl('currencyCode', V_CURRENCY),
   bool('enableConversionLinker', true),
   bool('rdp', false),
-], [T_QUOTE, T_CALLBACK, T_PHONE], {
+], [T_QUOTE, T_CALLBACK, T_PHONE, T_CONSULTATION, T_TRAINING], {
   consentSettings: consent('ad_storage', 'ad_user_data'),
 });
+
+// ── The two further leadgen conversions (6.14.0) ─────────────────────
+// consultation_request_submitted (Meta Schedule) + training_signup_submitted
+// (Meta CompleteRegistration) — canonical in events.json since 6.13.1. Same
+// browser contract as contact_form_submitted; the Meta standard event names are
+// the SAME ones the gateway's CAPI leg sends, so Pixel↔CAPI dedup on `eventID`
+// holds for them exactly as for Lead/Contact. Appended after the original tag
+// set so existing tag ids stay stable across exports.
+ga4Event('GA4 - consultation_request_submitted', 'consultation_request_submitted', [T_CONSULTATION], [
+  ['value', V_VALUE], ['currency', V_CURRENCY], ['event_id', V_EVENT_ID],
+  ['session_id', V_SESSION], ['device', V_DEVICE],
+]);
+ga4Event('GA4 - training_signup_submitted', 'training_signup_submitted', [T_TRAINING], [
+  ['value', V_VALUE], ['currency', V_CURRENCY], ['event_id', V_EVENT_ID],
+  ['session_id', V_SESSION], ['device', V_DEVICE],
+]);
+
+tag('Meta Pixel - Schedule', 'html', [
+  tmpl('html',
+    '<script>\n' +
+    '  var v = ' + V_VALUE + ';\n' +
+    "  var cd = (typeof v === 'number' && v > 0) ? { value: v, currency: '" + V_CURRENCY + "' } : {};\n" +
+    "  fbq('track','Schedule', cd, { eventID: '" + V_EVENT_ID + "' });\n" +
+    '</script>'),
+  bool('supportDocumentWrite', false),
+], [T_CONSULTATION], { consentSettings: consent('ad_storage', 'ad_user_data') });
+
+tag('Meta Pixel - CompleteRegistration', 'html', [
+  tmpl('html',
+    '<script>\n' +
+    "  fbq('track','CompleteRegistration', {}, { eventID: '" + V_EVENT_ID + "' });\n" +
+    '</script>'),
+  bool('supportDocumentWrite', false),
+], [T_TRAINING], { consentSettings: consent('ad_storage', 'ad_user_data') });
 
 // ── Assemble export ──────────────────────────────────────────────────
 const container = {

@@ -4,8 +4,10 @@
  * Copy this into the Astro site's `src/lib/tracking/` and call it from the API
  * route that receives the form POST. This is the ONLY way the high-value
  * (`server_ingress_only`) conversions — quote_calculator_submitted,
- * callback_request_submitted, contact_form_submitted, order_request_submitted,
- * purchase — reach the gateway: the browser path answers 403 for them
+ * callback_request_submitted, contact_form_submitted,
+ * consultation_request_submitted, training_signup_submitted,
+ * order_request_submitted, purchase — reach the gateway: the browser path
+ * answers 403 for them
  * (TRK-400-017), because a browser Origin header is spoofable from curl.
  *
  * This module is battle-tested: it is the exact pattern running in production on
@@ -79,6 +81,14 @@ export interface GatewayEnv {
   /** Synthetic-lead smoke test — see `resolveTestEventCode` + smoke.ts. */
   TRACKING_TEST_LEAD_EMAIL?: string;
   TRACKING_TEST_EVENT_CODE?: string;
+  /**
+   * The gateway `site_id` of this site (KV site-config) — the smoke cron builds
+   * its `smoke-<site>-YYYYMMDD` event_id from it, and it MUST equal the value
+   * registered in the gateway's `SMOKE_SITES` var, or the daily digest alarms
+   * on a "missing" smoke row forever. smoke.ts refuses to run without it
+   * (6.14.0: an env var, so the vendored smoke.ts needs no edit).
+   */
+  TRACKING_SITE_ID?: string;
 }
 
 export type ConsentSignal = 'GRANTED' | 'DENIED';
@@ -482,7 +492,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.13.1';
+export const BACKEND_LIB_VERSION = '6.14.0';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
