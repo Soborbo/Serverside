@@ -255,7 +255,9 @@ TRK-950-004 ledger honesty).
 ## Env vars
 
 **Client (Astro site worker):** `PUBLIC_TRACKING_COUNTRY`,
-`PUBLIC_TRACKING_CURRENCY`, `PUBLIC_TRACKING_LOCALE`.
+`PUBLIC_TRACKING_CURRENCY`, `PUBLIC_TRACKING_LOCALE`; own CMP only:
+`PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`; trailing slash
+honoured for `trailingSlash: 'always'` sites).
 **Site worker (backend dispatch + smoke):** `TRACKING_GATEWAY_TOKEN` *(secret)*,
 `SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`.
 (Meta/Ads secrets do NOT go here — they live in the gateway KV.)

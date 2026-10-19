@@ -8,6 +8,12 @@ interface ImportMetaEnv {
   readonly PUBLIC_TRACKING_COUNTRY?: string;
   readonly PUBLIC_TRACKING_CURRENCY?: string;
   readonly PUBLIC_TRACKING_LOCALE?: string;
+  /**
+   * A saját CMP consent-végpontjának alapja (default `/api/consent`). A záró
+   * perjel tiszteletben tartva — `trailingSlash: 'always'` site-okon
+   * `/api/consent/`. Lásd lib/config.ts `consentEndpoint`.
+   */
+  readonly PUBLIC_TRACKING_CONSENT_ENDPOINT?: string;
   /** Vite dev flag — used by consent.ts isDevMode(). */
   readonly DEV?: boolean;
   readonly [key: string]: string | boolean | undefined;

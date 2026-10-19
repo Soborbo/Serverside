@@ -316,3 +316,4 @@ changes when set to `sbo`:
 - Optional A/B test: `PUBLIC_TRACKING_BANNER_B_TITLE` gives half of the page views an alternative banner title with a slide-in card (banner `2026-09-a-b3`). Buttons stay identical; nothing is stored to assign the variant. Compare with `scripts/consent-rate-report.mjs`; remove the variable to end the test.
 - Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
   it is a mandatory field of every consent-log row.
+- `PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`) is the base of every consent URL; a trailing slash is honoured (`/api/consent/` → POST `/api/consent/`, shown ping `/api/consent/shown/`) for Astro `trailingSlash: 'always'` sites whose `/api/consent/*` proxy only matches slashed paths. Unset = today's URLs, byte for byte.
