@@ -10,6 +10,59 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.14.0 (2026-10-19)
+
+Négy kis, additív csomag-bővítés — a skinlab kanonikus kitre váltásának
+előkészítése (a site ma a 6.13-as kit saját forkját futtatja, és pontosan ezek
+a különbségek tartják a forkban). Gateway-változás nincs; a worker a 6.13-as
+klienssel is változatlanul működik.
+
+### Hozzáadva — böngésző-segédek a két leadgen-eseményhez (K1)
+
+A 6.13.1 kanonikussá tette a `consultation_request_submitted` (Meta Schedule)
+és `training_signup_submitted` (Meta CompleteRegistration) eseményt, de a
+csomagnak nem volt böngésző-oldali segédje rájuk. Most: `pushConsultationConversion`
+/ `pushTrainingSignupConversion` (`lib/events.ts`), `trackConsultationSubmit` /
+`trackTrainingSignupSubmit` + a P5 staging-párok `stageConsultationSubmit` /
+`stageTrainingSignupSubmit` (`lib/index.ts`; a `ConversionKind` két új fajtával).
+A szerződés bitre a kapcsolati űrlapé: PII az EC rejtett csatornájába,
+PII-mentes dataLayer, `eventId` átvétel, consent-kapu, és CSAK dataLayer-láb —
+a szerver-lábat a site backendje küldi. A referencia GTM-konténer CE triggert,
+GA4 taget, Meta Pixel `Schedule` / `CompleteRegistration` taget (eventID = DLV
+event_id) és Google Ads conversion triggert kap rájuk; a kanonikus doksik a két
+nevet a server-ingress-only listákban és a GA4 Key Event listában viszik
+(`check:gtm-contract` zöld, kivétel nélkül).
+
+### Hozzáadva — konfigurálható consent-végpont (K4)
+
+`PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`): minden consent-URL
+egy helperből épül (`consentEndpointUrl`), a záró perjel tiszteletben tartva —
+`/api/consent/` → POST `/api/consent/`, shown `/api/consent/shown/`. Erre a
+`trailingSlash: 'always'` Astro-site-oknak van szüksége, ahol a `/api/consent/*`
+proxy csak perjeles útvonalra illeszkedik. Perjel nélkül a kérések bájtra a
+6.13-asak; a credentials és a 403-utáni lánc-forgatás változatlan.
+
+### Hozzáadva — `<ConsentBanner lang>` (K5)
+
+`lang?: 'hu' | 'en'` prop (default `PUBLIC_TRACKING_LOCALE`) választja a
+banner-szöveget — többnyelvű, egy-buildes site oldalanként adja át. A döntés
+`lang` mezője ettől függetlenül az OLDAL nyelvét kapja (`<html lang>`), és
+`normalizeConsentLang` a gateway `xx` / `xx-YY` alakjára szűkíti (`zh-Hant` →
+`zh`): rossz alaknál a gateway a TELJES döntés-POST-ot 400-zal utasítaná el.
+Hiányzó `<html lang>` → a build-locale, mint eddig. A `readCurrentDecision()`
+policy-verzió-kapuja érintetlen.
+
+### Változott — a smoke site-azonosítója env-ből (K6)
+
+`server/backend/smoke.ts` a `TRACKING_SITE_ID` varból olvassa a site_id-t a
+`const SITE = 'REPLACE_ME_SITE_ID'` helyett, így a vendorolt példány bájtra
+azonos lehet a kanonikussal (a drift-audit ezen a fájlon eddig mindenhol
+pirosat adott). Hiányzó vagy rossz alakú id → hangos `console.error`, küldés
+nélkül; a `smoke-<site>-YYYYMMDD` kulcs (event_id = lead_id) változatlan.
+**Site-teendő:** a `TRACKING_SITE_ID` var felvétele (ugyanaz az érték, mint a
+gateway `SMOKE_SITES`-ában) — enélkül a frissített smoke.ts nem küld, és a
+napi digest hiányzó-sor riasztása szól.
+
 ## 6.13.1 (2026-10-19)
 ### Javítva — két leadgen-esemény hiányzott a kanonikus listából
 A skinlab 2026-08-14 óta két saját eseménynevet küld a szerver-lábon:

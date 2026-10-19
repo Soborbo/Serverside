@@ -1,12 +1,12 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.13.1",
+  "version": "6.14.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "754072e9aba64f0e21150e3d55130de9ad698b8ca4419b010fca638669afa4e1",
-      "bytes": 4268,
+      "sha256": "6ad71a944b737229807e31b5197b58f90167582c29e00d2bf48720b8be87358e",
+      "bytes": 4965,
       "role": "browser"
     },
     "lib/consent-banner-a11y.ts": {
@@ -30,8 +30,8 @@
       "role": "browser"
     },
     "lib/consent-sbo.ts": {
-      "sha256": "16ef65431e2701d619e3b82ae16798b7c581dd729ac27a92c2f1cd0c257f655c",
-      "bytes": 17868,
+      "sha256": "ca34a91178d85b5eeba3639aaea4fd5dd32af6fca5c9bef94be0dc9581ebc07c",
+      "bytes": 20283,
       "role": "browser"
     },
     "lib/consent-vendors.ts": {
@@ -45,8 +45,8 @@
       "role": "browser"
     },
     "lib/conversion-commit.ts": {
-      "sha256": "c1b48fc405dfbac78f9bfe4532082c805affdd8edcac579244edc18bdabf95a3",
-      "bytes": 11238,
+      "sha256": "0e9d87381102441bd9f8109d88289916a45fa469485fcb6e55aeb9b60fac6f48",
+      "bytes": 11752,
       "role": "browser"
     },
     "lib/email-identity.ts": {
@@ -60,8 +60,8 @@
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "12f2b5027da782d92d56c83331077af6562c5b83242ab078599b542c1917e609",
-      "bytes": 16237,
+      "sha256": "d2a2eaefb9e2106e47e5158d4b281f30ff40f6194c8d908d776828da12cc0e29",
+      "bytes": 17394,
       "role": "browser"
     },
     "lib/gateway.ts": {
@@ -75,8 +75,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "8d34bf4b4a310a26cc160f029021b56fa359aa44f5fc5c90ab9c9f59cd4234a9",
-      "bytes": 23748,
+      "sha256": "ee2e328ca7330e46c2777d2e72f80fa27b50de535bfe502c31886e03c0500a56",
+      "bytes": 27732,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -105,8 +105,8 @@
       "role": "browser"
     },
     "components/ConsentBanner.astro": {
-      "sha256": "95b3edb57ffe3d90ff746b0ff84d9a456af551277361669b9fdd2c34688351d0",
-      "bytes": 10787,
+      "sha256": "00cd40a8a1423ffa4b2d2dd5f12d9f64cd0dc46cd35e6e1273fa2461d3dd6791",
+      "bytes": 11646,
       "role": "browser"
     },
     "components/ConversionCommit.astro": {
@@ -150,18 +150,18 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "7615577234cb51847b5b77a301c6bf77a76719cd8def54611a2b5158241f20fd",
-      "bytes": 36471,
+      "sha256": "c59a38cc1f3074ab0855a68935f6b1b5ea5c5eddc7dfc8455097d53d8616334d",
+      "bytes": 36959,
       "role": "backend"
     },
     "server/backend/smoke.ts": {
-      "sha256": "166f4115ef7cc1bb0fd61fa903d5a88911943e1c8283eeb0d54b487d84ccee1d",
-      "bytes": 3290,
+      "sha256": "dc37d2e788e9b4d70636f488eefe5d2f1eccdb29bf451c4c34a71f1b98d29859",
+      "bytes": 5311,
       "role": "backend"
     },
     "server/backend/worker.ts": {
-      "sha256": "970a0d5e8b63f39ef8c19c5797bb9b8486cf3bed0d536be21fc869f23cc468d2",
-      "bytes": 1973,
+      "sha256": "28f54c27d13c6f67af46c85a4d7804099bd69915e87914a05c8138caaa64f270",
+      "bytes": 2079,
       "role": "backend"
     }
   }
