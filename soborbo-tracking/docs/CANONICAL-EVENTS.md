@@ -29,6 +29,7 @@ the GA4 event name, and the gateway `event_name` are now the SAME string. The ol
 - **Server path only** (`/api/event/conversion-server`, per-site token; browser
   path → 403/TRK-400-017): `quote_calculator_submitted`,
   `callback_request_submitted`, `contact_form_submitted`,
+  `consultation_request_submitted`, `training_signup_submitted`,
   `order_request_submitted`, `purchase` — dispatched by the SITE BACKEND with the
   browser's `event_id` (see `server/backend/`).
 - Derived mirror in code: `lib/event-contract.ts` (guarded by
@@ -43,6 +44,8 @@ One name flows through `events.ts` (dataLayer) → GTM trigger → GA4 event →
 | Quote / lead form (the calculator IS the ajánlatkérő) | `quote_calculator_submitted` | **Lead** | ✅ |
 | Contact form | `contact_form_submitted` | Contact | ✅ |
 | Callback request | `callback_request_submitted` | **Lead** | ✅ |
+| Consultation request (multi-step wizard) | `consultation_request_submitted` | Schedule | ✅ |
+| Training / course signup | `training_signup_submitted` | CompleteRegistration | ✅ |
 | Phone click (`tel:`) | `phone_number_clicked` | Contact | ✅ |
 | Email click (`mailto:`) | `email_address_clicked` | Contact | ✅ |
 | WhatsApp click | `whatsapp_button_clicked` | Contact | ✅ |
@@ -53,6 +56,15 @@ One name flows through `events.ts` (dataLayer) → GTM trigger → GA4 event →
 > with `event_id` + value + PII side-channel + gateway comes from `trackLeadSubmit`
 > / `trackServerEvent`; `trackCalculatorComplete` is the funnel signal that shares
 > the name).
+
+> **6.14.0:** `consultation_request_submitted` and `training_signup_submitted`
+> are the two further leadgen conversions (canonical since 6.13.1). They have
+> their own names — not `quote_calculator_submitted` — because the gateway's
+> Meta mapping is fleet-wide (Lead) and a consultation booking / course signup is
+> a different Meta standard event (Schedule / CompleteRegistration). Browser
+> helpers: `trackConsultationSubmit` / `trackTrainingSignupSubmit` (+ the
+> `stage*` staging twins); the server leg is the site backend's, same as the
+> contact form.
 
 ## Engagement (NOT a conversion, NOT a Key Event)
 
@@ -75,6 +87,7 @@ target is `lead_qualified` (a real lead), not the raw click.
 
 1. **Key Events (Admin → Events → Mark as key event):**
    `quote_calculator_submitted`, `contact_form_submitted`, `callback_request_submitted`,
+   `consultation_request_submitted`, `training_signup_submitted`,
    `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`.
 2. **Custom dimensions (event-scoped):** `event_id`, `session_id`, `source`, `service`,
    `device`, `calculator_name`, `step_id`, `lead_provenance`. (Campaign params flow

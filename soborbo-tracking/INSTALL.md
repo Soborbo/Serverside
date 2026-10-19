@@ -20,8 +20,10 @@ file is the spine that calls them in order.
 ## The five hard rules (violating any of these has already cost real money)
 
 1. **Server-ingress-only events never leave the browser.** `quote_calculator_submitted`,
-   `callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`,
-   `purchase` get **403 (TRK-400-017)** on the browser path. Their gateway leg is
+   `callback_request_submitted`, `contact_form_submitted`,
+   `consultation_request_submitted`, `training_signup_submitted`,
+   `order_request_submitted`, `purchase` get **403 (TRK-400-017)** on the browser
+   path. Their gateway leg is
    sent by the site BACKEND (`server/backend/gateway-dispatch.ts`) with the
    browser's `event_id` (hidden field). The client lib blocks them too (TRK-1005).
 2. **`lead_id` is the CRM's id or absent** — from the CRM webhook RESPONSE. Never a

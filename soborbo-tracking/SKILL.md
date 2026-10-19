@@ -84,6 +84,7 @@ CRM webhook ─→ POST /api/event/lead-status (per-site token)
 - **The ingress split is the load-bearing rule.** High-value conversions
   (`server_ingress_only` in events.json: `quote_calculator_submitted`,
   `callback_request_submitted`, `contact_form_submitted`,
+  `consultation_request_submitted`, `training_signup_submitted`,
   `order_request_submitted`, `purchase`) get **403 (TRK-400-017)** on the browser
   path — a browser Origin is curl-spoofable, so the money events require the
   per-site token. The client lib refuses to send them (TRK-1005); the backend
@@ -212,8 +213,9 @@ Calculator: `trackCalculatorStart/Step/Option/Complete`. Debug: `?debugTracking=
 
 **Server path only** (`/api/event/conversion-server`, per-site token — browser
 path answers 403/TRK-400-017): `quote_calculator_submitted`,
-`callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`,
-`purchase`.
+`callback_request_submitted`, `contact_form_submitted`,
+`consultation_request_submitted`, `training_signup_submitted`,
+`order_request_submitted`, `purchase`.
 
 **Offline** (CRM → `/api/event/lead-status`): `lead_validated`, `lead_qualified`,
 `quote_sent`, `booking_confirmed`, `job_completed`, `revenue_confirmed`,

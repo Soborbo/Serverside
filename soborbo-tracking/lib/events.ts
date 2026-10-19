@@ -243,6 +243,30 @@ export function pushContactConversion(data: ConversionData): void {
   push({ event: 'contact_form_submitted', ...buildConversionPayload(data) });
 }
 
+/**
+ * Konzultáció-kérés (többlépéses varázsló) — kanonikus leadgen-esemény, Meta
+ * `Schedule` (events.json 6.13.1). Ugyanaz a szerződés, mint a kapcsolati
+ * űrlapé: a PII az EC rejtett csatornájába megy, a dataLayer PII-mentes, és az
+ * esemény server-ingress-only — a szerver-lábat a site backendje küldi a
+ * böngésző `event_id`-jével.
+ *
+ * Miért nem a `quote_calculator_submitted`: azt a többi site fő lead-eseményként
+ * használja (Meta `Lead`), és a gateway `mapEventName`-jének nincs site-onkénti
+ * felülírása — a konzultáció ezért saját nevet kapott.
+ */
+export function pushConsultationConversion(data: ConversionData): void {
+  push({ event: 'consultation_request_submitted', ...buildConversionPayload(data) });
+}
+
+/**
+ * Képzésre jelentkezés — kanonikus leadgen-esemény, Meta `CompleteRegistration`.
+ * Korábban `contact_form_submitted`-ként ment, ezért a Metában
+ * megkülönböztethetetlen volt a kapcsolati űrlaptól.
+ */
+export function pushTrainingSignupConversion(data: ConversionData): void {
+  push({ event: 'training_signup_submitted', ...buildConversionPayload(data) });
+}
+
 // ── Clicks — durable session dedup ─────────────────────────────────
 
 const memoryClickSet = new Set<string>();

@@ -15,7 +15,8 @@ v5 — that legacy machinery was removed.
 
 - **Browser**: `events.ts` does `push({ event: 'X', ... })` → GTM → GA4 / Meta
   Pixel / Google Ads. Names: `quote_calculator_submitted`, `contact_form_submitted`, `phone_number_clicked`,
-  `callback_request_submitted`, `email_address_clicked`, `whatsapp_button_clicked`, `calculator_*`,
+  `callback_request_submitted`, `consultation_request_submitted`, `training_signup_submitted`,
+  `email_address_clicked`, `whatsapp_button_clicked`, `calculator_*`,
   `form_abandoned`, `scroll_depth`.
 - **Server** — split by ingress path (`lib/event-contract.ts`, from events.json):
   - Low-risk clicks (`phone_number_clicked`, `email_address_clicked`,
@@ -23,6 +24,7 @@ v5 — that legacy machinery was removed.
     functions in `index.ts` POST them to the browser path with the SAME `event_id`.
   - High-value conversions (`quote_calculator_submitted`,
     `callback_request_submitted`, `contact_form_submitted`,
+    `consultation_request_submitted`, `training_signup_submitted`,
     `order_request_submitted`, `purchase`): server-ingress-only — the SITE BACKEND
     dispatches them (`server/backend/gateway-dispatch.ts`) with the browser's
     `event_id` (hidden field); the browser path 403s them (TRK-400-017).

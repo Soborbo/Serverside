@@ -4,8 +4,10 @@
  * Copy this into the Astro site's `src/lib/tracking/` and call it from the API
  * route that receives the form POST. This is the ONLY way the high-value
  * (`server_ingress_only`) conversions — quote_calculator_submitted,
- * callback_request_submitted, contact_form_submitted, order_request_submitted,
- * purchase — reach the gateway: the browser path answers 403 for them
+ * callback_request_submitted, contact_form_submitted,
+ * consultation_request_submitted, training_signup_submitted,
+ * order_request_submitted, purchase — reach the gateway: the browser path
+ * answers 403 for them
  * (TRK-400-017), because a browser Origin header is spoofable from curl.
  *
  * This module is battle-tested: it is the exact pattern running in production on

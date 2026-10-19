@@ -2,7 +2,8 @@
 
 The gateway rejects `server_ingress_only` events on the browser path (403,
 TRK-400-017): `quote_calculator_submitted`, `callback_request_submitted`,
-`contact_form_submitted`, `order_request_submitted`, `purchase`. Their gateway
+`contact_form_submitted`, `consultation_request_submitted`,
+`training_signup_submitted`, `order_request_submitted`, `purchase`. Their gateway
 leg is sent by the **site backend** — the API route that receives the form POST —
 using the modules in this directory:
 

@@ -41,7 +41,7 @@ runs in the tag's context, so the PII never enters the dataLayer.
 One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_step_completed`,
 `quote_calculator_option_selected`, `quote_calculator_submitted`, `quote_calculator_submitted`, `contact_form_submitted`,
 `phone_number_clicked`, `callback_request_submitted`, `email_address_clicked`, `whatsapp_button_clicked`, `form_abandoned`,
-`scroll_depth`.
+`scroll_depth`, `consultation_request_submitted`, `training_signup_submitted`.
 
 ## Tags — base
 
@@ -67,6 +67,8 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
 |---|---|:--:|---|
 | `quote_calculator_submitted` / `contact_form_submitted` | `contact_form_submitted` | ✅ | value, currency, event_id, session_id, device, source, service |
 | `callback_request_submitted` | `callback_request_submitted` | ✅ | event_id, session_id, device |
+| `consultation_request_submitted` | `consultation_request_submitted` | ✅ | value, currency, event_id, session_id, device |
+| `training_signup_submitted` | `training_signup_submitted` | ✅ | value, currency, event_id, session_id, device |
 | `phone_number_clicked` | `phone_number_clicked` | ✅ | event_id, session_id, device |
 | `email_address_clicked` | `email_address_clicked` | ✅ | event_id, session_id |
 | `whatsapp_button_clicked` | `whatsapp_button_clicked` | ✅ | event_id, session_id |
@@ -91,13 +93,19 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
   ```js
   fbq('track', 'Contact', {}, { eventID: '{{DLV - event_id}}' });
   ```
+- **Schedule** (CE-`consultation_request_submitted`): same shape as Lead
+  (value/currency when `value > 0`), `fbq('track', 'Schedule', cd, { eventID: '{{DLV - event_id}}' })`.
+- **CompleteRegistration** (CE-`training_signup_submitted`):
+  `fbq('track', 'CompleteRegistration', {}, { eventID: '{{DLV - event_id}}' })`.
 The `eventID` MUST match the server CAPI `event_id` (the gateway gets the same one
-from index.ts) → Meta Pixel↔CAPI dedup.
+from index.ts) → Meta Pixel↔CAPI dedup. The Meta standard event per name is the
+gateway's `events.json` `meta` column — the browser and server legs MUST send the
+same standard event, or the dedup pair never meets.
 
 ## Google Ads Conversion tag
 Conversion Value: {{DLV - value}}. Transaction ID: {{DLV - event_id}}.
 User-provided data: {{CJS - User Provided Data}}. ad_storage + ad_user_data.
-Trigger: the conversion CEs (quote_calculator_submitted/callback_request_submitted/phone_number_clicked/quote_calculator_submitted).
+Trigger: the conversion CEs (quote_calculator_submitted/callback_request_submitted/phone_number_clicked/quote_calculator_submitted/consultation_request_submitted/training_signup_submitted).
 **Don't set a fixed value default of 1+currency** — it poisons the bidding (see INVARIANTS).
 
 ## Enhanced Conversions

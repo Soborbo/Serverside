@@ -51,6 +51,7 @@ export {
   trackEmailClick, trackWhatsappClick, setUserDataForEC, clearUserDataForEC, getUserDataForEC,
   initScrollTracking, initFormAbandonTracking, enableDebug,
   generateEventId, pushLeadConversion, pushContactConversion,
+  pushConsultationConversion, pushTrainingSignupConversion,
   type ConversionData,
 } from './events';
 // Browser-path gateway dispatch — also available for direct use (guarded).
@@ -117,7 +118,8 @@ import {
   normalizePhone,
 } from './persistence';
 import {
-  generateEventId, pushLeadConversion, pushContactConversion, enableDebug,
+  generateEventId, pushLeadConversion, pushContactConversion,
+  pushConsultationConversion, pushTrainingSignupConversion, enableDebug,
   trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick,
   hasClickFired, markClickFired,
 } from './events';
@@ -318,6 +320,87 @@ export function trackContactSubmit(
   return { success: true, consentBlocked: false, eventId, gclid, fbclid };
 }
 
+// ── A két további kanonikus leadgen-konverzió (6.14.0) ──────────────────────
+//
+// `consultation_request_submitted` (Meta Schedule) és `training_signup_submitted`
+// (Meta CompleteRegistration) a 6.13.1 óta kanonikus, server-ingress-only
+// események — a böngésző-oldali segédjük viszont hiányzott, ezért a skinlab
+// saját forkban tartotta őket. UGYANAZ a szerződés, mint a kapcsolati űrlapé:
+// csak a dataLayer-láb, a szerver-lábat a site backendje küldi a rejtett
+// `event_id` mezővel (vagy a `params.eventId`-vel a fetch-alapú folyamatban).
+
+/**
+ * Konzultáció-kérés (többlépéses varázsló) → BROWSER LEG ONLY. Meta `Schedule`.
+ * A név-mezők és az érték a lead-űrlap szabályai szerint mennek (EC rejtett
+ * csatorna + PII-mentes dataLayer); a `currency` a piac alapértékére esik vissza.
+ */
+export function trackConsultationSubmit(params: LeadSubmitParams): LeadSubmitResult {
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = params.eventId || generateEventId();
+  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+
+  pushConsultationConversion({
+    email: params.email, phone: params.phone,
+    firstName: params.firstName, lastName: params.lastName,
+    value: params.value, currency: params.currency || trackingConfig.currency,
+    eventId, gclid: gclid || undefined,
+  });
+  return { success: true, consentBlocked: false, eventId, gclid, fbclid };
+}
+
+/** A `trackConsultationSubmit` staging-párja — lásd `stageLeadSubmit`. */
+export function stageConsultationSubmit(params: LeadSubmitParams): LeadSubmitResult {
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
+  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+
+  stagePendingConversion(
+    {
+      kind: 'consultation', eventId,
+      value: params.value, currency: params.currency || trackingConfig.currency,
+      gclid: gclid || undefined
+    },
+    {
+      email: params.email, phone: params.phone,
+      firstName: params.firstName, lastName: params.lastName,
+    },
+  );
+  return { success: true, consentBlocked: false, eventId, gclid, fbclid };
+}
+
+/**
+ * Képzésre jelentkezés → BROWSER LEG ONLY. Meta `CompleteRegistration`.
+ * Ugyanaz a mezőkészlet, mint a kapcsolati űrlapé (e-mail, telefon, név).
+ */
+export function trackTrainingSignupSubmit(
+  params: Pick<LeadSubmitParams, 'email' | 'phone' | 'firstName' | 'lastName' | 'eventId'>,
+): LeadSubmitResult {
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = params.eventId || generateEventId();
+  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+
+  pushTrainingSignupConversion({
+    email: params.email, phone: params.phone,
+    firstName: params.firstName, lastName: params.lastName,
+    eventId, gclid: gclid || undefined,
+  });
+  return { success: true, consentBlocked: false, eventId, gclid, fbclid };
+}
+
+/** A `trackTrainingSignupSubmit` staging-párja — lásd `stageLeadSubmit`. */
+export function stageTrainingSignupSubmit(
+  params: Pick<LeadSubmitParams, 'email' | 'phone' | 'firstName' | 'lastName'>,
+): LeadSubmitResult {
+  const gclid = getGclid(), fbclid = getFbclid(), eventId = generateEventId();
+  if (!hasMarketingConsent()) return { success: false, consentBlocked: true, eventId, gclid, fbclid };
+
+  stagePendingConversion(
+    { kind: 'training', eventId, gclid: gclid || undefined },
+    {
+      email: params.email, phone: params.phone,
+      firstName: params.firstName, lastName: params.lastName,
+    },
+  );
+  return { success: true, consentBlocked: false, eventId, gclid, fbclid };
+}
+
 /**
  * Generic BROWSER-PATH event to the gateway (phone_number_clicked,
  * email_address_clicked, whatsapp_button_clicked, video_play, begin_checkout).
@@ -325,8 +408,10 @@ export function trackContactSubmit(
  * event_id if dedup is needed.
  *
  * GUARDRAIL: server-ingress-only names (quote_calculator_submitted,
- * callback_request_submitted, contact_form_submitted, order_request_submitted,
- * purchase) are BLOCKED by sendToWorker with a TRK-1005 error diagnostic — the
+ * callback_request_submitted, contact_form_submitted,
+ * consultation_request_submitted, training_signup_submitted,
+ * order_request_submitted, purchase) are BLOCKED by sendToWorker with a
+ * TRK-1005 error diagnostic — the
  * gateway would 403 them anyway. Those go through the site backend.
  */
 export function trackServerEvent(
