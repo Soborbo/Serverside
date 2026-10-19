@@ -13,9 +13,10 @@
  *     a [table] silently becomes that table's sub-key (the keep_vars footgun:
  *     `keep_vars = true` must sit ABOVE every [section], or a deploy wipes the
  *     dashboard-managed vars).
- *  3. Set TRACKING_TEST_LEAD_EMAIL + TRACKING_TEST_EVENT_CODE vars (the Meta
- *     Test Events code for this site's pixel) — smoke.ts refuses to run without
- *     them.
+ *  3. Set TRACKING_SITE_ID (the gateway site_id — the same value as in the
+ *     gateway's SMOKE_SITES) + TRACKING_TEST_LEAD_EMAIL + TRACKING_TEST_EVENT_CODE
+ *     vars (the Meta Test Events code for this site's pixel) — smoke.ts refuses
+ *     to run without any of them.
  *  4. Register the site in the gateway's SMOKE_SITES var so the daily digest
  *     alarms on a missing/rejected smoke row.
  *

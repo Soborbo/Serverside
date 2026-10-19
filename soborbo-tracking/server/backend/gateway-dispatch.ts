@@ -81,6 +81,14 @@ export interface GatewayEnv {
   /** Synthetic-lead smoke test — see `resolveTestEventCode` + smoke.ts. */
   TRACKING_TEST_LEAD_EMAIL?: string;
   TRACKING_TEST_EVENT_CODE?: string;
+  /**
+   * The gateway `site_id` of this site (KV site-config) — the smoke cron builds
+   * its `smoke-<site>-YYYYMMDD` event_id from it, and it MUST equal the value
+   * registered in the gateway's `SMOKE_SITES` var, or the daily digest alarms
+   * on a "missing" smoke row forever. smoke.ts refuses to run without it
+   * (6.14.0: an env var, so the vendored smoke.ts needs no edit).
+   */
+  TRACKING_SITE_ID?: string;
 }
 
 export type ConsentSignal = 'GRANTED' | 'DENIED';

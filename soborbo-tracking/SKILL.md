@@ -259,7 +259,8 @@ TRK-950-004 ledger honesty).
 `PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`; trailing slash
 honoured for `trailingSlash: 'always'` sites).
 **Site worker (backend dispatch + smoke):** `TRACKING_GATEWAY_TOKEN` *(secret)*,
-`SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`.
+`SITE_URL`, `TRACKING_SITE_ID` (the gateway `site_id`, = `SMOKE_SITES` entry),
+`TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`.
 (Meta/Ads secrets do NOT go here — they live in the gateway KV.)
 **Gateway (the worker in `../`):** GADS_* (OAuth with `datamanager` scope),
 ADMIN_API_TOKEN, the per-site config KV, `SMOKE_SITES`, and

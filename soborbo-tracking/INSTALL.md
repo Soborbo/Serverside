@@ -152,8 +152,8 @@ Reference: `server/backend/README.md` — this step is NOT optional; without it 
 site's form conversions have NO server leg at all.
 
 1. Copy `server/backend/gateway-dispatch.ts` + `smoke.ts` into the site's
-   `src/lib/tracking/`, `server/backend/worker.ts` to `src/worker.ts`. Set `SITE`
-   in smoke.ts to the `site_id`.
+   `src/lib/tracking/`, `server/backend/worker.ts` to `src/worker.ts` — all
+   three UNCHANGED (the smoke site id is the `TRACKING_SITE_ID` var, step 4).
 2. Site wrangler config: `main = "./src/worker.ts"`,
    `[[services]] binding = "GATEWAY" service = "event-gateway"`,
    `[triggers] crons = ["4X 4 * * *"]` (pick a distinct minute per site).
@@ -167,8 +167,9 @@ site's form conversions have NO server leg at all.
    with the browser `event_id` (hidden field) and the CRM's id as `lead_id` —
    the exact pattern in `server/backend/README.md`.
 4. Set worker vars/secrets: `TRACKING_GATEWAY_TOKEN` (from Step 4's
-   `crm-secret.env`), `SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`,
-   `TRACKING_TEST_EVENT_CODE`.
+   `crm-secret.env`), `SITE_URL`, `TRACKING_SITE_ID` (the `site_id` from Step 0
+   — the same value you register in `SMOKE_SITES` in Step 4),
+   `TRACKING_TEST_LEAD_EMAIL`, `TRACKING_TEST_EVENT_CODE`.
 5. **Call-site audit (repo-wide, mandatory):** grep the SITE REPO for every
    conversion dispatch and confirm no server-only event is sent from browser code,
    and no flow relies on a browser-only leg for its money conversion. The deployed

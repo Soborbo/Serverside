@@ -36,6 +36,7 @@ KV/secrets (`Soborbo/Serverside`), NOT here.
 | PUBLIC_TRACKING_CONSENT_ENDPOINT | Optional (sbo only) | `/api/consent` (default) — base of every consent URL; a trailing slash is honoured (`/api/consent/` → `/api/consent/shown/`) for `trailingSlash: 'always'` sites |
 | TRACKING_GATEWAY_TOKEN | ✅ (secret) | per-site token (generate-site.mjs `crm-secret.env`) — backend dispatch + smoke |
 | SITE_URL | ✅ | `https://example.com` — the site's own hostname |
+| TRACKING_SITE_ID | ✅ | the gateway `site_id` (= the value in the gateway `SMOKE_SITES`) — the smoke cron's `smoke-<site>-YYYYMMDD` key; smoke refuses to run without it |
 | TRACKING_TEST_LEAD_EMAIL | ✅ | the designated synthetic-lead address (smoke cron) |
 | TRACKING_TEST_EVENT_CODE | ✅ | Meta Test Events code for this pixel (per-request use only) |
 
