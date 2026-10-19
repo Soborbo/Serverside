@@ -307,6 +307,11 @@ changes when set to `sbo`:
   loads ONLY after a positive decision) instead of the CookieYes+advanced flow.
 - `<ConsentBanner policyHref=... />` goes at the end of `<body>`; a footer link
   with `data-sb-consent-open` is the withdrawal path on every page.
+- Multi-language sites (one build, many locales): pass `lang="hu" | "en"` per
+  page to pick the banner copy (default: `PUBLIC_TRACKING_LOCALE`). The
+  consent-log `lang` column independently records the PAGE language
+  (`<html lang>`), narrowed to the gateway's `xx` / `xx-YY` shape (`zh-Hant` →
+  `zh`); with no `lang` attribute it falls back to the build locale.
 - `<TrackingNoscript />` must be REMOVED on sbo sites (no consent decision
   exists under noscript, so the GTM iframe would run pre-consent).
 - The backend dispatch passes `consentId:

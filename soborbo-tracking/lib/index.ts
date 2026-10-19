@@ -32,7 +32,7 @@ export {
 } from './consent-sbo-state';
 export {
   applySboDecision, flushPendingSboConsent, postBannerShown, readCkyParallelWindow,
-  consentEndpointUrl,
+  consentEndpointUrl, normalizeConsentLang,
   type SboDecisionInput, type SboDecisionContext, type SboConsentWirePayload,
 } from './consent-sbo';
 export { isSboConsentProvider, type ConsentProvider } from './config';

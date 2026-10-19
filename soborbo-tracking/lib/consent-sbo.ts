@@ -57,7 +57,29 @@ export interface SboDecisionInput {
 export interface SboDecisionContext {
   bannerVersion: string;
   consentTextVersion: string;
+  /**
+   * Az OLDAL nyelve (`<html lang>`), ahol a döntés született — a banner ezt
+   * adja át (6.14.0). Hiányában a build-szintű `trackingConfig.locale`. A wire
+   * felé a `normalizeConsentLang` alakja megy.
+   */
   lang?: string;
+}
+
+/**
+ * A gateway `lang` mezője CSAK `xx` vagy `xx-YY` alakot fogad (consent-log
+ * `LANG_RE`), és egy rossz alak a TELJES döntés-POST-ot 400-zal utasítja el —
+ * a döntés bizonyítéka veszne el egy nyelvi címke miatt. Egy többnyelvű site
+ * `<html lang>`-ja viszont lehet `zh-Hant` vagy `sr-Latn-RS` is. Ezért:
+ *   `hu` / `en-GB`      → változatlan
+ *   `zh-Hant` / `de-DE-x` → az elsődleges altag (`zh` / `de`)
+ *   üres / értelmezhetetlen → undefined (a hívó a locale-ra esik vissza)
+ */
+export function normalizeConsentLang(raw: string | undefined | null): string | undefined {
+  const s = (raw ?? '').trim();
+  if (!s) return undefined;
+  if (/^[A-Za-z]{2}(-[A-Za-z]{2})?$/.test(s)) return s;
+  const primary = s.split('-')[0];
+  return /^[A-Za-z]{2}$/.test(primary) ? primary : undefined;
 }
 
 /** A `POST /api/consent` wire-payloadja (a szerver parseConsentPayload párja). */
@@ -393,7 +415,7 @@ export function applySboDecision(
     banner_version: ctx.bannerVersion,
     consent_text_version: ctx.consentTextVersion,
     ruleset: trackingConfig.ruleset,
-    lang: ctx.lang ?? trackingConfig.locale,
+    lang: normalizeConsentLang(ctx.lang) ?? trackingConfig.locale,
     client_lib_version: CLIENT_LIB_VERSION,
     ...readCkyParallelWindow(),
     client_decided_at: new Date(state.decidedAtSec * 1000).toISOString()
@@ -422,7 +444,10 @@ export function postBannerShown(m: {
   interaction_ms?: number;
 }): void {
   try {
-    const body = JSON.stringify(m);
+    // A `lang` itt is a gateway alakjára szűkül; alak nélkül kimarad (a
+    // metrika-sor nyelv nélkül is érvényes, egy 400 viszont az egészet elvinné).
+    const lang = normalizeConsentLang(m.lang);
+    const body = JSON.stringify({ ...m, lang });
     const url = consentEndpointUrl('shown');
     if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
       navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
