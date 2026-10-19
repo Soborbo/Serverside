@@ -16,162 +16,162 @@
  * - 950: Reconciliation + observability
  */
 
-export enum TrackingErrorCode {
-  UNHANDLED_EXCEPTION = 'TRK-000-001',
-  KV_READ_FAILED = 'TRK-000-002',
-  KV_WRITE_FAILED = 'TRK-000-003',
-  R2_READ_FAILED = 'TRK-000-004',
-  R2_WRITE_FAILED = 'TRK-000-005',
-  DURABLE_OBJECT_FAILED = 'TRK-000-006',
-  LEDGER_WRITE_FAILED = 'TRK-000-007',
-  FANOUT_SETUP_FAILED = 'TRK-000-008',
+export const TrackingErrorCode = {
+  UNHANDLED_EXCEPTION: 'TRK-000-001',
+  KV_READ_FAILED: 'TRK-000-002',
+  KV_WRITE_FAILED: 'TRK-000-003',
+  R2_READ_FAILED: 'TRK-000-004',
+  R2_WRITE_FAILED: 'TRK-000-005',
+  DURABLE_OBJECT_FAILED: 'TRK-000-006',
+  LEDGER_WRITE_FAILED: 'TRK-000-007',
+  FANOUT_SETUP_FAILED: 'TRK-000-008',
 
-  INVALID_JSON = 'TRK-400-001',
-  INVALID_PAYLOAD_STRUCTURE = 'TRK-400-002',
+  INVALID_JSON: 'TRK-400-001',
+  INVALID_PAYLOAD_STRUCTURE: 'TRK-400-002',
   // ── DEPRECATED (Turnstile a gateway-ről eltávolítva) ──────────────────────
   // A kód TÖBBÉ NEM BOCSÁTJA KI ezeket. Az enum-tagok szándékosan maradnak: a
   // meglévő AE-lekérdezések, Workers-log-keresések és a docs/error-codes.md
   // ezekre hivatkozik, és a historikus adat (pl. a 2026-07-13/14-i TRK-400-004
   // hullám) csak így marad visszakereshető. Új kódot NE vegyél fel ebbe a sávba.
-  MISSING_TURNSTILE_TOKEN = 'TRK-400-003',
-  INVALID_TURNSTILE_TOKEN = 'TRK-400-004',
-  TURNSTILE_API_UNAVAILABLE = 'TRK-400-005',
+  MISSING_TURNSTILE_TOKEN: 'TRK-400-003',
+  INVALID_TURNSTILE_TOKEN: 'TRK-400-004',
+  TURNSTILE_API_UNAVAILABLE: 'TRK-400-005',
   // ──────────────────────────────────────────────────────────────────────────
-  INVALID_LEAD_STATUS_PAYLOAD = 'TRK-400-006',
-  LEAD_STATUS_UNAUTHORIZED = 'TRK-400-007',
+  INVALID_LEAD_STATUS_PAYLOAD: 'TRK-400-006',
+  LEAD_STATUS_UNAUTHORIZED: 'TRK-400-007',
   // DEPRECATED (a degradált mód a Turnstile-lal együtt megszűnt — token nélkül
   // MINDEN böngésző-event jön, nincs mit „degradálni").
-  DEGRADED_TOKENLESS_ACCEPTED = 'TRK-400-008',
-  DEGRADED_RATE_LIMITED = 'TRK-400-009',
-  TURNSTILE_SECRET_INVALID = 'TRK-400-010',
-  SERVER_INGRESS_UNAUTHORIZED = 'TRK-400-011',
-  SERVER_INGRESS_ACCEPTED = 'TRK-400-012',
+  DEGRADED_TOKENLESS_ACCEPTED: 'TRK-400-008',
+  DEGRADED_RATE_LIMITED: 'TRK-400-009',
+  TURNSTILE_SECRET_INVALID: 'TRK-400-010',
+  SERVER_INGRESS_UNAUTHORIZED: 'TRK-400-011',
+  SERVER_INGRESS_ACCEPTED: 'TRK-400-012',
   // A böngésző-ág ELSŐDLEGES kontrollja a Turnstile eltávolítása után.
-  ORIGIN_MISSING = 'TRK-400-013',
-  ORIGIN_NOT_ALLOWED = 'TRK-400-014',
-  BODY_TOO_LARGE = 'TRK-400-015',
-  CONVERSION_SPIKE = 'TRK-400-016',
+  ORIGIN_MISSING: 'TRK-400-013',
+  ORIGIN_NOT_ALLOWED: 'TRK-400-014',
+  BODY_TOO_LARGE: 'TRK-400-015',
+  CONVERSION_SPIKE: 'TRK-400-016',
   // High-value (hamisítható PII-s) konverzió a böngésző-ágon — csak a hitelesített
   // /api/event/conversion-server fogadhatja. Az Origin curl-ből hamisítható, a
   // Workers rate-limit binding bizonyítottan nem throttle-ol → e nélkül bárki
   // hamis lead-konverziót lőhetne tetszőleges hash-elt email/telefonnal.
-  HIGH_VALUE_EVENT_BROWSER_REJECTED = 'TRK-400-017',
+  HIGH_VALUE_EVENT_BROWSER_REJECTED: 'TRK-400-017',
   // F3-A/2 prehashed PII contract. Az outbox/CRM már-hash-elt user_data-t küldhet
   // (`user_data_hashed`), hogy a gateway NE hash-eljen újra (dupla hash → néma Meta
   // match-rate esés). `user_data` és `user_data_hashed` KÖLCSÖNÖSEN KIZÁRÓ.
-  PREHASHED_AND_RAW_USER_DATA = 'TRK-400-018',
+  PREHASHED_AND_RAW_USER_DATA: 'TRK-400-018',
   // A `user_data_hashed` bármely mezője nem 64-hosszú lowercase hex → 400, NEM néma
   // átengedés (a CRM-nek a hibát tudnia kell, hogy javíthasson/retry-olhasson).
-  INVALID_PREHASHED_USER_DATA = 'TRK-400-019',
+  INVALID_PREHASHED_USER_DATA: 'TRK-400-019',
   // Admin API (/api/event/admin/*) auth/rate-limit elutasítás. KÜLÖN a lead-status
   // kódtól: egy admin-token brute-force NE a /lead-status alrendszer alatt jelenjen
   // meg a logokban/riasztásokban (rossz attribúció elrejtené a támadást).
-  ADMIN_UNAUTHORIZED = 'TRK-400-020',
+  ADMIN_UNAUTHORIZED: 'TRK-400-020',
   // A kérés-törzs olvasása MEGSZAKADT (a stream dobott) — NEM méret-túllépés.
   // Korábban a readBoundedBody mindkettőre `null`-t adott, így egy megszakadt
   // feltöltés BODY_TOO_LARGE-ként (413) logolódott: a hibakód azt állította, hogy
   // a kliens túl nagy payloadot küldött, holott a kapcsolat szakadt meg. Külön kód,
   // hogy egy hálózati romlás ne „nagy body" hullámnak látszódjon a riportban.
-  REQUEST_BODY_READ_FAILED = 'TRK-400-021',
+  REQUEST_BODY_READ_FAILED: 'TRK-400-021',
   // A lead-status hívó olyan státuszt küldött, amihez NINCS kanonikus
   // event-leképezés. Eddig ez volt az EGYETLEN elutasítási ág az offline úton
   // kód, strukturált log és ledger-nyom nélkül: a CRM 400-at kapott, a
   // gateway-oldalon pedig semmi nyoma nem maradt, hogy egy konverzió elveszett.
-  UNSUPPORTED_LEAD_STATUS_MAPPING = 'TRK-400-022',
+  UNSUPPORTED_LEAD_STATUS_MAPPING: 'TRK-400-022',
 
   // P10 — a TÖBBSZÖR előforduló lifecycle-státuszok (ma: `payment_received`)
   // `occurrence_id` nélkül érkeztek. Az `orderId` a (lead_id, status) hash-e,
   // tehát két részfizetés UGYANAZT kapná, és a másodikat a Google ugyanannak a
   // konverziónak látná — a pénz NÉMÁN elveszne. Hangos 400, nem összevonás.
-  LEAD_STATUS_OCCURRENCE_ID_REQUIRED = 'TRK-400-023',
+  LEAD_STATUS_OCCURRENCE_ID_REQUIRED: 'TRK-400-023',
 
   // P10 — konverzió-helyesbítés (retract/restate) érkezett, de a Data Manager
   // adjustment wire-formátuma MÉG NINCS igazolva a hivatalos referenciából.
   // A kérést elutasítjuk, MERT a normál upload-úton továbbengedve egy POZITÍV
   // konverziót töltenénk fel egy visszavonásra — a hibát a kétszeresére növelve.
-  LEAD_STATUS_ADJUSTMENT_UNSUPPORTED = 'TRK-400-024',
+  LEAD_STATUS_ADJUSTMENT_UNSUPPORTED: 'TRK-400-024',
 
   // P10 — a site configja UGYANARRA a Google Ads conversion actionre képezi a
   // `revenue_confirmed`-et ÉS a `payment_received`-et. Az egyik a megnyert
   // ajánlat értéke, a másik a ténylegesen befolyt pénz: egy akción összeadva
   // ugyanaz a bevétel kétszer számítana.
-  LEAD_STATUS_DOUBLE_COUNT_CONFIG = 'TRK-400-025',
+  LEAD_STATUS_DOUBLE_COUNT_CONFIG: 'TRK-400-025',
 
-  NO_SITE_CONFIG = 'TRK-500-001',
-  MISSING_PIXEL_ID = 'TRK-500-002',
-  MISSING_META_TOKEN = 'TRK-500-003',
-  MISSING_GA4_CONFIG = 'TRK-500-004',
-  MISSING_GADS_CONFIG = 'TRK-500-005',
-  MISSING_CONVERSION_ACTION = 'TRK-500-006',
-  INVALID_SITE_CONFIG_JSON = 'TRK-500-007',
+  NO_SITE_CONFIG: 'TRK-500-001',
+  MISSING_PIXEL_ID: 'TRK-500-002',
+  MISSING_META_TOKEN: 'TRK-500-003',
+  MISSING_GA4_CONFIG: 'TRK-500-004',
+  MISSING_GADS_CONFIG: 'TRK-500-005',
+  MISSING_CONVERSION_ACTION: 'TRK-500-006',
+  INVALID_SITE_CONFIG_JSON: 'TRK-500-007',
 
-  META_API_REJECTED = 'TRK-600-001',
-  META_API_TIMEOUT = 'TRK-600-002',
-  META_API_NETWORK_ERROR = 'TRK-600-003',
-  META_INVALID_ACCESS_TOKEN = 'TRK-600-004',
-  META_PIXEL_NOT_FOUND = 'TRK-600-005',
-  META_RATE_LIMITED = 'TRK-600-006',
-  META_INVALID_USER_DATA = 'TRK-600-007',
-  META_EVENTS_RECEIVED_ZERO = 'TRK-600-008',
+  META_API_REJECTED: 'TRK-600-001',
+  META_API_TIMEOUT: 'TRK-600-002',
+  META_API_NETWORK_ERROR: 'TRK-600-003',
+  META_INVALID_ACCESS_TOKEN: 'TRK-600-004',
+  META_PIXEL_NOT_FOUND: 'TRK-600-005',
+  META_RATE_LIMITED: 'TRK-600-006',
+  META_INVALID_USER_DATA: 'TRK-600-007',
+  META_EVENTS_RECEIVED_ZERO: 'TRK-600-008',
   // §17: KV site-config carries meta.test_event_code — detected at send time and
   // IGNORED (never applied to the request). Loud alert so the KV landmine gets
   // removed before the edge-cache window routes real conversions to the Test stream.
-  META_KV_TEST_EVENT_CODE = 'TRK-600-009',
+  META_KV_TEST_EVENT_CODE: 'TRK-600-009',
 
-  GA4_API_TIMEOUT = 'TRK-700-001',
-  GA4_API_NETWORK_ERROR = 'TRK-700-002',
-  GA4_VALIDATION_FAILURE = 'TRK-700-003',
-  GA4_INVALID_MEASUREMENT_ID = 'TRK-700-004',
-  GA4_INVALID_API_SECRET = 'TRK-700-005',
+  GA4_API_TIMEOUT: 'TRK-700-001',
+  GA4_API_NETWORK_ERROR: 'TRK-700-002',
+  GA4_VALIDATION_FAILURE: 'TRK-700-003',
+  GA4_INVALID_MEASUREMENT_ID: 'TRK-700-004',
+  GA4_INVALID_API_SECRET: 'TRK-700-005',
 
-  GADS_NO_ACCESS_TOKEN = 'TRK-800-001',
-  GADS_API_TIMEOUT = 'TRK-800-002',
-  GADS_API_NETWORK_ERROR = 'TRK-800-003',
-  GADS_PARTIAL_FAILURE = 'TRK-800-004',
-  GADS_AUTH_REJECTED = 'TRK-800-005',
-  GADS_OAUTH_REFRESH_FAILED = 'TRK-800-006',
-  GADS_DEVELOPER_TOKEN_INVALID = 'TRK-800-007',
-  GADS_INVALID_CONVERSION_ACTION = 'TRK-800-008',
-  GADS_NO_REFRESH_TOKEN = 'TRK-800-009',
-  GADS_RATE_LIMITED = 'TRK-800-010',
+  GADS_NO_ACCESS_TOKEN: 'TRK-800-001',
+  GADS_API_TIMEOUT: 'TRK-800-002',
+  GADS_API_NETWORK_ERROR: 'TRK-800-003',
+  GADS_PARTIAL_FAILURE: 'TRK-800-004',
+  GADS_AUTH_REJECTED: 'TRK-800-005',
+  GADS_OAUTH_REFRESH_FAILED: 'TRK-800-006',
+  GADS_DEVELOPER_TOKEN_INVALID: 'TRK-800-007',
+  GADS_INVALID_CONVERSION_ACTION: 'TRK-800-008',
+  GADS_NO_REFRESH_TOKEN: 'TRK-800-009',
+  GADS_RATE_LIMITED: 'TRK-800-010',
   // 011-016 — az OAuth-bukás OKAI. Korábban mind a hat a GADS_NO_ACCESS_TOKEN
   // (TRK-800-001) gyűjtőbe esett, ami az operátornak annyit mondott: „nincs
   // token". A hat ok viszont HAT KÜLÖNBÖZŐ teendő: secretet beírni, újra
   // engedélyezni, várni, vagy Google-státuszt nézni.
-  GADS_OAUTH_CLIENT_ID_MISSING = 'TRK-800-011',
-  GADS_OAUTH_CLIENT_SECRET_MISSING = 'TRK-800-012',
-  GADS_REFRESH_TOKEN_REVOKED = 'TRK-800-013',
-  GADS_OAUTH_HTTP_ERROR = 'TRK-800-014',
-  GADS_OAUTH_MALFORMED_RESPONSE = 'TRK-800-015',
-  GADS_OAUTH_TIMEOUT = 'TRK-800-016',
+  GADS_OAUTH_CLIENT_ID_MISSING: 'TRK-800-011',
+  GADS_OAUTH_CLIENT_SECRET_MISSING: 'TRK-800-012',
+  GADS_REFRESH_TOKEN_REVOKED: 'TRK-800-013',
+  GADS_OAUTH_HTTP_ERROR: 'TRK-800-014',
+  GADS_OAUTH_MALFORMED_RESPONSE: 'TRK-800-015',
+  GADS_OAUTH_TIMEOUT: 'TRK-800-016',
 
-  DATAMANAGER_API_TIMEOUT = 'TRK-840-001',
-  DATAMANAGER_API_NETWORK_ERROR = 'TRK-840-002',
-  DATAMANAGER_API_REJECTED = 'TRK-840-003',
-  DATAMANAGER_AUTH_REJECTED = 'TRK-840-004',
-  DATAMANAGER_RATE_LIMITED = 'TRK-840-005',
-  DATAMANAGER_NOT_ALLOWLISTED = 'TRK-840-006',
-  DATAMANAGER_NO_IDENTIFIERS = 'TRK-840-007',
+  DATAMANAGER_API_TIMEOUT: 'TRK-840-001',
+  DATAMANAGER_API_NETWORK_ERROR: 'TRK-840-002',
+  DATAMANAGER_API_REJECTED: 'TRK-840-003',
+  DATAMANAGER_AUTH_REJECTED: 'TRK-840-004',
+  DATAMANAGER_RATE_LIMITED: 'TRK-840-005',
+  DATAMANAGER_NOT_ALLOWLISTED: 'TRK-840-006',
+  DATAMANAGER_NO_IDENTIFIERS: 'TRK-840-007',
   // A DATAMANAGER_VALIDATE_ONLY kapcsoló BE volt kapcsolva: a Google csak
   // validálta a payloadot, SEMMIT nem rögzített. Ez NEM kézbesítés — külön kód
   // kell, mert enélkül a 200-as validate-válasz megkülönböztethetetlen a valós
   // uploadtól (ledger 'accepted', uploaded_to_gads:true), és a rendszer csendben
   // zöldet mutatna nulla rögzített konverzió fölött.
-  DATAMANAGER_VALIDATE_ONLY = 'TRK-840-008',
+  DATAMANAGER_VALIDATE_ONLY: 'TRK-840-008',
   // 009-014 — a TRK-840-003 (DATAMANAGER_API_REJECTED) gyűjtő felbontása.
   // Addig egyetlen `warning` súlyú kód nyelte el a validációs hibát, a
   // vendor-kiesést és a jogosultsági problémát: a ledgerben egy Google-outage
   // megkülönböztethetetlen volt egy véglegesen rossz payloadtól, holott az
   // egyik RETRYABLE, a másik TERMINAL.
-  DATAMANAGER_PERMISSION_DENIED = 'TRK-840-009',
-  DATAMANAGER_VALIDATION_FAILED = 'TRK-840-010',
-  DATAMANAGER_SERVER_ERROR = 'TRK-840-011',
+  DATAMANAGER_PERMISSION_DENIED: 'TRK-840-009',
+  DATAMANAGER_VALIDATION_FAILED: 'TRK-840-010',
+  DATAMANAGER_SERVER_ERROR: 'TRK-840-011',
   // 2xx, de a törzs nem értelmezhető JSON. KRITIKUS: eddig `{}`-ra esett vissza,
   // és a hívás `accepted`-ként, `conversions_processed:1`-gyel könyvelődött —
   // néma siker ismeretlen vendor-állapot fölött (§17).
-  DATAMANAGER_MALFORMED_RESPONSE = 'TRK-840-012',
-  DATAMANAGER_INVALID_CLICK_ID = 'TRK-840-013',
-  DATAMANAGER_RESPONSE_NO_REQUEST_ID = 'TRK-840-014',
+  DATAMANAGER_MALFORMED_RESPONSE: 'TRK-840-012',
+  DATAMANAGER_INVALID_CLICK_ID: 'TRK-840-013',
+  DATAMANAGER_RESPONSE_NO_REQUEST_ID: 'TRK-840-014',
 
   // TRK-85x — ELO GTM conformance (P7).
   // A committolt `gtm/container.json` eddig csak onmagaval volt osszevetve. Az
@@ -179,60 +179,60 @@ export enum TrackingErrorCode {
   // money-hibak: egy kikapcsolt konverzios tag, egy elirt label vagy egy
   // ismeretlen, konverzio-kepes tag semmilyen ledger-jelet nem hagy — a
   // gateway-oldalon minden zold marad, mikozben a bongeszo-lab halott.
-  GTM_TAG_MISSING = 'TRK-850-001',
-  GTM_TAG_PAUSED = 'TRK-850-002',
-  GTM_TRIGGER_MISSING = 'TRK-850-003',
-  GTM_EVENT_NAME_MISMATCH = 'TRK-850-004',
-  GTM_CONVERSION_ID_MISMATCH = 'TRK-850-005',
-  GTM_CONVERSION_LABEL_MISMATCH = 'TRK-850-006',
-  GTM_ENHANCED_CONVERSIONS_MISSING = 'TRK-850-007',
-  GTM_EC_USER_DATA_VARIABLE_MISSING = 'TRK-850-008',
-  GTM_CONSENT_SETTINGS_MISSING = 'TRK-850-009',
-  GTM_DUPLICATE_CONVERSION_TAG = 'TRK-850-010',
+  GTM_TAG_MISSING: 'TRK-850-001',
+  GTM_TAG_PAUSED: 'TRK-850-002',
+  GTM_TRIGGER_MISSING: 'TRK-850-003',
+  GTM_EVENT_NAME_MISMATCH: 'TRK-850-004',
+  GTM_CONVERSION_ID_MISMATCH: 'TRK-850-005',
+  GTM_CONVERSION_LABEL_MISMATCH: 'TRK-850-006',
+  GTM_ENHANCED_CONVERSIONS_MISSING: 'TRK-850-007',
+  GTM_EC_USER_DATA_VARIABLE_MISSING: 'TRK-850-008',
+  GTM_CONSENT_SETTINGS_MISSING: 'TRK-850-009',
+  GTM_DUPLICATE_CONVERSION_TAG: 'TRK-850-010',
   // ISMERETLEN, DE KONVERZIO-KEPES tag: valaki kezzel vett fel egy tagtipust,
   // ami penzt tud konyvelni (awct / gaawe / Meta Custom HTML). Ez FAIL, nem
   // figyelmeztetes — a duplikalt konverzio ugyanugy torzitja a biddinget, mint
   // a hianyzo, csak felfele.
-  GTM_UNKNOWN_CONVERSION_TAG = 'TRK-850-011',
-  GTM_LEGACY_TRIGGER_ACTIVE = 'TRK-850-012',
-  GTM_UNSUPPORTED_CUSTOM_HTML = 'TRK-850-013',
-  GTM_CONTAINER_MISMATCH = 'TRK-850-014',
+  GTM_UNKNOWN_CONVERSION_TAG: 'TRK-850-011',
+  GTM_LEGACY_TRIGGER_ACTIVE: 'TRK-850-012',
+  GTM_UNSUPPORTED_CUSTOM_HTML: 'TRK-850-013',
+  GTM_CONTAINER_MISMATCH: 'TRK-850-014',
   // A conformance-ellenorzes SAJAT dependenciaja halt meg (nincs export, nincs
   // API-hozzaferes). §17: ez NEM "nulla finding".
-  GTM_CONFORMANCE_UNAVAILABLE = 'TRK-850-015',
+  GTM_CONFORMANCE_UNAVAILABLE: 'TRK-850-015',
 
-  MSADS_DISPATCH_FAILED = 'TRK-810-001',
-  MSADS_API_TIMEOUT = 'TRK-810-002',
-  TIKTOK_DISPATCH_FAILED = 'TRK-820-001',
-  TIKTOK_API_TIMEOUT = 'TRK-820-002',
-  LINKEDIN_DISPATCH_FAILED = 'TRK-830-001',
-  LINKEDIN_API_TIMEOUT = 'TRK-830-002',
+  MSADS_DISPATCH_FAILED: 'TRK-810-001',
+  MSADS_API_TIMEOUT: 'TRK-810-002',
+  TIKTOK_DISPATCH_FAILED: 'TRK-820-001',
+  TIKTOK_API_TIMEOUT: 'TRK-820-002',
+  LINKEDIN_DISPATCH_FAILED: 'TRK-830-001',
+  LINKEDIN_API_TIMEOUT: 'TRK-830-002',
   /** A használt LinkedIn-Version hivatalosan megszűnt / megszűnése bejelentve, vagy (becslés) karbantartása esedékes, vagy érvénytelen alakú. */
-  LINKEDIN_API_VERSION_UNSUPPORTED = 'TRK-830-003',
+  LINKEDIN_API_VERSION_UNSUPPORTED: 'TRK-830-003',
 
-  DLQ_WRITE_FAILED = 'TRK-900-001',
-  DLQ_LIST_FAILED = 'TRK-900-002',
-  DLQ_DELETE_FAILED = 'TRK-900-003',
-  CRON_RETRY_FAILED = 'TRK-900-004',
-  MAX_RETRIES_EXCEEDED = 'TRK-900-005',
-  DLQ_CORRUPT_RECORD = 'TRK-900-006',
+  DLQ_WRITE_FAILED: 'TRK-900-001',
+  DLQ_LIST_FAILED: 'TRK-900-002',
+  DLQ_DELETE_FAILED: 'TRK-900-003',
+  CRON_RETRY_FAILED: 'TRK-900-004',
+  MAX_RETRIES_EXCEEDED: 'TRK-900-005',
+  DLQ_CORRUPT_RECORD: 'TRK-900-006',
   // Platform-hívás elbukott ÉS a retry-rekordot sem sikerült sehova (Queue + R2)
   // letenni → az event minden tárból kiesett. Ilyenkor a dispatched flag 0 marad,
   // hogy egy kliens-retry újrakézbesíthesse (vendor event_id-dedup véd).
-  RETRY_PERSIST_FAILED = 'TRK-900-007',
+  RETRY_PERSIST_FAILED: 'TRK-900-007',
   // ELVÁRT platform, de a site-configból hiányzik a blokkja (lomtalan Meta,
   // 2026-07-15). NEM vendor-hiba és nem is szándékos kihagyás: konfigurációs
   // blokk, ami magától SOHA nem javul meg. Ezért retryable — DLQ-rekord készül
   // az eredeti payloaddal —, de hosszú backoff-fal, hogy a config helyreállítása
   // előtt ne égesse el a retry-keretet. E kód nélkül a skip csendes adatvesztés.
-  PLATFORM_NOT_CONFIGURED = 'TRK-900-008',
+  PLATFORM_NOT_CONFIGURED: 'TRK-900-008',
   // ELVÁRT platform, a config-blokk MEGVAN, de a benne lévő azonosító alakja
   // használhatatlan (kitöltetlen placeholder, elgépelt vagy rossz típusú ID).
   // Testvére a fentinek: ugyanaz a kár (a platform-láb halott), ugyanaz a
   // gyógymód (KV-javítás + replay), csak a hiányzó blokk helyett egy formahibás
   // mező okozza. Azért KÜLÖN kód, mert a teendő más: nem „írd be a blokkot",
   // hanem „javítsd az azonosítót" — és a digestben is másképp kell olvasni.
-  PLATFORM_IDENTIFIER_INVALID = 'TRK-900-009',
+  PLATFORM_IDENTIFIER_INVALID: 'TRK-900-009',
 
   // ── 910: Consent-diagnosztika (Fázis D, 2026-08) ──────────────────────────
   // SÁVVÁLASZTÁS — olvasd el, mielőtt „javítanád": az éjszakai brief ezeket
@@ -244,69 +244,69 @@ export enum TrackingErrorCode {
   // tegnap). Ezért a consent-kódok a szabad 910-es sávot kapják, 1:1 sorrendben
   // a briefhez: 910-001 ↔ 900-001, … 910-006 ↔ 900-006. Lásd a PR nyitott kérdését.
   /** brief: TRK-900-001 — a consent objektum teljesen hiányzik a payloadból. */
-  CONSENT_MISSING = 'TRK-910-001',
+  CONSENT_MISSING: 'TRK-910-001',
   /** brief: TRK-900-002 — jelen van, de egyetlen érvényes jel sem olvasható ki. */
-  CONSENT_UNPARSEABLE = 'TRK-910-002',
+  CONSENT_UNPARSEABLE: 'TRK-910-002',
   /** brief: TRK-900-003 — két forrás ellentmond (source_consistent=0). */
-  CONSENT_SOURCE_MISMATCH = 'TRK-910-003',
+  CONSENT_SOURCE_MISMATCH: 'TRK-910-003',
   /**
    * brief: TRK-900-004 — a consent lejárt. **DEFINIÁLVA, DE NEM ÉLESÍTVE.**
    * CookieYes alatt SOHA nem tüzelhet: a `cookieyes-consent` süti nem hordoz
    * timestampet, tehát a `consent_age_s` mindig NULL. Kizárólag az sbo_consent
    * korszakban aktiválható, amikor a saját CMP a döntés idejét is rögzíti.
    */
-  CONSENT_EXPIRED = 'TRK-910-004',
+  CONSENT_EXPIRED: 'TRK-910-004',
   /** brief: TRK-900-005 — a jelek belül inkonzisztensek (ad-hármas szétesik). */
-  CONSENT_SIGNALS_INCONSISTENT = 'TRK-910-005',
+  CONSENT_SIGNALS_INCONSISTENT: 'TRK-910-005',
   /** brief: TRK-900-006 — client_lib_version a minimum alatt (WARN, később block). */
-  CONSENT_CLIENT_LIB_OUTDATED = 'TRK-910-006',
+  CONSENT_CLIENT_LIB_OUTDATED: 'TRK-910-006',
   /** A napi consent-keresztellenőrzés (S3) D1-lekérdezése elbukott. */
-  CONSENT_CROSS_CHECK_FAILED = 'TRK-910-007',
+  CONSENT_CROSS_CHECK_FAILED: 'TRK-910-007',
   /**
    * GRANTED consent MELLETT keletkezett `skipped` delivery — pontosan az a 9
    * darab rejtély, amiért a Fázis D létezik. Nem szabadna léteznie.
    */
-  CONSENT_GRANTED_BUT_SKIPPED = 'TRK-910-008',
+  CONSENT_GRANTED_BUT_SKIPPED: 'TRK-910-008',
   /**
    * Replay előtt a consent AKTUÁLIS állapotát (consent_log / a lead receiptje)
    * nem sikerült kiolvasni. A küldés ELMARAD, a rekord újrapróbálható marad —
    * egy D1-kiesés nem érvényesítheti a régi engedélyt (2026-10-18 review R2).
    */
-  CONSENT_STATE_UNAVAILABLE = 'TRK-910-009',
+  CONSENT_STATE_UNAVAILABLE: 'TRK-910-009',
   /**
    * Kulcs nélküli / rossz kulcsú SZIGORÍTÓ consent-döntés egy kulccsal védett
    * láncon (review R7). Tárolva és érvényes — jogos visszavonás kulcsvesztés
    * után, VAGY egy azonosítót ismerő harmadik fél. Ugrás esetén vizsgálandó.
    */
-  CONSENT_UNVERIFIED_DECISION = 'TRK-910-010',
+  CONSENT_UNVERIFIED_DECISION: 'TRK-910-010',
 
-  RECON_VENDOR_FAILURE_RATE = 'TRK-950-001',
-  RECON_COVERAGE_DRIFT = 'TRK-950-002',
-  RECON_QUERY_FAILED = 'TRK-950-003',
+  RECON_VENDOR_FAILURE_RATE: 'TRK-950-001',
+  RECON_COVERAGE_DRIFT: 'TRK-950-002',
+  RECON_QUERY_FAILED: 'TRK-950-003',
   // Invariáns-sértés: 'accepted' delivery-rekord vendor HTTP-státusz nélkül.
   // Accepted CSAK valós vendor-válasz mellett íródhat — e nélkül a "green monitor
   // over zero data" osztályú bug (lomtalan 2026-07-14) észrevétlen maradna.
-  ACCEPTED_WITHOUT_VENDOR_STATUS = 'TRK-950-004',
+  ACCEPTED_WITHOUT_VENDOR_STATUS: 'TRK-950-004',
   // Cross-platform drift: a ledger event-countja és a GA4 / Google Ads aznapi
   // konverzió-száma küszöb fölött tér el — a GTM-ág (vagy a gateway-ág) némán
   // romlott el. Ez az az osztály, amit a ledger-belső recon szerkezetileg nem
   // láthat (Modell 2: a GA4/GAds on-site konverziót a böngésző birtokolja).
-  RECON_CROSS_PLATFORM_DRIFT = 'TRK-950-005',
-  RECON_CROSS_QUERY_FAILED = 'TRK-950-006',
+  RECON_CROSS_PLATFORM_DRIFT: 'TRK-950-005',
+  RECON_CROSS_QUERY_FAILED: 'TRK-950-006',
   // Meta EMQ monitorozás (daily digest). A smoke-őr kézbesítést bizonyít, match-
   // minőséget nem — a leggyakoribb csendes CAPI-regresszió (eltört fbc/fbp-
   // forwarding) csak az EMQ-esésben látszik.
-  EMQ_BELOW_THRESHOLD = 'TRK-950-007',
-  EMQ_QUERY_FAILED = 'TRK-950-008',
-  EMQ_COVERAGE_DROP = 'TRK-950-009',
-  SITE_CONFIG_DRIFT = 'TRK-950-010',
+  EMQ_BELOW_THRESHOLD: 'TRK-950-007',
+  EMQ_QUERY_FAILED: 'TRK-950-008',
+  EMQ_COVERAGE_DROP: 'TRK-950-009',
+  SITE_CONFIG_DRIFT: 'TRK-950-010',
   // A cross-platform check MAGA nem fut: egyetlen site-on sincs `recon` blokk,
   // vagy minden leg kimarad (hiányzó ga4_property_id / gads_onsite_actions,
   // 403-as scope). Modell 2-ben ez az EGYETLEN monitor a böngésző/GTM-ágra,
   // tehát az álló monitor nem lehet néma: e kód nélkül a napi riport üres
   // finding-listája megkülönböztethetetlen a „nincs drift"-től (2026-08-16 audit:
   // a check a bevezetése óta EGYETLEN napon sem futott le, és ez sehol nem látszott).
-  RECON_CROSS_CHECK_NOT_RUNNING = 'TRK-950-011',
+  RECON_CROSS_CHECK_NOT_RUNNING: 'TRK-950-011',
 
   // ── P1.1 business-leg (CRM lifecycle → Google Ads offline / Data Manager) ──
   // A ledger-belso recon a BONGESZO-fan-outot meri; ezek az uzleti darabszam es a
@@ -314,18 +314,18 @@ export enum TrackingErrorCode {
   // 2026-08-24-ig LETEZETT es feltoltodott, de senki nem olvasta — egy szandekosan
   // kikapcsolt Google offline-lab mellett a monitor zolden ment at.
   /** Elvart kezbesites van, accepted NULLA — a lab halott (24h regresszio VAGY 7 napos abszolut). */
-  RECON_OFFLINE_ZERO_DELIVERY = 'TRK-950-012',
+  RECON_OFFLINE_ZERO_DELIVERY: 'TRK-950-012',
   /** Reszleges kieses: az elvart kezbesitesek toredeke ert celba. */
-  RECON_OFFLINE_COVERAGE_DRIFT = 'TRK-950-013',
+  RECON_OFFLINE_COVERAGE_DRIFT: 'TRK-950-013',
   /** A Google elutasitja a feltolteseket (auth / allowlist / formatum). */
-  RECON_OFFLINE_VENDOR_FAILURE = 'TRK-950-014',
+  RECON_OFFLINE_VENDOR_FAILURE: 'TRK-950-014',
   /**
    * A lab MERHETETLEN, mert hianyzik egy eloofeltetel (OAuth secret / refresh token /
    * customer_id / conversion action). SZANDEKOSAN NEM drift-finding: a hiba ismert es a
    * health-check mar jelzi, egy masodik riasztas ugyanarrol csak zajt termel. Viszont a
    * napi recon NEM lehet nema rola — ez a kod teszi greppelhetove es riportalhatova.
    */
-  RECON_OFFLINE_BLOCKED = 'TRK-950-015',
+  RECON_OFFLINE_BLOCKED: 'TRK-950-015',
 
   // ── P1.2 business-source recon (CRM aggregatum vs gateway lead_status) ─────
   /**
@@ -334,30 +334,30 @@ export enum TrackingErrorCode {
    * beerkezes MAGA az elvart alap, tehat egy el sem indult hivas nulla elvarast
    * jelent, es a nulla kezbesites egeszsegesnek latszik.
    */
-  RECON_BUSINESS_SOURCE_DRIFT = 'TRK-950-016',
+  RECON_BUSINESS_SOURCE_DRIFT: 'TRK-950-016',
   /**
    * Egy site-ra tegnap volt aggregatum, ma nincs — MAGA a CRM-cron allt le. A
    * megfigyelt elozmenyhez merunk, nem konfiguralt listahoz: egy sosem-jelentkezo
    * site nem riaszt (nincs bekotve), egy elhallgato igen.
    */
-  RECON_BUSINESS_SOURCE_MISSING = 'TRK-950-017',
+  RECON_BUSINESS_SOURCE_MISSING: 'TRK-950-017',
   /**
    * A SITE_CONFIG felsorolas NEM volt teljes (a KV-listazas lapozas kozben elbukott).
    * A reconciliation ilyenkor NEM szur a `monitoring` flagre — a reszlistabol NEGATIV
    * kovetkeztetest levonni azt jelentene, hogy a fel nem oldott site-ok NEMAN kiesnek a
    * meresbol. A riport degraded: bovebb es kevesbe pontos, NEM szukebb.
    */
-  RECON_CONFIG_ENUMERATION_INCOMPLETE = 'TRK-950-018',
+  RECON_CONFIG_ENUMERATION_INCOMPLETE: 'TRK-950-018',
   // 019-020 — MAGA A RIASZTÁSI CSATORNA bukott el. Ez a §17 legélesebb esete:
   // ha az e-mail/SMS nem megy ki, a rendszer minden más baja NÉMA lesz, mert a
   // hír nem jut el emberhez. Eddig kód nélküli `level:'error'` sor volt, amire
   // nem lehetett riasztást kötni — vagyis a riasztás kiesése volt a legkevésbé
   // riasztható esemény.
-  ALERT_EMAIL_FAILED = 'TRK-950-019',
-  ALERT_SMS_FAILED = 'TRK-950-020',
+  ALERT_EMAIL_FAILED: 'TRK-950-019',
+  ALERT_SMS_FAILED: 'TRK-950-020',
   // 021 — a szintetikus smoke-lead lánc bukott. Ez a napi „él-e a pénz-út"
   // próba; kód nélkül a napi digest szövegében tűnt el.
-  SMOKE_LEAD_CHECK_FAILED = 'TRK-950-021',
+  SMOKE_LEAD_CHECK_FAILED: 'TRK-950-021',
   /**
    * F8 · P12 — a flotta-egészség nézet egyik ALKÉRDÉSE bukott el (D1/KV query).
    * A nézet ilyenkor NEM lesz szűkebb és NEM lesz zöldebb: az érintett dimenzió
@@ -365,22 +365,23 @@ export enum TrackingErrorCode {
    * a MÉRÉS SAJÁT kiesése greppelhető legyen — enélkül a vak dimenzió és a
    * ténylegesen mért, ép dimenzió megkülönböztethetetlen lenne a logban (§17).
    */
-  FLEET_HEALTH_QUERY_FAILED = 'TRK-950-022',
+  FLEET_HEALTH_QUERY_FAILED: 'TRK-950-022',
 
-  RETENTION_QUERY_FAILED = 'TRK-960-001',
-  RETENTION_R2_FAILED = 'TRK-960-002',
+  RETENTION_QUERY_FAILED: 'TRK-960-001',
+  RETENTION_R2_FAILED: 'TRK-960-002',
 
   // §8 — kanonikus event-szerződés (events.json). A *-002 kódok BUILD-IDŐBEN
   // fognak el (drift / parity / reserved-name) → CI-blokk, nem éles forgalom.
   // A többi runtime observability a gateway-en.
-  UNKNOWN_EVENT_NAME = 'TRK-EVT-001',
-  RESERVED_EVENT_NAME = 'TRK-EVT-002',
-  GA4_ONSITE_FANOUT = 'TRK-GA4-002',
-  BROWSER_SERVER_META_MISMATCH = 'TRK-META-002',
-  INVALID_LEAD_PROVENANCE = 'TRK-PROV-001',
-  INVALID_SITE_CONFIG_SCHEMA = 'TRK-CFG-001',
-  MISSING_CONVERSION_ACTIONS_CONFIG = 'TRK-CFG-002'
-}
+  UNKNOWN_EVENT_NAME: 'TRK-EVT-001',
+  RESERVED_EVENT_NAME: 'TRK-EVT-002',
+  GA4_ONSITE_FANOUT: 'TRK-GA4-002',
+  BROWSER_SERVER_META_MISMATCH: 'TRK-META-002',
+  INVALID_LEAD_PROVENANCE: 'TRK-PROV-001',
+  INVALID_SITE_CONFIG_SCHEMA: 'TRK-CFG-001',
+  MISSING_CONVERSION_ACTIONS_CONFIG: 'TRK-CFG-002'
+} as const;
+export type TrackingErrorCode = (typeof TrackingErrorCode)[keyof typeof TrackingErrorCode];
 
 export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
   [TrackingErrorCode.UNHANDLED_EXCEPTION]: 'Unhandled exception in Worker fetch handler',

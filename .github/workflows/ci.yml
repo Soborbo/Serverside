@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
 
       # A lockfile-teljesseg or SZANDEKOSAN az `npm ci` ELOTT fut: ugyanazt a
@@ -142,7 +142,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
           cache-dependency-path: soborbo-tracking/package-lock.json
 

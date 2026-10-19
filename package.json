@@ -23,10 +23,10 @@
     "check:vendored": "node scripts/check-vendored-copy.mjs",
     "check:backend-contract": "node scripts/check-backend-contract.mjs soborbo-tracking/server/backend/gateway-dispatch.ts --cmp=sbo --site=kanonikus",
     "check:fleet-contract": "node scripts/check-fleet-contract.mjs",
-    "gen:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs",
-    "check:error-codes": "node --experimental-transform-types --no-warnings scripts/gen-error-code-table.mjs --check && node --experimental-transform-types --no-warnings scripts/check-error-code-emission.mjs",
+    "gen:error-codes": "node --no-warnings scripts/gen-error-code-table.mjs",
+    "check:error-codes": "node --no-warnings scripts/gen-error-code-table.mjs --check && node --no-warnings scripts/check-error-code-emission.mjs",
     "check:engine-events": "node server/check-event-contract.mjs",
-    "check:live-gtm": "node --experimental-transform-types --no-warnings --import ./scripts/lib/ts-resolve-hook.mjs scripts/check-live-gtm.mjs"
+    "check:live-gtm": "node --no-warnings --import ./scripts/lib/ts-resolve-hook.mjs scripts/check-live-gtm.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260717.1",
