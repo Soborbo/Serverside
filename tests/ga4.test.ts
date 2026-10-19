@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { sendToGA4MP } from '../src/lib/ga4';
 import type { SiteConfig } from '../src/lib/config';
+import { TrackingErrorCode } from '../src/lib/error-codes';
 
 const cfg: SiteConfig = {
   site_id: 'test',
@@ -112,5 +113,27 @@ describe('sendToGA4MP — session-forrás védelem (Painless audit 2026-08, P0-A
     const params = captured.body.events[0].params;
     expect(params.cta_context).toBe('standalone');
     expect(params.source).toBeUndefined();
+  });
+});
+
+describe('sendToGA4MP — hálózati hiba (TRK-700-002)', () => {
+  // A fetch elutasítása (DNS / kapcsolat bontva) NEM timeout: a kód a
+  // GA4_API_NETWORK_ERROR, és a hívó sikertelen eredményt kap, nem kivételt.
+  // Korábban csak véletlenül fedte a hálózat nélküli sandbox, ahol egy nem
+  // mockolt fetch bukott — a CI-ban (van hálózat) nem, és a racsni bepirosodott.
+  it('fetch reject → success:false, error_code = GA4_API_NETWORK_ERROR', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    }));
+    const result = await sendToGA4MP(cfg, {
+      event_name: 'phone_conversion',
+      event_id: 'evt-net',
+      client_id: '123.456'
+    });
+    expect(result.success).toBe(false);
+    expect(result.error_code).toBe(TrackingErrorCode.GA4_API_NETWORK_ERROR);
+    expect(result.error).toBe('fetch failed');
+    vi.restoreAllMocks();
   });
 });
