@@ -2,7 +2,7 @@
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
   "version": "6.9.0",
-  "file_count": 32,
+  "file_count": 37,
   "files": {
     "lib/config.ts": {
       "sha256": "889d32fb04f76c41b4dfa87a1f30b41d2b9a443b793e19ff2477846aac9e3584",
@@ -147,6 +147,31 @@
     "components/TrackingNoscript.astro": {
       "sha256": "0cc18e189cc98653349d41fe439a5f7d6b28f34ed3435a1de5adc1a9c3684626",
       "bytes": 902,
+      "role": "browser"
+    },
+    "consent-texts/2026-08-a/en.json": {
+      "sha256": "157c190916f2b7d95f68279cf8872029bfa4c6d7c571d035f1072003a0b84b3f",
+      "bytes": 3024,
+      "role": "browser"
+    },
+    "consent-texts/2026-08-a/hu.json": {
+      "sha256": "0be734d17d2f11a8f2729b95f16b8cb653d5ec7ad404add56b666e12b4ce620c",
+      "bytes": 3271,
+      "role": "browser"
+    },
+    "consent-texts/2026-09-a/en.json": {
+      "sha256": "82cc48151471efdc770c0b4682ff61adf22bc0a33476ae66d6a5722e0937aa70",
+      "bytes": 2707,
+      "role": "browser"
+    },
+    "consent-texts/2026-09-a/hu.json": {
+      "sha256": "df844c357f09c0e15ef14422a7c2d8b96833864ac48245e740179bb146906924",
+      "bytes": 2970,
+      "role": "browser"
+    },
+    "consent-texts/cookie-inventory.json": {
+      "sha256": "2acb4ae7efd372b945c472ab1292a6111003a4c33052ae2141347687d75944e8",
+      "bytes": 12095,
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {

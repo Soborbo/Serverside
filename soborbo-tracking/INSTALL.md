@@ -115,9 +115,12 @@ git remote show origin | grep "HEAD branch"   # the default branch is NOT always
 
 Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
 
-1. Copy `components/` + `lib/` into the site's `src/` as **siblings**
-   (`src/components/` + `src/lib/`). Components import the lib via `../lib`, so no
-   path alias is needed.
+1. Copy `components/` + `lib/` + `consent-texts/` into the site's `src/` as
+   **siblings** (`src/components/` + `src/lib/` + `src/consent-texts/`).
+   Components import the lib via `../lib`, so no path alias is needed.
+   `consent-texts/` is required: `ConsentBanner.astro` statically imports
+   `../consent-texts/2026-09-a/{hu,en}.json` and `CookiePolicy.astro` imports
+   `../consent-texts/cookie-inventory.json` — without it the Astro build fails.
 2. **Layout** (`src/layouts/…`): in `<head>` add `<Tracking gtmId="GTM-XXXX" />`
    (no `cookieYesId`); at the end of `<body>` add
    `<ConsentBanner policyHref="<privacy-policy path>" />`; in the footer of every
@@ -178,13 +181,21 @@ site's form conversions have NO server leg at all.
 3. In every API route that receives a gated form POST: bot-guard first
    (silent-drop → NO tracking), forward to the CRM, then `sendGatewayConversion`
    with the browser `event_id` (hidden field), the CRM's id as `lead_id`, and
-   `consentId: readSboConsentCookieHeader(request.headers.get('cookie'))?.consentId`
+   `consentId: readSboConsentCookieHeader(cookie, { expectedPolicyVersion: env.TRACKING_POLICY_VERSION })?.consentId`
    (the offline/replay leg resolves the consent_log's current revision from it) —
-   the exact pattern in `server/backend/README.md`. Pass `gclid`, `gbraid` and
+   the exact pattern in `server/backend/README.md`. **Every** sbo cookie read
+   passes `{ expectedPolicyVersion: env.TRACKING_POLICY_VERSION }`:
+   `readSboConsentCookieHeader`, `readConsentFromCookie` and
+   `buildConsentSources`. A bare call accepts a cookie given under an OLDER policy
+   text while the browser re-prompts — the server leg would keep sending CAPI
+   conversions under stale consent. Pass `gclid`, `gbraid` and
    `wbraid` from the hidden fields into `attribution` and on to the CRM.
 4. Set worker vars/secrets: `TRACKING_GATEWAY_TOKEN` (from Step 4's
    `crm-secret.env`), `SITE_URL`, `TRACKING_TEST_LEAD_EMAIL`,
-   `TRACKING_TEST_EVENT_CODE`.
+   `TRACKING_TEST_EVENT_CODE`, and `TRACKING_POLICY_VERSION` — the SAME value as
+   the build-time `PUBLIC_TRACKING_POLICY_VERSION` (Step 2 #3). Change the two
+   together; without the worker var the `expectedPolicyVersion` above is
+   `undefined` and the policy check is silently off.
 5. **Call-site audit (repo-wide, mandatory):** grep the SITE REPO for every
    conversion dispatch and confirm no server-only event is sent from browser code,
    and no flow relies on a browser-only leg for its money conversion. The deployed
@@ -345,8 +356,11 @@ What `sbo` changes compared to the CookieYes wiring:
 - `<TrackingNoscript />` must be REMOVED on sbo sites (no consent decision
   exists under noscript, so the GTM iframe would run pre-consent).
 - The backend dispatch passes `consentId:
-  readSboConsentCookieHeader(cookieHeader)?.consentId` so the offline/replay leg
-  can resolve the consent_log's current revision.
+  readSboConsentCookieHeader(cookieHeader, { expectedPolicyVersion: env.TRACKING_POLICY_VERSION })?.consentId`
+  so the offline/replay leg can resolve the consent_log's current revision. The
+  worker var `TRACKING_POLICY_VERSION` mirrors `PUBLIC_TRACKING_POLICY_VERSION`,
+  and every sbo cookie read (`readConsentFromCookie`, `buildConsentSources` too)
+  passes it.
 - `/api/consent*` zone routes are added by hand next to the generated
   `/api/event/*` routes.
 - Set `PUBLIC_TRACKING_VENDORS` to exactly the tools the GTM container runs (e.g. `ga4,clarity,google_ec`; ids in `lib/consent-vendors.ts`). The banner copy and the cookie table are built from it — one line per site, no hand-written copy. Keep it in sync with GTM whenever a tag is added or removed.

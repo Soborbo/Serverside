@@ -51,6 +51,8 @@ const MANIFEST = path.join(PKG_DIR, 'dist-manifest.json');
 export const DISTRIBUTED = [
   { dir: 'lib', exts: ['.ts'], role: 'browser' },
   { dir: 'components', exts: ['.astro'], role: 'browser' },
+  // A ConsentBanner / CookiePolicy statikusan importálja (INSTALL.md 2. lépés).
+  { dir: 'consent-texts', exts: ['.json'], role: 'browser' },
   { dir: 'server/backend', exts: ['.ts'], role: 'backend' }
 ];
 

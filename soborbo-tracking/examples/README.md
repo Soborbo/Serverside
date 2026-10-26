@@ -3,8 +3,9 @@
 No need to generate anything, just copy + swap 3 identifiers.
 
 ## Client (Astro site)
-1. `components/` + `lib/` → into the site's `src/` as **siblings** (`src/components/` +
-   `src/lib/`). The components import the library via a relative path (`../lib`), so
+1. `components/` + `lib/` + `consent-texts/` → into the site's `src/` as **siblings**
+   (`src/components/` + `src/lib/` + `src/consent-texts/`; `ConsentBanner` and
+   `CookiePolicy` import `../consent-texts/*.json`). The components import the library via a relative path (`../lib`), so
    **no alias setup is needed** — it just works with that layout. (Your own page/form
    code can import from wherever you copied `lib/`, e.g. `@/lib` if you use the `@→src`
    alias, or a relative path.)
