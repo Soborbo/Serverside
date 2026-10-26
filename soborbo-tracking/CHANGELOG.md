@@ -12,9 +12,9 @@ amit nem tudunk bizonyítani.
 
 ## 6.9.1 (2026-10-05)
 
-### Javítva — szkript-sorrend a `<Tracking />`-ban: consent default → GTM → CMP
+### Javítva — szkript-sorrend a `<Tracking />`-ban: consent default → CMP → GTM
 
-A CookieYes-szkript eddig a consent default ELŐTT töltődött. Egy visszatérő látogató tárolt döntéséből kiadott `consent update` így a default elé kerülhetett a dataLayerben, és a később érkező `default` (mind denied) felülírta. Most a CookieYes a default és a GTM-snippet UTÁN jön — a cookieyes- és az sbo-ágon is (sbo alatt a párhuzamos mérési ablak CookieYes-szkriptje is a consent-boot után). Őr: `tests/tracking-script-order.test.ts`.
+A CookieYes-szkript eddig a consent default ELŐTT töltődött. Egy visszatérő látogató tárolt döntéséből kiadott `consent update` így a default elé kerülhetett a dataLayerben, és a később érkező `default` (mind denied) felülírta. Most a cookieyes-ágon a CookieYes a default UTÁN, de a GTM-snippet ELŐTT jön: a GTM UTÁN a parser-blokkoló CookieYes letöltése kicsúszhatna a GTM által indított 2 s-os `wait_for_update` ablakból, és a visszatérő, hozzájárult látogató a denied default alatt futna. sbo alatt a párhuzamos mérési ablak CookieYes-szkriptje a consent-boot után áll. Őr: `tests/tracking-script-order.test.ts`.
 
 ### Hozzáadva — `ads_data_redaction: true` a consent default mellett
 

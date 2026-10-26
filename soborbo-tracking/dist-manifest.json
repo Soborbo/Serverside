@@ -140,8 +140,8 @@
       "role": "browser"
     },
     "components/Tracking.astro": {
-      "sha256": "e058f275148bbb036329580afc9ffe57b0f3dd6303fc65e3c4c2bf4b400bcb24",
-      "bytes": 10006,
+      "sha256": "ab8163cecc535d88d3dd39337205240fd9883cf4b66bb0914765823633fbed2e",
+      "bytes": 10612,
       "role": "browser"
     },
     "components/TrackingNoscript.astro": {

@@ -5,8 +5,9 @@
  * Két mód (CMP Fázis 2):
  *  - consentProvider="cookieyes" (DEFAULT, minden mai site): CookieYes + Consent
  *    Mode v2 default + GTM azonnali betöltéssel (advanced mód, wait_for_update).
- *    A defaultot átállítani tilos. (6.9.1 óta a CookieYes-szkript a GTM UTÁN
- *    töltődik, és `ads_data_redaction` is be van kapcsolva — lásd lent.)
+ *    A defaultot átállítani tilos. (6.9.1 óta a CookieYes-szkript a consent
+ *    default UTÁN, a GTM-loader ELŐTT töltődik, és `ads_data_redaction` is be
+ *    van kapcsolva — lásd lent.)
  *  - consentProvider="sbo" (pilot): NINCS CookieYes-vezérlés. Inline, SZINKRON
  *    consent-boot: default mind DENIED, majd a `sbo_consent` süti dönt — döntés
  *    (vagy reject) esetén a GTM EL SEM INDUL (basic mód, wait_for_update nélkül:
@@ -20,7 +21,8 @@
  *    saját consent-parancsot — ha igen, a szkriptet el kell hagyni, és az ablak
  *    a perzisztens sütiből mér.
  *
- * SORREND (mindkét ágon): consent default (mind denied) → GTM → CMP (CookieYes).
+ * SORREND: cookieyes-ág: consent default (mind denied) → CMP (CookieYes) → GTM;
+ * sbo-ág: consent-boot (default + döntés esetén GTM) → CookieYes (ha van).
  *
  * GTM noscript a <body> után — <TrackingNoscript /> (sbo-pilotnál NEM kell:
  * noscript alatt consent-döntés sincs, tehát a GTM-iframe consent előtt futna).
@@ -56,16 +58,6 @@ const isSbo = consentProvider === 'sbo';
     /* ad_storage=denied mellett a Google a hirdetés-kattintás azonosítókat
        (gclid/gbraid/wbraid) is kitakarja a pingekből (docs/consent-terv-v4 §8). */
     gtag('set', 'ads_data_redaction', true);
-  </script>
-)}
-
-{!isSbo && (
-  <script is:inline define:vars={{ gtmId }}>
-    (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-    new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-    'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-    })(window,document,'script','dataLayer',gtmId);
   </script>
 )}
 
@@ -148,15 +140,31 @@ const isSbo = consentProvider === 'sbo';
   </script>
 )}
 
-{/* CMP (CookieYes) — SZÁNDÉKOSAN a consent default ÉS a GTM UTÁN.
-     Helyes sorrend: consent default (mind denied) → GTM → CMP. Ha a CookieYes
-     a default ELŐTT töltődne, egy visszatérő látogató tárolt döntéséből
-     kiadott `consent update` a default ELÉ kerülhetne a dataLayerben, és a
-     későbbi `default` (mind denied) felülírná — a Google Consent Mode a
-     default-ot várja elsőként. A `tests/tracking-script-order.test.ts` őrzi. */}
+{/* CMP (CookieYes) — a consent default UTÁN, de a GTM-loader ELŐTT.
+     cookieyes-ág: consent default (mind denied) → CookieYes → GTM. Ha a CookieYes
+     a default ELŐTT töltődne, egy visszatérő látogató tárolt döntéséből kiadott
+     `consent update` a default ELÉ kerülhetne a dataLayerben, és a későbbi
+     `default` (mind denied) felülírná. Ha viszont a GTM UTÁN töltődne, az async
+     GTM már a CookieYes letöltése közben elindíthatja a 2 s-os `wait_for_update`
+     ablakot, és lassú hálón a tárolt döntés kicsúszik belőle → a visszatérő,
+     hozzájárult látogató a denied default alatt fut, a konverzió elvész. A
+     parser-blokkoló CookieYes a default és a GTM KÖZÖTT a frissítését a GTM
+     indulása előtt sorba teszi. sbo-ágon a CookieYes a consent-boot után áll
+     (ott csak a sütije miatt van bent, a döntést nem ő hozza). A
+     `tests/tracking-script-order.test.ts` őrzi. */}
 {cookieYesId && (
   <script is:inline id="cookieyes" type="text/javascript"
     src={`https://cdn-cookieyes.com/client_data/${cookieYesId}/script.js`} />
+)}
+
+{!isSbo && (
+  <script is:inline define:vars={{ gtmId }}>
+    (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+    new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+    'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+    })(window,document,'script','dataLayer',gtmId);
+  </script>
 )}
 
 <script>
