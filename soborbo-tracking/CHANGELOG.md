@@ -10,6 +10,27 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.16.1 (2026-10-26)
+
+### Javítva — marketing-hozzájárulással a konverzió megtartja a gclid-et és az attribúciót
+
+A 6.10.0 óta az azonosító-csupaszítás (`stripIdentifiersWithoutConsent`,
+`lib/events.ts`) csak az analytics-hozzájárulást nézte. Ha a látogató a
+marketinget elfogadta, az analyticset nem, a TELJES (marketing-kapus)
+konverzió — `trackLeadSubmit`, `trackContactSubmit`, konzultáció, képzés, a
+staging-ág `commitPendingConversion`-ja — `gclid`, `session_id` és first/last-touch
+attribúció NÉLKÜL ment a dataLayerbe. Ez a CookieYes marketing-only
+hozzájárulását is érintette (Codex, #140).
+
+Mostantól a konverziós push-ok marketing-hozzájárulással megtartják az
+azonosítókat. A süti nélküli kivétellel (sbo + advanced, hozzájárulás nélkül)
+engedett push-ok — kalkulátor, klikk, görgetés, és a marketing NÉLKÜLI
+konverzió-ping — változatlanul csupaszok. GA4: a GA4 event-tagek
+`analytics_storage` kiegészítő consent-ellenőrzéssel futnak, ezért analytics
+nélkül a megtartott `session_id` sem jut GA4-be.
+
+---
+
 ## 6.16.0 (2026-10-19)
 
 Három kis csomag-változás az attribúció köré — a skinlab kanonikus kitre

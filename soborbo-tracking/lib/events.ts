@@ -35,11 +35,22 @@ export function enableDebug(): void { debugMode = true; enableDiagDebug(); }
  * eseményenként új UUID, a Google Ads ebből deduplikál (orderId), nem köt
  * össze semmit. Az oldal URL-jét és UTM-jeit a Google-tag a süti nélküli
  * pingben amúgy is látja.
+ *
+ * Kivétel: a MARKETING-kapus konverziós push (`marketingBasis`) marketing-
+ * hozzájárulással megtartja az azonosítókat — azt nem a süti nélküli kivétel
+ * engedi, hanem a hirdetési hozzájárulás, és a Google Ads/Meta tagnek a gclid
+ * és az attribúció kell (6.16.1). A GA4 oldalon ez nem nyit rést: a GA4 event-
+ * tagek `analytics_storage` kiegészítő consent-ellenőrzéssel futnak
+ * (gtm/gen-container.mjs), tehát analytics nélkül a session_id nem jut GA4-be.
+ * A süti nélküli ágon hívott konverzió (marketing NÉLKÜL) továbbra is csupasz.
  */
 const IDENTIFIER_KEY_RE = /^(session_id|client_id|user_id|external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
 
-function stripIdentifiersWithoutConsent(data: Record<string, unknown>): Record<string, unknown> {
+function stripIdentifiersWithoutConsent(
+  data: Record<string, unknown>, marketingBasis = false,
+): Record<string, unknown> {
   if (hasAnalyticsConsent()) return data;
+  if (marketingBasis && hasMarketingConsent()) return data;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
     if (!IDENTIFIER_KEY_RE.test(k)) out[k] = v;
@@ -52,8 +63,9 @@ function canPush(): boolean {
   return hasAnalyticsConsent() || isCookielessPingAllowed();
 }
 
-function push(raw: Record<string, unknown>): void {
-  const data = stripIdentifiersWithoutConsent(raw);
+/** `marketingBasis`: a push marketing-kapus konverzió — lásd stripIdentifiersWithoutConsent. */
+function push(raw: Record<string, unknown>, marketingBasis = false): void {
+  const data = stripIdentifiersWithoutConsent(raw, marketingBasis);
   // Defense in depth: PII must never reach the dataLayer (it goes to the hidden
   // side-channel). If a future change leaks a PII-shaped key, strip it AND report
   // it (TRK-3001) so the regression is visible instead of becoming a GDPR incident.
@@ -266,11 +278,11 @@ function buildConversionPayload(data: ConversionData): Record<string, unknown> {
 // §2.1: the lead/quote form = quote_calculator_submitted (Meta Lead — the calculator
 // is the ajánlatkérő). The old lead_submit→contact_form_submit (Contact) duality is gone.
 export function pushLeadConversion(data: ConversionData): void {
-  push({ event: 'quote_calculator_submitted', ...buildConversionPayload(data) });
+  push({ event: 'quote_calculator_submitted', ...buildConversionPayload(data) }, true);
 }
 
 export function pushContactConversion(data: ConversionData): void {
-  push({ event: 'contact_form_submitted', ...buildConversionPayload(data) });
+  push({ event: 'contact_form_submitted', ...buildConversionPayload(data) }, true);
 }
 
 /**
@@ -285,7 +297,7 @@ export function pushContactConversion(data: ConversionData): void {
  * felülírása — a konzultáció ezért saját nevet kapott.
  */
 export function pushConsultationConversion(data: ConversionData): void {
-  push({ event: 'consultation_request_submitted', ...buildConversionPayload(data) });
+  push({ event: 'consultation_request_submitted', ...buildConversionPayload(data) }, true);
 }
 
 /**
@@ -294,7 +306,7 @@ export function pushConsultationConversion(data: ConversionData): void {
  * megkülönböztethetetlen volt a kapcsolati űrlaptól.
  */
 export function pushTrainingSignupConversion(data: ConversionData): void {
-  push({ event: 'training_signup_submitted', ...buildConversionPayload(data) });
+  push({ event: 'training_signup_submitted', ...buildConversionPayload(data) }, true);
 }
 
 // ── Clicks — durable session dedup ─────────────────────────────────

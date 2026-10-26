@@ -7,6 +7,7 @@
  *  - basic módban és CookieYes alatt a viselkedés bitre a régi (semmi nem megy).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { setCkyConsent, clearCkyConsent } from './helpers';
 
 type DL = Array<Record<string, unknown>>;
 const dl = () => (window as unknown as { dataLayer: DL }).dataLayer ?? [];
@@ -131,5 +132,72 @@ describe('a régi viselkedés marad', () => {
     t.trackCalculatorStart('quote');
     const ev = dl().find((e) => e.event === 'quote_calculator_opened')!;
     expect(typeof ev.session_id).toBe('string');
+  });
+});
+
+// 6.16.1 (Codex #140): a marketing-hozzájárulással engedett konverzió NEM a süti
+// nélküli kivételen megy, ezért megtartja a gclid-et és az attribúciót — akkor
+// is, ha az analytics megtagadott. A süti nélküli kivétellel engedett push-ok
+// (klikk, kalkulátor) ugyanilyenkor csupaszok maradnak.
+describe('marketing-hozzájárulás analytics NÉLKÜL', () => {
+  async function loadSboMarketingOnly() {
+    vi.resetModules();
+    vi.stubEnv('PUBLIC_TRACKING_CONSENT_PROVIDER', 'sbo');
+    vi.stubEnv('PUBLIC_TRACKING_CONSENT_MODE', 'advanced');
+    vi.stubEnv('PUBLIC_TRACKING_POLICY_VERSION', 'p-test');
+    const state = await import('../lib/consent-sbo-state');
+    document.cookie = `sbo_consent=${state.encodeSboConsentCookie({
+      analytics: false, marketing: true, revision: 1, decision: 'custom',
+      consentId: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      decidedAtSec: Math.floor(Date.now() / 1000), policyVersion: 'p-test',
+    })}; path=/`;
+    (window as unknown as { dataLayer: DL }).dataLayer = [];
+    return await import('../lib/index');
+  }
+
+  it('sbo + advanced: a lead- és kapcsolati konverzió megtartja a gclid-et és az attribúciót', async () => {
+    const t = await loadSboMarketingOnly();
+    t.initTracking();
+    expect(t.hasAnalyticsConsent()).toBe(false);
+    expect(t.hasMarketingConsent()).toBe(true);
+    const r = t.trackLeadSubmit({ email: 'a@b.hu', value: 1 });
+    expect(r.success).toBe(true);
+    t.trackContactSubmit({ email: 'a@b.hu' });
+    for (const name of ['quote_calculator_submitted', 'contact_form_submitted']) {
+      const ev = dl().find((e) => e.event === name)!;
+      expect(ev, name).toBeDefined();
+      expect(ev.gclid, name).toBe('TEST-GCLID');
+      expect(typeof ev.session_id, name).toBe('string');
+      expect(ev, name).toHaveProperty('first_utm_source');
+    }
+  });
+
+  it('sbo + advanced: a süti nélküli kivétellel engedett klikk és kalkulátor-esemény csupasz marad', async () => {
+    const t = await loadSboMarketingOnly();
+    t.initTracking();
+    t.trackCalculatorStart('quote');
+    t.trackPhoneConversion();
+    for (const name of ['quote_calculator_opened', 'phone_number_clicked']) {
+      const ev = dl().find((e) => e.event === name)!;
+      expect(ev, name).toBeDefined();
+      for (const k of IDENTIFIER_KEYS) expect(ev, `${name}.${k}`).not.toHaveProperty(k);
+    }
+  });
+
+  it('CookieYes: a marketing-only lead-konverzió megtartja a gclid-et', async () => {
+    vi.resetModules();
+    (window as unknown as { dataLayer: DL }).dataLayer = [];
+    setCkyConsent({ analytics: false, marketing: true });
+    try {
+      const t = await import('../lib/index');
+      t.initTracking();
+      t.trackLeadSubmit({ email: 'a@b.hu', value: 1 });
+      const ev = dl().find((e) => e.event === 'quote_calculator_submitted')!;
+      expect(ev).toBeDefined();
+      expect(ev.gclid).toBe('TEST-GCLID');
+      expect(typeof ev.session_id).toBe('string');
+    } finally {
+      clearCkyConsent();
+    }
   });
 });
