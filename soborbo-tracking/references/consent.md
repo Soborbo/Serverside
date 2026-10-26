@@ -94,6 +94,18 @@ consent-parancs a default, az update utána jön.
 - A Clarity-projektben a cookie consent kötelező (Settings → Setup). A Clarity tag a
   GTM-ben **analytics consenthez** kötött (sbo-n a GTM akkor is betölt, ha csak
   marketinget fogadtak el).
+- **A Clarity-loader (a site GTM-jében kézzel felvett tag) KÉT triggert kap:** All
+  Pages + egy consent-update Custom Event trigger (Event name regexszel:
+  `^(cookie_consent_update|sbo_consent_update)$`), tag firing option: *Once per
+  page*. Ok: a GTM a kiegészítő consent-ellenőrzéssel blokkolt taget NEM indítja
+  el utólag, amikor a hozzájárulás megérkezik — CookieYes-en az első elfogadás a
+  `gtm.js` UTÁN jön, és All Pages-trigger mellett a Clarity csak a következő
+  oldalbetöltéskor indulna. A dataLayer-eseménynevek: a CookieYes (GCM-támogatás
+  bekapcsolva) `cookie_consent_update`-et push-ol; a `cookieyes_consent_update`
+  csak DOM-event, GTM-trigger nem látja. Az sbo-banner `sbo_consent_update`-et
+  push-ol (6.15.0 óta; basic módban a GTM amúgy is csak a pozitív döntés után
+  indul, így ott az All Pages is elég). Az új trigger az analytics-consent
+  ellenőrzést NEM váltja ki: a tag `analytics_storage` kapuja marad.
 - API: `window.clarity('consentv2', { ad_Storage: 'granted'|'denied', analytics_Storage: 'granted'|'denied' })`
   (kis/nagybetű-érzékeny kulcsok). Két fél, két gazda:
   - **granted:** a kanonikus GTM-konténer `Clarity - Consent v2 (granted)` tagje
