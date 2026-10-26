@@ -3,10 +3,13 @@ import { describe, it, expect } from 'vitest';
 /**
  * A `<Tracking />` szkript-SORRENDJE — regressziós őr.
  *
- * Helyes sorrend (mindkét consent-ágon): consent default (mind denied) → GTM →
- * CMP (CookieYes). 6.9.0-ig a CookieYes-szkript a default ELŐTT állt: egy
+ * Helyes sorrend a cookieyes-ágon: consent default (mind denied) → CMP
+ * (CookieYes) → GTM. 6.9.0-ig a CookieYes-szkript a default ELŐTT állt: egy
  * visszatérő látogató tárolt döntéséből kiadott `consent update` így a default
- * ELÉ kerülhetett, a később érkező `default` (mind denied) pedig felülírta.
+ * ELÉ kerülhetett, a később érkező `default` (mind denied) pedig felülírta. A
+ * GTM UTÁN sem állhat: az async GTM a CookieYes letöltése közben elindíthatja a
+ * 2 s-os `wait_for_update` ablakot, és lassú hálón a tárolt döntés kicsúszik.
+ * sbo-ágon: consent-boot (default + GTM-loader) → CookieYes (csak a sütije miatt).
  *
  * Mellette: `ads_data_redaction` a default mellett mindkét ágon — ad_storage=
  * denied esetén a Google a klikk-azonosítókat is kitakarja a pingekből.
@@ -24,14 +27,14 @@ function pos(needle: string): number {
   return i;
 }
 
-describe('Tracking.astro — consent default → GTM → CMP', () => {
+describe('Tracking.astro — consent default → CMP → GTM', () => {
   const cookieYes = () => pos('cdn-cookieyes.com');
 
-  it('cookieyes-ág: a consent default a GTM előtt, a CookieYes mindkettő után', () => {
+  it('cookieyes-ág: consent default → CookieYes → GTM-loader', () => {
     const consentDefault = pos("gtag('consent', 'default'");
     const gtm = pos("'https://www.googletagmanager.com/gtm.js?id='+i+dl");
-    expect(consentDefault).toBeLessThan(gtm);
-    expect(gtm).toBeLessThan(cookieYes());
+    expect(consentDefault).toBeLessThan(cookieYes());
+    expect(cookieYes()).toBeLessThan(gtm);
   });
 
   it('sbo-ág: a consent-boot (default + GTM-loader) is a CookieYes ELŐTT áll', () => {

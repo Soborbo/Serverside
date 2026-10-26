@@ -53,8 +53,9 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
   already had a chance to fire. `gen-container.mjs` therefore emits no such tag —
   do not add one by hand. Who then sends the *update*:
   - **`cookieyes` sites** (today's default, every live site): the CookieYes script,
-    loaded from `Tracking.astro` — AFTER the default and the GTM snippet. Order:
-    consent default (all denied) + `ads_data_redaction` → GTM → CMP.
+    loaded from `Tracking.astro` — AFTER the default but BEFORE the GTM snippet,
+    so its update is queued before GTM starts the 2 s `wait_for_update` window.
+    Order: consent default (all denied) + `ads_data_redaction` → CMP → GTM.
   - **`sbo` sites** (pilot only): the synchronous consent boot in `Tracking.astro`.
     GTM is not loaded at all until a positive decision exists, so there is no
     pre-consent window to default into.
