@@ -137,7 +137,8 @@ describe('a régi viselkedés marad', () => {
 
 // 6.16.1 (Codex #140): a marketing-hozzájárulással engedett konverzió NEM a süti
 // nélküli kivételen megy, ezért megtartja a gclid-et és az attribúciót — akkor
-// is, ha az analytics megtagadott. A süti nélküli kivétellel engedett push-ok
+// is, ha az analytics megtagadott. A session_id (analytics-hatókör, csak a GA4
+// olvassa) analytics nélkül ilyenkor is lekerül. A süti nélküli kivétellel engedett push-ok
 // (klikk, kalkulátor) ugyanilyenkor csupaszok maradnak.
 describe('marketing-hozzájárulás analytics NÉLKÜL', () => {
   async function loadSboMarketingOnly() {
@@ -167,8 +168,8 @@ describe('marketing-hozzájárulás analytics NÉLKÜL', () => {
       const ev = dl().find((e) => e.event === name)!;
       expect(ev, name).toBeDefined();
       expect(ev.gclid, name).toBe('TEST-GCLID');
-      expect(typeof ev.session_id, name).toBe('string');
       expect(ev, name).toHaveProperty('first_utm_source');
+      expect(ev, name).not.toHaveProperty('session_id');
     }
   });
 
@@ -195,7 +196,7 @@ describe('marketing-hozzájárulás analytics NÉLKÜL', () => {
       const ev = dl().find((e) => e.event === 'quote_calculator_submitted')!;
       expect(ev).toBeDefined();
       expect(ev.gclid).toBe('TEST-GCLID');
-      expect(typeof ev.session_id).toBe('string');
+      expect(ev).not.toHaveProperty('session_id');
     } finally {
       clearCkyConsent();
     }

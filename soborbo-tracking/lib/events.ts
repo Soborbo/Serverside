@@ -37,23 +37,28 @@ export function enableDebug(): void { debugMode = true; enableDiagDebug(); }
  * pingben amúgy is látja.
  *
  * Kivétel: a MARKETING-kapus konverziós push (`marketingBasis`) marketing-
- * hozzájárulással megtartja az azonosítókat — azt nem a süti nélküli kivétel
- * engedi, hanem a hirdetési hozzájárulás, és a Google Ads/Meta tagnek a gclid
- * és az attribúció kell (6.16.1). A GA4 oldalon ez nem nyit rést: a GA4 event-
- * tagek `analytics_storage` kiegészítő consent-ellenőrzéssel futnak
- * (gtm/gen-container.mjs), tehát analytics nélkül a session_id nem jut GA4-be.
- * A süti nélküli ágon hívott konverzió (marketing NÉLKÜL) továbbra is csupasz.
+ * hozzájárulással megtartja a HIRDETÉSI azonosítókat (klikk-azonosítók, first_/
+ * last_ attribúció) — azt nem a süti nélküli kivétel engedi, hanem a hirdetési
+ * hozzájárulás, és a Google Ads/Meta tagnek a gclid és az attribúció kell
+ * (6.16.1). Az analytics-hatókörű azonosítók (session_id, client_id, user_id)
+ * analytics nélkül ilyenkor is lekerülnek: a GTM-ben csak a GA4-tagek olvassák
+ * őket, és egy site saját, consent-kapu nélküli GA4-tagje süti nélküli pingben
+ * is továbbítaná. A süti nélküli ágon hívott konverzió (marketing NÉLKÜL)
+ * továbbra is teljesen csupasz.
  */
 const IDENTIFIER_KEY_RE = /^(session_id|client_id|user_id|external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
+/** Analytics-hatókörű azonosítók: marketing-alapon SEM maradnak meg analytics nélkül
+ *  (a GTM-ben csak a GA4-tagek olvassák, a hirdetési tagek nem). */
+const ANALYTICS_ID_KEY_RE = /^(session_id|client_id|user_id)$/;
 
 function stripIdentifiersWithoutConsent(
   data: Record<string, unknown>, marketingBasis = false,
 ): Record<string, unknown> {
   if (hasAnalyticsConsent()) return data;
-  if (marketingBasis && hasMarketingConsent()) return data;
+  const keepAdIds = marketingBasis && hasMarketingConsent();
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
-    if (!IDENTIFIER_KEY_RE.test(k)) out[k] = v;
+    if (!IDENTIFIER_KEY_RE.test(k) || (keepAdIds && !ANALYTICS_ID_KEY_RE.test(k))) out[k] = v;
   }
   return out;
 }
