@@ -146,7 +146,10 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
      blocked with TRK-1005.
 6. **GTM**: import `gtm/container.json` into the user's GTM container and wire the
    GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`). The
-   Clarity loader tag (if any) requires analytics consent; the container's
+   Clarity loader tag (if any) requires analytics consent and fires on All Pages
+   **plus** a consent-update Custom Event trigger (regex
+   `^(cookie_consent_update|sbo_consent_update)$`, *Once per page*) — a
+   consent-blocked tag does not re-fire on late acceptance otherwise; the container's
    `Clarity - Consent v2 (granted)` tag passes the granted decision with
    `clarity('consentv2', …)` (`references/consent.md`).
 7. **Verify locally**: `npm test` + `npm run typecheck` +

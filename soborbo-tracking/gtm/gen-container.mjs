@@ -299,6 +299,10 @@ tag('Google Ads - Conversion', 'awct', [
 // re-syncs on Window Loaded (a CookieYes restore may land after gtm.js).
 // The queue stub is Clarity's own snippet pattern, so the order relative to the
 // Clarity loader tag does not matter, and on a site without Clarity it is inert.
+// The LOADER itself is site-configured (not generated here) and has the same
+// late-consent problem: it must fire on All Pages + a Custom Event trigger
+// `^(cookie_consent_update|sbo_consent_update)$` (Once per page) —
+// references/consent.md. Without it a late accept never loads Clarity on that page.
 const CLARITY_CONSENT_TAG_NAME = 'Clarity - Consent v2 (granted)';
 const CLARITY_CONSENT_HTML =
   '<script>\n' +
