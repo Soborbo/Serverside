@@ -35,14 +35,30 @@ export function enableDebug(): void { debugMode = true; enableDiagDebug(); }
  * eseményenként új UUID, a Google Ads ebből deduplikál (orderId), nem köt
  * össze semmit. Az oldal URL-jét és UTM-jeit a Google-tag a süti nélküli
  * pingben amúgy is látja.
+ *
+ * Kivétel: a MARKETING-kapus konverziós push (`marketingBasis`) marketing-
+ * hozzájárulással megtartja a HIRDETÉSI azonosítókat (klikk-azonosítók, first_/
+ * last_ attribúció) — azt nem a süti nélküli kivétel engedi, hanem a hirdetési
+ * hozzájárulás, és a Google Ads/Meta tagnek a gclid és az attribúció kell
+ * (6.16.1). Az analytics-hatókörű azonosítók (session_id, client_id, user_id)
+ * analytics nélkül ilyenkor is lekerülnek: a GTM-ben csak a GA4-tagek olvassák
+ * őket, és egy site saját, consent-kapu nélküli GA4-tagje süti nélküli pingben
+ * is továbbítaná. A süti nélküli ágon hívott konverzió (marketing NÉLKÜL)
+ * továbbra is teljesen csupasz.
  */
 const IDENTIFIER_KEY_RE = /^(session_id|client_id|user_id|external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
+/** Analytics-hatókörű azonosítók: marketing-alapon SEM maradnak meg analytics nélkül
+ *  (a GTM-ben csak a GA4-tagek olvassák, a hirdetési tagek nem). */
+const ANALYTICS_ID_KEY_RE = /^(session_id|client_id|user_id)$/;
 
-function stripIdentifiersWithoutConsent(data: Record<string, unknown>): Record<string, unknown> {
+function stripIdentifiersWithoutConsent(
+  data: Record<string, unknown>, marketingBasis = false,
+): Record<string, unknown> {
   if (hasAnalyticsConsent()) return data;
+  const keepAdIds = marketingBasis && hasMarketingConsent();
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
-    if (!IDENTIFIER_KEY_RE.test(k)) out[k] = v;
+    if (!IDENTIFIER_KEY_RE.test(k) || (keepAdIds && !ANALYTICS_ID_KEY_RE.test(k))) out[k] = v;
   }
   return out;
 }
@@ -52,8 +68,9 @@ function canPush(): boolean {
   return hasAnalyticsConsent() || isCookielessPingAllowed();
 }
 
-function push(raw: Record<string, unknown>): void {
-  const data = stripIdentifiersWithoutConsent(raw);
+/** `marketingBasis`: a push marketing-kapus konverzió — lásd stripIdentifiersWithoutConsent. */
+function push(raw: Record<string, unknown>, marketingBasis = false): void {
+  const data = stripIdentifiersWithoutConsent(raw, marketingBasis);
   // Defense in depth: PII must never reach the dataLayer (it goes to the hidden
   // side-channel). If a future change leaks a PII-shaped key, strip it AND report
   // it (TRK-3001) so the regression is visible instead of becoming a GDPR incident.
@@ -266,11 +283,11 @@ function buildConversionPayload(data: ConversionData): Record<string, unknown> {
 // §2.1: the lead/quote form = quote_calculator_submitted (Meta Lead — the calculator
 // is the ajánlatkérő). The old lead_submit→contact_form_submit (Contact) duality is gone.
 export function pushLeadConversion(data: ConversionData): void {
-  push({ event: 'quote_calculator_submitted', ...buildConversionPayload(data) });
+  push({ event: 'quote_calculator_submitted', ...buildConversionPayload(data) }, true);
 }
 
 export function pushContactConversion(data: ConversionData): void {
-  push({ event: 'contact_form_submitted', ...buildConversionPayload(data) });
+  push({ event: 'contact_form_submitted', ...buildConversionPayload(data) }, true);
 }
 
 /**
@@ -285,7 +302,7 @@ export function pushContactConversion(data: ConversionData): void {
  * felülírása — a konzultáció ezért saját nevet kapott.
  */
 export function pushConsultationConversion(data: ConversionData): void {
-  push({ event: 'consultation_request_submitted', ...buildConversionPayload(data) });
+  push({ event: 'consultation_request_submitted', ...buildConversionPayload(data) }, true);
 }
 
 /**
@@ -294,7 +311,7 @@ export function pushConsultationConversion(data: ConversionData): void {
  * megkülönböztethetetlen volt a kapcsolati űrlaptól.
  */
 export function pushTrainingSignupConversion(data: ConversionData): void {
-  push({ event: 'training_signup_submitted', ...buildConversionPayload(data) });
+  push({ event: 'training_signup_submitted', ...buildConversionPayload(data) }, true);
 }
 
 // ── Clicks — durable session dedup ─────────────────────────────────
