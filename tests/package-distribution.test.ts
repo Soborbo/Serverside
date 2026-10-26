@@ -83,11 +83,14 @@ describe('dist-manifest', () => {
     }
   });
 
-  it('az éles manifeszt a terjesztendő fájlokat fedi (lib + components + backend)', () => {
+  it('az éles manifeszt a terjesztendő fájlokat fedi (lib + components + consent-texts + backend)', () => {
     const m = buildManifest();
     const roles = new Set(Object.values(m.files).map((f: any) => f.role));
     expect(roles).toEqual(new Set(['browser', 'backend']));
     expect(m.file_count).toBeGreaterThan(20);
+    // A ConsentBanner statikusan importálja — nélküle a site buildje bukik.
+    expect(Object.keys(m.files)).toContain('consent-texts/2026-09-a/hu.json');
+    expect(Object.keys(m.files)).toContain('consent-texts/cookie-inventory.json');
     // Tesztfájl SOHA nem kerülhet a terjesztésbe.
     expect(Object.keys(m.files).some((f) => /\.test\.ts$/.test(f))).toBe(false);
   });

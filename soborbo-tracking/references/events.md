@@ -8,16 +8,21 @@ az régi dialektus. A `generate_lead` külön eset, lásd lent (I11).
 
 ## Fő nevek
 
-| Név | Fajta | Meta | Út |
-|---|---|---|---|
-| `quote_calculator_submitted` | konverzió | Lead | csak szerver |
-| `callback_request_submitted` | konverzió | Lead | csak szerver |
-| `contact_form_submitted` | konverzió | Contact | csak szerver |
-| `order_request_submitted`, `purchase` | konverzió | Lead / Purchase | csak szerver |
-| `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked` | konverzió | Contact | böngészőút is |
-| `quote_calculator_opened` | engagement | ViewContent | böngésző |
-| `quote_calculator_step_completed`, `quote_calculator_option_selected`, `form_abandoned`, `scroll_depth` | engagement | — | böngésző |
-| `lead_validated` … `revenue_confirmed`, `lead_disqualified` | offline | — | CRM → `/lead-status` |
+| Név | Fajta | Meta | Böngésző-láb (dataLayer → GTM) | Gateway-ingress |
+|---|---|---|---|---|
+| `quote_calculator_submitted` | konverzió | Lead | igen — GA4, Meta Pixel, Google Ads (`TrackedForm`) | csak szerver (site-backend) |
+| `callback_request_submitted` | konverzió | Lead | igen — GA4, Meta Pixel, Google Ads | csak szerver (site-backend) |
+| `contact_form_submitted` | konverzió | Contact | igen — GA4, Meta Pixel, Google Ads (`TrackedForm`) | csak szerver (site-backend) |
+| `order_request_submitted`, `purchase` | konverzió | Lead / Purchase | a kanonikus konténer nem köti be | csak szerver (site-backend) |
+| `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked` | konverzió | Contact | igen | böngészőút is |
+| `quote_calculator_opened` | engagement | ViewContent | igen | — |
+| `quote_calculator_step_completed`, `quote_calculator_option_selected`, `form_abandoned`, `scroll_depth` | engagement | — | igen | — |
+| `lead_validated` … `revenue_confirmed`, `lead_disqualified` | offline | — | — | CRM → `/lead-status` |
+
+A „csak szerver” CSAK a gateway-ingressre vonatkozik: a form-konverzió böngésző-lábát
+(dataLayer → GTM → GA4 / Pixel / Ads) ugyanúgy be kell kötni, a két láb közös
+`event_id`-vel deduplikál. A böngészőből a gatewaynek küldött form-esemény 403
+(TRK-400-017).
 
 A teljes lista, a régi GA4- és dataLayer-nevek (`legacy_ga4`, `legacy_datalayer`)
 és a GA4 Key Event jelölés az `events.json`-ban van.
