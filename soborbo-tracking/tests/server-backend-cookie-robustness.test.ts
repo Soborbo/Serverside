@@ -126,3 +126,25 @@ describe('service — a két láb ugyanazt a mezőt küldi', () => {
     expect(p).not.toHaveProperty('service');
   });
 });
+
+/** Egy késleltetett dispatch (webhook, cron-retry) az EREDETI időt küldi. */
+describe('event_time — a konverzió ideje, nem a küldésé', () => {
+  const now = () => Math.floor(Date.now() / 1000);
+
+  it('a hívó eventTime-ja megy ki', () => {
+    const t = now() - 3600;
+    expect(buildGatewayPayload({ eventName: 'purchase', eventId: 'e1', eventTime: t }).event_time).toBe(t);
+  });
+
+  it('hiányzó, nem véges vagy nem pozitív érték → most', () => {
+    for (const eventTime of [undefined, Number.NaN, 0, -5]) {
+      const p = buildGatewayPayload({ eventName: 'purchase', eventId: 'e1', eventTime });
+      expect(Math.abs((p.event_time as number) - now())).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('jövőbeli érték → most (a gateway a +10 percnél későbbit elutasítaná)', () => {
+    const p = buildGatewayPayload({ eventName: 'purchase', eventId: 'e1', eventTime: now() + 7200 });
+    expect(Math.abs((p.event_time as number) - now())).toBeLessThanOrEqual(1);
+  });
+});

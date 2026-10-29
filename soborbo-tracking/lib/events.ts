@@ -7,7 +7,7 @@
  *
  * Advanced Consent Mode kivétel (isCookielessPingAllowed — csak sbo + advanced):
  * hozzájárulás nélkül is megy push, de AZONOSÍTÓK NÉLKÜL (lásd
- * stripIdentifiersWithoutConsent) — a Google-tagek ebből süti nélküli pinget
+ * stripIdentifiersWithoutConsent — analytics- és marketing-ID külön kapun) — a Google-tagek ebből süti nélküli pinget
  * küldenek a modellezéshez.
  */
 
@@ -29,20 +29,30 @@ let debugMode = false;
 export function enableDebug(): void { debugMode = true; enableDiagDebug(); }
 
 /**
- * Advanced módban, analytics-hozzájárulás NÉLKÜL a pushból kimarad minden, ami
- * a látogatót eseményeken át összeköthetné: a saját session_id, a klikk-
- * azonosítók és a tárolt (first_/last_) attribúció. Az event_id marad: az
- * eseményenként új UUID, a Google Ads ebből deduplikál (orderId), nem köt
- * össze semmit. Az oldal URL-jét és UTM-jeit a Google-tag a süti nélküli
- * pingben amúgy is látja.
+ * A pushból kimarad minden azonosító, amihez nincs hozzájárulás — a két
+ * kategória KÜLÖN kapun megy:
+ *  - analytics (`session_id`, `client_id`, `user_id`): analytics-hozzájárulás;
+ *  - marketing (klikk-ID-k, Meta-ID-k, a tárolt first_/last_ attribúció):
+ *    marketing-hozzájárulás. Ezek a marketing-tárolóból jönnek, és a
+ *    konverziós push (trackLeadSubmit/trackContactSubmit) épp a marketing-
+ *    hozzájárulás alapján megy ki — egy közös analytics-kapu marketing-only
+ *    hozzájárulásnál a konverzió attribúcióját dobta el (Codex, #89).
+ * Az event_id marad: eseményenként új UUID, a Google Ads ebből deduplikál
+ * (orderId), nem köt össze semmit. Az oldal URL-jét és UTM-jeit a Google-tag a
+ * süti nélküli pingben amúgy is látja.
  */
-const IDENTIFIER_KEY_RE = /^(session_id|client_id|user_id|external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
+const ANALYTICS_ID_KEY_RE = /^(session_id|client_id|user_id)$/;
+const MARKETING_ID_KEY_RE = /^(external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
 
 function stripIdentifiersWithoutConsent(data: Record<string, unknown>): Record<string, unknown> {
-  if (hasAnalyticsConsent()) return data;
+  const analytics = hasAnalyticsConsent();
+  const marketing = hasMarketingConsent();
+  if (analytics && marketing) return data;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
-    if (!IDENTIFIER_KEY_RE.test(k)) out[k] = v;
+    if (!analytics && ANALYTICS_ID_KEY_RE.test(k)) continue;
+    if (!marketing && MARKETING_ID_KEY_RE.test(k)) continue;
+    out[k] = v;
   }
   return out;
 }

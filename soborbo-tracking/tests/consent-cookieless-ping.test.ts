@@ -132,4 +132,30 @@ describe('a régi viselkedés marad', () => {
     const ev = dl().find((e) => e.event === 'quote_calculator_opened')!;
     expect(typeof ev.session_id).toBe('string');
   });
+
+  // Codex #89: a marketing-ID-k a marketing-hozzájáruláshoz kötöttek, nem az
+  // analyticshez — marketing-only hozzájárulásnál a konverzió attribúciója megmarad.
+  it.each(['basic', 'advanced'])('sbo + %s, CSAK marketing-hozzájárulással: a konverzió attribúciója megmarad, a session_id nem', async (mode) => {
+    vi.resetModules();
+    vi.stubEnv('PUBLIC_TRACKING_CONSENT_PROVIDER', 'sbo');
+    vi.stubEnv('PUBLIC_TRACKING_CONSENT_MODE', mode);
+    vi.stubEnv('PUBLIC_TRACKING_POLICY_VERSION', 'p-test');
+    const state = await import('../lib/consent-sbo-state');
+    document.cookie = `sbo_consent=${state.encodeSboConsentCookie({
+      analytics: false, marketing: true, revision: 1, decision: 'custom',
+      consentId: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789',
+      decidedAtSec: Math.floor(Date.now() / 1000), policyVersion: 'p-test',
+    })}; path=/`;
+    (window as unknown as { dataLayer: DL }).dataLayer = [];
+    const t = await import('../lib/index');
+    t.persistTrackingParams();
+    expect(t.hasAnalyticsConsent()).toBe(false);
+    expect(t.hasMarketingConsent()).toBe(true);
+    t.trackLeadSubmit({ email: 'a@b.hu', value: 1, currency: 'HUF' });
+    const ev = dl().find((e) => e.event === 'quote_calculator_submitted')!;
+    expect(ev).toBeDefined();
+    expect(ev.gclid).toBe('TEST-GCLID');
+    expect(ev.last_utm_source).toBe('google');
+    expect(ev).not.toHaveProperty('session_id');
+  });
 });
