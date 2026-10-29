@@ -10,6 +10,43 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.17.0 (2026-10-29)
+
+Három javítás, mind a paywalled_boilerplate mérési munkájából (MERESI_TERV,
+PR #89 / #91). Gateway-változás nincs.
+
+### Javítva — a marketing-azonosítók a marketing-hozzájáruláshoz kötöttek (`lib/events.ts`)
+
+A `stripIdentifiersWithoutConsent` minden azonosítót az analytics-hozzájáruláshoz
+kötött. Egy marketing-only hozzájárulású látogató konverziós pushából
+(`trackLeadSubmit`, `trackContactSubmit` — ezek épp a marketing-hozzájárulás
+alapján mennek ki) így kiesett a `gclid` és a teljes `first_*`/`last_*`
+attribúció, basic módban is. Most két külön kapu van: `session_id`/`client_id`/
+`user_id` → analytics; klikk-ID-k, `fbp`/`fbc`/`external_id`, `first_*`/`last_*`
+→ marketing. A marketing-minta csak a valódi attribúció-kulcsokat fogja
+(`first_|last_` + `utm_*`/klikk-ID): a `form_abandoned` `last_field` mezője
+(a fókuszált mező neve) analytics-adat, megmarad. (Codex review,
+paywalled_boilerplate #89 és Serverside #154.)
+
+### Javítva — a kampány egy kattintásé (`lib/persistence.ts`, `lib/gateway.ts`)
+
+A `persistTrackingParams()` (`sb_tracking`) és a `collectAttribution()`
+(`__sb_attribution`) mezőnként olvasztotta a friss URL-t a tárolóba: egy
+`utm_source=newsletter` látogatás mellett a korábbi `utm_campaign=spring`
+megmaradt — egy soha nem létezett kampány ment a konverzióba. Most ha a friss
+URL bármelyik UTM-et hozza, a tárolt UTM-csoport egészben kiesik
+(`withoutStaleCampaign`). UTM nélküli látogatás nem törli a tárolt kampányt.
+(Codex review, paywalled_boilerplate #92.)
+
+### Hozzáadva — `GatewayConversionInput.eventTime` (`server/backend/gateway-dispatch.ts`)
+
+A `buildGatewayPayload` eddig mindig a küldés pillanatát írta `event_time`-nak.
+Egy késleltetett szerver-dispatch (Stripe-webhook, cron-retry) így a konverziót
+a küldés idejére könyvelte. Az új, opcionális `eventTime` (unix mp) az eredeti
+idő; hiányzó, értelmetlen vagy jövőbeli érték esetén marad a „most”.
+
+---
+
 ## 6.16.0 (2026-10-19)
 
 Három kis csomag-változás az attribúció köré — a skinlab kanonikus kitre

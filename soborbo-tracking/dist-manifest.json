@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.16.0",
+  "version": "6.17.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "7d026ac671f6517028b88b52f65ffd14a597c2ee2374c04bc09c9d3ed68b0033",
+      "sha256": "aae5d592d63657906e638ba3a67e62d210470fac5abd31ef66244b48ef8e8132",
       "bytes": 6594,
       "role": "browser"
     },
@@ -60,13 +60,13 @@
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "7d071e9813c2fd00cda34f4574de4cd9090bdfb5904eeccc9b3121fa5316b8cd",
-      "bytes": 18723,
+      "sha256": "92226b73b56f856d490fbdcfd5c3049881926898d746843b7e602b23667f08d8",
+      "bytes": 19541,
       "role": "browser"
     },
     "lib/gateway.ts": {
-      "sha256": "71258fd4d77b6c711a99dae5ea43e094b172a7a8ddb9f06ecd1f6d0a266f6c56",
-      "bytes": 34192,
+      "sha256": "801d23d0706e7f656d74179ef8fd018ef385cb85b7085e0be7ba3fdf65883649",
+      "bytes": 34325,
       "role": "browser"
     },
     "lib/google-click-id.ts": {
@@ -85,8 +85,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "288d5d09f2901c5354c55ad6b7b643cf915ec12ff02cbdeb09df361ccfc0e7d6",
-      "bytes": 37188,
+      "sha256": "c1140036b663becaa52107af89ef5a3f3e967de29dba1a5af62fa42f72b68614",
+      "bytes": 38242,
       "role": "browser"
     },
     "lib/submit.ts": {
@@ -150,8 +150,8 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "d6142bea5fc9e2172f61ffb7d402719f8eb7cde06d3629e3fba3d61a461e8733",
-      "bytes": 37370,
+      "sha256": "98b2a96cdd607bff0e77af05614d621bcfed9ca383d8efce3f559b1d6104726c",
+      "bytes": 38273,
       "role": "backend"
     },
     "server/backend/smoke.ts": {
