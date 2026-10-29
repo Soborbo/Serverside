@@ -42,7 +42,9 @@ export function enableDebug(): void { debugMode = true; enableDiagDebug(); }
  * süti nélküli pingben amúgy is látja.
  */
 const ANALYTICS_ID_KEY_RE = /^(session_id|client_id|user_id)$/;
-const MARKETING_ID_KEY_RE = /^(external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|first_.+|last_.+)$/;
+// A first_/last_ csak a tárolt attribúció (`getAttribution`); a `last_field`
+// (form_abandoned) a fókuszált mező NEVE, analytics-adat — nem eshet ki.
+const MARKETING_ID_KEY_RE = /^(external_id|fbp|fbc|gclid|gbraid|wbraid|fbclid|msclkid|ttclid|li_fat_id|(first|last)_(utm_.+|gclid|gbraid|wbraid|fbclid))$/;
 
 function stripIdentifiersWithoutConsent(data: Record<string, unknown>): Record<string, unknown> {
   const analytics = hasAnalyticsConsent();

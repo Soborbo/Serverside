@@ -12,7 +12,7 @@ amit nem tudunk bizonyítani.
 
 ## 6.17.0 (2026-10-29)
 
-Két javítás, mindkettő a paywalled_boilerplate mérési munkájából (MERESI_TERV,
+Három javítás, mind a paywalled_boilerplate mérési munkájából (MERESI_TERV,
 PR #89 / #91). Gateway-változás nincs.
 
 ### Javítva — a marketing-azonosítók a marketing-hozzájáruláshoz kötöttek (`lib/events.ts`)
@@ -23,7 +23,20 @@ kötött. Egy marketing-only hozzájárulású látogató konverziós pushából
 alapján mennek ki) így kiesett a `gclid` és a teljes `first_*`/`last_*`
 attribúció, basic módban is. Most két külön kapu van: `session_id`/`client_id`/
 `user_id` → analytics; klikk-ID-k, `fbp`/`fbc`/`external_id`, `first_*`/`last_*`
-→ marketing. (Codex review, paywalled_boilerplate #89.)
+→ marketing. A marketing-minta csak a valódi attribúció-kulcsokat fogja
+(`first_|last_` + `utm_*`/klikk-ID): a `form_abandoned` `last_field` mezője
+(a fókuszált mező neve) analytics-adat, megmarad. (Codex review,
+paywalled_boilerplate #89 és Serverside #154.)
+
+### Javítva — a kampány egy kattintásé (`lib/persistence.ts`, `lib/gateway.ts`)
+
+A `persistTrackingParams()` (`sb_tracking`) és a `collectAttribution()`
+(`__sb_attribution`) mezőnként olvasztotta a friss URL-t a tárolóba: egy
+`utm_source=newsletter` látogatás mellett a korábbi `utm_campaign=spring`
+megmaradt — egy soha nem létezett kampány ment a konverzióba. Most ha a friss
+URL bármelyik UTM-et hozza, a tárolt UTM-csoport egészben kiesik
+(`withoutStaleCampaign`). UTM nélküli látogatás nem törli a tárolt kampányt.
+(Codex review, paywalled_boilerplate #92.)
 
 ### Hozzáadva — `GatewayConversionInput.eventTime` (`server/backend/gateway-dispatch.ts`)
 

@@ -25,6 +25,16 @@ describe('collectAttribution — consent-gated click IDs', () => {
     expect(a.landing_page).toContain('/');
   });
 
+  it('a tárolt UTM-csoport friss UTM mellett egészben cserélődik (Codex #92)', () => {
+    ckyCookie(true, true);
+    setUrl('/?utm_source=google&utm_campaign=spring');
+    collectAttribution();
+    setUrl('/?utm_source=newsletter');
+    const a = collectAttribution();
+    expect(a.utm_source).toBe('newsletter');
+    expect(a.utm_campaign).toBeUndefined();
+  });
+
   it('WITHOUT ad consent: no click ID, but UTM stays', () => {
     ckyCookie(false, true);
     setUrl('/?gclid=G1&utm_source=newsletter');

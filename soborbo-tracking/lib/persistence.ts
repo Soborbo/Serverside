@@ -317,6 +317,27 @@ export function captureUrlParams(): void {
   capturedParams = urlTrackingParams();
 }
 
+/**
+ * A kampány (UTM-csoport) EGY kattintásé: ha a friss URL bármelyik UTM-et hozza,
+ * a tárolt UTM-ek MIND kiesnek, mielőtt a kettő összeolvad. A mezőnkénti merge
+ * egy `utm_source=newsletter` látogatás mellé a korábbi `utm_campaign=spring`-et
+ * hagyta — egy soha nem létezett kampányt (Codex, paywalled_boilerplate #92).
+ * Ugyanaz a szabály, mint a Google klikk-ID-nél: egy kattintás, egy csoport.
+ */
+export const UTM_KEYS = [
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
+  'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic',
+] as const;
+
+export function withoutStaleCampaign<T extends object>(stored: T | null | undefined, fresh: object | null | undefined): T | undefined {
+  if (!stored) return undefined;
+  const f = (fresh ?? {}) as Record<string, unknown>;
+  if (!UTM_KEYS.some((k) => f[k])) return { ...stored };
+  const out = { ...stored } as Record<string, unknown>;
+  for (const k of UTM_KEYS) delete out[k];
+  return out as T;
+}
+
 function persistFirstTouch(params: Partial<TrackingData>): void {
   if (lsGet(FIRST_TOUCH_KEY)) return;
   // A first touch EGYSZER irodik ki es utana mar sosem rekonstrualhato, ezert
@@ -362,7 +383,7 @@ export function persistTrackingParams(): void {
   // hanem ELVESZ. A dontest a primitiv hozza (URL > tarolo), a testvereket
   // pedig az `applyGoogleClickId` takaritja ki.
   const merged = {
-    ...stored, ...fresh,
+    ...withoutStaleCampaign(stored, fresh), ...fresh,
     fbclidAt,
     timestamp: Date.now(),
     landingPage: stored?.landingPage || window.location.pathname,

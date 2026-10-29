@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   trackCalculatorStart, trackCalculatorStep, trackCalculatorOption, trackCalculatorComplete,
   trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick,
@@ -62,5 +62,32 @@ describe('contract — gateway event names the code actually dispatches', () => 
     // sanity: phone/email/whatsapp dispatch, callback is dataLayer-only (server-ingress-only)
     expect(used.sort()).toEqual(['email_address_clicked', 'phone_number_clicked', 'whatsapp_button_clicked']);
     expect(CLICK_GATEWAY_EVENT.callback).toBeNull();
+  });
+});
+
+// A `last_field` a fókuszált mező NEVE (analytics), nem `last_*` attribúció:
+// marketing-hozzájárulás nélkül is megmarad (Codex, Serverside #154).
+describe('form_abandoned — last_field analytics-only hozzájárulással', () => {
+  it('megmarad, a tárolt attribúció nem', async () => {
+    const { initFormAbandonTracking } = await import('../lib/events');
+    vi.useFakeTimers();
+    try {
+      setCkyConsent({ analytics: true, marketing: false });
+      const form = document.createElement('form');
+      const input = document.createElement('input');
+      input.name = 'postcode';
+      form.appendChild(input);
+      document.body.appendChild(form);
+      const stop = initFormAbandonTracking(form, 'quote', 1000);
+      input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      vi.advanceTimersByTime(1000);
+      const ev = getDataLayer().find((e) => e.event === 'form_abandoned');
+      expect(ev?.last_field).toBe('postcode');
+      expect(typeof ev?.session_id).toBe('string');
+      stop();
+      form.remove();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

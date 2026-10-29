@@ -23,7 +23,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
 import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
-  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
+  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY, withoutStaleCampaign
 } from './persistence';
 import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
@@ -576,7 +576,8 @@ export function collectAttribution(): AttributionParams {
   });
 
   // Last-touch: the fresh URL signals override the stored ones.
-  const merged: AttributionParams = { ...stored, ...fresh };
+  // A kampány egy kattintásé: friss UTM mellett a tárolt UTM-csoport kiesik.
+  const merged: AttributionParams = { ...withoutStaleCampaign(stored, fresh), ...fresh };
   healGoogleClickIds(merged, resolved);
 
   // First-touch landing context (don't overwrite if already present).

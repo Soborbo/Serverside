@@ -60,13 +60,13 @@
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "f1169638786d80b6b23c570be9de5ede2997354d3f1a9467f9397df77ba61ee4",
-      "bytes": 19349,
+      "sha256": "92226b73b56f856d490fbdcfd5c3049881926898d746843b7e602b23667f08d8",
+      "bytes": 19541,
       "role": "browser"
     },
     "lib/gateway.ts": {
-      "sha256": "71258fd4d77b6c711a99dae5ea43e094b172a7a8ddb9f06ecd1f6d0a266f6c56",
-      "bytes": 34192,
+      "sha256": "801d23d0706e7f656d74179ef8fd018ef385cb85b7085e0be7ba3fdf65883649",
+      "bytes": 34325,
       "role": "browser"
     },
     "lib/google-click-id.ts": {
@@ -85,8 +85,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "288d5d09f2901c5354c55ad6b7b643cf915ec12ff02cbdeb09df361ccfc0e7d6",
-      "bytes": 37188,
+      "sha256": "c1140036b663becaa52107af89ef5a3f3e967de29dba1a5af62fa42f72b68614",
+      "bytes": 38242,
       "role": "browser"
     },
     "lib/submit.ts": {
