@@ -10,6 +10,35 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.17.1 (2026-10-29)
+
+Egy javítás, a paywalled_boilerplate #92 + #94 Codex-review-jából. Gateway-változás
+nincs; a tárolt `sb_tracking` blob két új, opcionális mezőt kap.
+
+### Javítva — a friss landing kattintása túléli a továbblépést (`lib/gateway.ts`, `lib/persistence.ts`, `lib/google-click-id.ts`)
+
+Régi `_gcl_aw` süti → új gbraid-es landing → árlap → vásárlás: a konverzió a RÉGI
+gclid-del ment. A `collectAttribution` tárolója (`__sb_attribution`) csak a
+konverziós oldalon íródik, a landing kattintását az oldalmegtekintésenként írt
+`sb_tracking` őrzi — de a gateway azt nem olvasta, így az árlapon (URL-jel nélkül)
+a `_gcl_aw` > tároló sorrend a süti régi gclid-jét választotta. A `_gcl_aw` a
+gbraid/wbraid-es kattintástól nem frissül.
+
+- `sb_tracking` rögzíti a Google klikk-ID érkezési idejét (`googleClickAt`, ms).
+- `resolveGoogleClickId` új 4. szabálya: ha a süti (`GCL.<mp>.`) és a tárolt
+  kattintás ideje is ismert, az ÚJABB nyer. Időbélyeg nélküli (régi) blobnál a
+  korábbi sorrend marad (URL > `_gcl_aw` > tároló).
+- `collectAttribution` a Google-döntéshez az `sb_tracking` kattintását veszi
+  (időbélyeggel), ha van; az `fbclid`-et és az `msclkid`-et is onnan tölti, ha az
+  URL most nem hozott sajátot. Ugyanazon a marketing read-gate-en, ad-grant
+  nélkül nem olvas.
+- `sb_tracking` mostantól az `msclkid`-et is tárolja (eddig a landing után
+  elveszett).
+
+Teszt: `tests/fresh-landing-click.test.ts` (10 eset; a javítás nélkül 6 bukik).
+
+---
+
 ## 6.17.0 (2026-10-29)
 
 Három javítás, mind a paywalled_boilerplate mérési munkájából (MERESI_TERV,
