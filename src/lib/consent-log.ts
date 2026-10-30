@@ -199,7 +199,28 @@ export function decisionMatchesCategories(
  * és egy „invalid payload" üzenetből egy hónap múlva senki nem tudja megmondani,
  * melyik mező romlott el a bannerben.
  */
-export function parseConsentPayload(body: unknown, siteId: string): ConsentPayloadResult {
+/**
+ * A Cloudflare IP-geolokációs országkódja (`request.cf.country`) a consent_log
+ * `country` oszlopához, vagy undefined. Az `XX` (ismeretlen) és a `T1` (Tor) nem
+ * ország — azokat nem írjuk be. Pure, a hívó adja át a nyers értéket.
+ */
+export function serverObservedCountry(cfCountry: unknown): string | undefined {
+  if (typeof cfCountry !== 'string') return undefined;
+  const c = cfCountry.toUpperCase();
+  return COUNTRY_RE.test(c) && c !== 'XX' ? c : undefined;
+}
+
+/**
+ * @param serverCountry a SZERVER által megfigyelt ország (serverObservedCountry).
+ *   Ha van, ez nyer a kliens által küldött `country` fölött: a kliens-lib
+ *   (6.9.0–6.17.x) egyáltalán nem küld országot, és egy mért érték a consent-
+ *   proofban többet ér egy bevallottnál (2026-10 pilot-review A5: 100% NULL).
+ */
+export function parseConsentPayload(
+  body: unknown,
+  siteId: string,
+  serverCountry?: string
+): ConsentPayloadResult {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return { ok: false, reason: 'body_not_object' };
   }
@@ -318,7 +339,7 @@ export function parseConsentPayload(body: unknown, siteId: string): ConsentPaylo
       consent_text_version: textVersion,
       ruleset,
       lang,
-      country: country ? country.toUpperCase() : undefined,
+      country: serverCountry ?? (country ? country.toUpperCase() : undefined),
       client_lib_version: libVersion,
       cky_cookie_analytics: ckyAnalytics,
       cky_cookie_marketing: ckyMarketing,
