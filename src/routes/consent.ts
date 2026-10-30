@@ -6,7 +6,8 @@ import { checkOrigin } from '../lib/origin';
 import {
   parseConsentPayload,
   parseConsentMetricPayload,
-  isConsentProviderSbo
+  isConsentProviderSbo,
+  serverObservedCountry
 } from '../lib/consent-log';
 import {
   recordConsentDecision,
@@ -359,7 +360,11 @@ async function handleDecision(
     return new Response('consent_id_cookie_mismatch', { status: 403, headers: cors });
   }
 
-  const parsed = parseConsentPayload(body, siteId);
+  const parsed = parseConsentPayload(
+    body,
+    siteId,
+    serverObservedCountry((request as Request & { cf?: { country?: unknown } }).cf?.country)
+  );
   if (!parsed.ok) {
     // A HIBAOK MEGNEVEZVE megy vissza és a logba. Egy csupasz „invalid payload"
     // mellett egy hónap múlva senki nem tudná megmondani, melyik banner-mező
