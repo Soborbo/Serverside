@@ -10,6 +10,29 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.17.3 (2026-10-30)
+
+Két javítás, a 6.16.0 → 6.17.x GitHubos Codex-reviewjából (Serverside #156).
+Gateway-változás nincs.
+
+### Javítva — a friss landing klikk-ID-je mellé a saját kampánya kerül (`lib/gateway.ts`)
+
+A 6.17.1 óta a klikk-ID az `sb_tracking`-ből jön, a UTM-csoport viszont továbbra is
+a gateway-tárolóból (`__sb_attribution`), ami egy KORÁBBI konverzió kampányát őrzi.
+Régi vásárlás (`utm_campaign=OLD`) → új `gbraid`-es, `utm_campaign=NEW` landing →
+árlap: a payload `gbraid=NEW` + `utm_campaign=OLD` volt. Most, ha az URL nem hoz
+UTM-et és az `sb_tracking`-nek van kampánya, a teljes UTM-csoport onnan jön.
+Kampány nélküli `sb_tracking` a tárolóét nem törli.
+
+### Javítva — a gateway alsó határa alatti `eventTime` → most (`server/backend/gateway-dispatch.ts`)
+
+A `resolveEventTime` csak a nem pozitív értéket cserélte. Egy `eventTime: 1` (vagy
+`0.5`) változatlanul ment ki, a gateway a `1_500_000_000` alatti `event_time`-ot
+400-zal elutasítja, a küldő pedig ezt nem próbálja újra — az esemény elveszett.
+Most a gateway határa alatt is a mostani idő megy.
+
+---
+
 ## 6.17.2 (2026-10-30)
 
 Két javítás, a 6.17.1 független (Codex GPT-6 Astra xhigh) reviewjából (Serverside #156).

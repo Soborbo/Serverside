@@ -506,7 +506,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.17.2';
+export const BACKEND_LIB_VERSION = '6.17.3';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
@@ -726,10 +726,14 @@ export function resolveTestEventCode(env: GatewayEnv, email?: string): string | 
  * cron-retry) különben a küldés pillanatát jelentené, és a platformok a konverziót
  * rossz időpontra (akár rossz napra / kampány-ablakra) könyvelnék. Hiányzó,
  * értelmetlen vagy jövőbeli érték → most (a gateway a +10 percnél későbbit elutasítja).
+ * Az alsó határ a gatewayé (`src/types.ts` `MIN_EVENT_TIME`): alatta a payload 400-at
+ * kap, amit a küldő nem próbál újra — az esemény elveszne.
  */
+const MIN_EVENT_TIME = 1_500_000_000; // 2017-07-14, mint a gatewayben
+
 function resolveEventTime(eventTime: number | undefined): number {
   const now = Math.floor(Date.now() / 1000);
-  if (typeof eventTime !== 'number' || !Number.isFinite(eventTime) || eventTime <= 0) return now;
+  if (typeof eventTime !== 'number' || !Number.isFinite(eventTime) || eventTime < MIN_EVENT_TIME) return now;
   const t = Math.floor(eventTime);
   return t > now ? now : t;
 }
