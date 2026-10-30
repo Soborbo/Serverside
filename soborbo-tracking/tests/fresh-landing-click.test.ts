@@ -101,6 +101,23 @@ describe('Google: az újabb kattintás nyer, nem a forrás rangja', () => {
 });
 
 describe('a gateway-tároló és az sb_tracking szinkronban marad', () => {
+  it('a friss landing klikk-ID-je mellé a saját kampánya kerül, nem egy korábbi vásárlásé', () => {
+    localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify({ gclid: 'OLD', utm_source: 'google', utm_campaign: 'OLD' }));
+    page('/landing?gbraid=NEW&utm_source=bing&utm_campaign=NEW');
+    setUrl('/pricing');
+    const out = collectAttribution();
+    expect(out).toMatchObject({ gbraid: 'NEW', utm_source: 'bing', utm_campaign: 'NEW' });
+    expect(out.gclid).toBeUndefined();
+  });
+
+  it('a mostani URL kampánya továbbra is mindent visz', () => {
+    page('/landing?gbraid=NEW&utm_source=bing&utm_campaign=NEW');
+    setUrl('/pricing?utm_source=newsletter');
+    const out = collectAttribution();
+    expect(out.utm_source).toBe('newsletter');
+    expect(out.utm_campaign).toBeUndefined();
+  });
+
   it('ha az init a consent-API előtt futott, a collectAttribution maga menti a kattintást', () => {
     page('/old?msclkid=MS-OLD&gbraid=OLD-BRAID');
     // Új landing, de a persist kimaradt (a CookieYes API még nem állt fel):

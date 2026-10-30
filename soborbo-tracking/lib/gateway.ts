@@ -597,7 +597,23 @@ export function collectAttribution(): AttributionParams {
 
   // Last-touch: the fresh URL signals override the stored ones.
   // A kampány egy kattintásé: friss UTM mellett a tárolt UTM-csoport kiesik.
-  const merged: AttributionParams = { ...withoutStaleCampaign(stored, fresh), ...fresh };
+  const base: AttributionParams = withoutStaleCampaign(stored, fresh) ?? {};
+  // A kampány a kattintással jár (6.17.3). Ha a klikk-ID az `sb_tracking`-ből jön, a
+  // UTM-csoportnak is onnan kell jönnie: a gateway-tároló egy KORÁBBI konverzió
+  // kampányát őrzi, és a friss landing klikk-ID-je mellé az került volna (Codex,
+  // Serverside #156). Az `sb_tracking` minden grant alatti címkézett oldalon íródik,
+  // így a kampánya legalább olyan friss, mint a tárolóé. Friss URL-UTM mellett az nyer;
+  // kampány nélküli `sb_tracking` (csak klikk-ID-s landing) a tárolóét nem törli —
+  // ugyanígy viselkedik maga a `persistTrackingParams` is.
+  const t = (tracked ?? {}) as unknown as Record<string, string | undefined>;
+  if (!ATTR_UTM_PARAMS.some((k) => fresh[k]) && ATTR_UTM_PARAMS.some((k) => t[k])) {
+    for (const k of ATTR_UTM_PARAMS) {
+      const v = t[k];
+      if (v) base[k] = v;
+      else delete base[k];
+    }
+  }
+  const merged: AttributionParams = { ...base, ...fresh };
   // A nem-Google klikk-ID-ket a landing óta frissebb `sb_tracking` adja, ha az URL
   // most nem hozott sajátot.
   for (const k of TRACKED_CLICK_PARAMS) {

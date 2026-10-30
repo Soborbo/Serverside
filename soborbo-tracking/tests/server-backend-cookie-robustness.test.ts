@@ -136,8 +136,8 @@ describe('event_time — a konverzió ideje, nem a küldésé', () => {
     expect(buildGatewayPayload({ eventName: 'purchase', eventId: 'e1', eventTime: t }).event_time).toBe(t);
   });
 
-  it('hiányzó, nem véges vagy nem pozitív érték → most', () => {
-    for (const eventTime of [undefined, Number.NaN, 0, -5]) {
+  it('hiányzó, nem véges vagy a gateway alsó határa alatti érték → most', () => {
+    for (const eventTime of [undefined, Number.NaN, 0, -5, 0.5, 1, 1_499_999_999]) {
       const p = buildGatewayPayload({ eventName: 'purchase', eventId: 'e1', eventTime });
       expect(Math.abs((p.event_time as number) - now())).toBeLessThanOrEqual(1);
     }
