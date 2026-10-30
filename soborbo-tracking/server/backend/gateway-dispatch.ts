@@ -144,6 +144,12 @@ export interface GatewayConversionInput {
   eventId: string;
   /** The CRM's own record id, or absent (contract #3). */
   leadId?: string;
+  /**
+   * When the conversion HAPPENED, unix seconds — e.g. the Stripe event's `created`.
+   * Absent → the moment of dispatch. A delayed dispatch must pass it, or the
+   * platforms book the conversion at the send time.
+   */
+  eventTime?: number;
   value?: number;
   /** 3-letter ISO 4217. REQUIRED whenever value is set — there is no default. */
   currency?: string;
@@ -500,7 +506,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.16.0';
+export const BACKEND_LIB_VERSION = '6.17.1';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;
@@ -715,6 +721,19 @@ export function resolveTestEventCode(env: GatewayEnv, email?: string): string | 
   return email.trim().toLowerCase() === marker ? code : undefined;
 }
 
+/**
+ * Az esemény EREDETI ideje (unix mp). Egy késleltetett szerver-dispatch (webhook,
+ * cron-retry) különben a küldés pillanatát jelentené, és a platformok a konverziót
+ * rossz időpontra (akár rossz napra / kampány-ablakra) könyvelnék. Hiányzó,
+ * értelmetlen vagy jövőbeli érték → most (a gateway a +10 percnél későbbit elutasítja).
+ */
+function resolveEventTime(eventTime: number | undefined): number {
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof eventTime !== 'number' || !Number.isFinite(eventTime) || eventTime <= 0) return now;
+  const t = Math.floor(eventTime);
+  return t > now ? now : t;
+}
+
 /** Drops undefined/empty entries so we never ship blank PII fields. */
 function compact(obj: object): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -739,7 +758,7 @@ export function buildGatewayPayload(input: GatewayConversionInput): Record<strin
   return compact({
     event_name: input.eventName,
     event_id: input.eventId,
-    event_time: Math.floor(Date.now() / 1000),
+    event_time: resolveEventTime(input.eventTime),
     lead_id: input.leadId,
     ...(hasValue ? { value: input.value, currency: input.currency } : {}),
     source: input.source,

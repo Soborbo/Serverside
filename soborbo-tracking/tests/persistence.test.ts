@@ -87,6 +87,24 @@ describe('attribution — first/last touch + source type', () => {
     expect(a.last_utm_source).toBe('bing');
   });
 
+  it('a kampány egy kattintásé: friss UTM mellett nem marad régi utm_campaign (Codex #92)', () => {
+    setUrl('/?utm_source=google&utm_campaign=spring');
+    captureUrlParams(); persistTrackingParams();
+    setUrl('/?utm_source=newsletter');
+    captureUrlParams(); persistTrackingParams();
+    const s = getStoredData();
+    expect(s?.utm_source).toBe('newsletter');
+    expect(s?.utm_campaign).toBeUndefined();
+  });
+
+  it('UTM nélküli látogatás nem törli a tárolt kampányt', () => {
+    setUrl('/?utm_source=google&utm_campaign=spring');
+    captureUrlParams(); persistTrackingParams();
+    setUrl('/?fbclid=FB1');
+    captureUrlParams(); persistTrackingParams();
+    expect(getStoredData()?.utm_campaign).toBe('spring');
+  });
+
   it('does NOT persist without marketing consent', () => {
     setCkyConsent({ analytics: true, marketing: false });
     setUrl('/?gclid=NOPE');

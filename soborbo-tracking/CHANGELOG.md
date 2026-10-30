@@ -10,6 +10,72 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.17.1 (2026-10-29)
+
+Egy javítás, a paywalled_boilerplate #92 + #94 Codex-review-jából. Gateway-változás
+nincs; a tárolt `sb_tracking` blob két új, opcionális mezőt kap.
+
+### Javítva — a friss landing kattintása túléli a továbblépést (`lib/gateway.ts`, `lib/persistence.ts`, `lib/google-click-id.ts`)
+
+Régi `_gcl_aw` süti → új gbraid-es landing → árlap → vásárlás: a konverzió a RÉGI
+gclid-del ment. A `collectAttribution` tárolója (`__sb_attribution`) csak a
+konverziós oldalon íródik, a landing kattintását az oldalmegtekintésenként írt
+`sb_tracking` őrzi — de a gateway azt nem olvasta, így az árlapon (URL-jel nélkül)
+a `_gcl_aw` > tároló sorrend a süti régi gclid-jét választotta. A `_gcl_aw` a
+gbraid/wbraid-es kattintástól nem frissül.
+
+- `sb_tracking` rögzíti a Google klikk-ID érkezési idejét (`googleClickAt`, ms).
+- `resolveGoogleClickId` új 4. szabálya: ha a süti (`GCL.<mp>.`) és a tárolt
+  kattintás ideje is ismert, az ÚJABB nyer. Időbélyeg nélküli (régi) blobnál a
+  korábbi sorrend marad (URL > `_gcl_aw` > tároló).
+- `collectAttribution` a Google-döntéshez az `sb_tracking` kattintását veszi
+  (időbélyeggel), ha van; az `fbclid`-et és az `msclkid`-et is onnan tölti, ha az
+  URL most nem hozott sajátot. Ugyanazon a marketing read-gate-en, ad-grant
+  nélkül nem olvas.
+- `sb_tracking` mostantól az `msclkid`-et is tárolja (eddig a landing után
+  elveszett).
+
+Teszt: `tests/fresh-landing-click.test.ts` (10 eset; a javítás nélkül 6 bukik).
+
+---
+
+## 6.17.0 (2026-10-29)
+
+Három javítás, mind a paywalled_boilerplate mérési munkájából (MERESI_TERV,
+PR #89 / #91). Gateway-változás nincs.
+
+### Javítva — a marketing-azonosítók a marketing-hozzájáruláshoz kötöttek (`lib/events.ts`)
+
+A `stripIdentifiersWithoutConsent` minden azonosítót az analytics-hozzájáruláshoz
+kötött. Egy marketing-only hozzájárulású látogató konverziós pushából
+(`trackLeadSubmit`, `trackContactSubmit` — ezek épp a marketing-hozzájárulás
+alapján mennek ki) így kiesett a `gclid` és a teljes `first_*`/`last_*`
+attribúció, basic módban is. Most két külön kapu van: `session_id`/`client_id`/
+`user_id` → analytics; klikk-ID-k, `fbp`/`fbc`/`external_id`, `first_*`/`last_*`
+→ marketing. A marketing-minta csak a valódi attribúció-kulcsokat fogja
+(`first_|last_` + `utm_*`/klikk-ID): a `form_abandoned` `last_field` mezője
+(a fókuszált mező neve) analytics-adat, megmarad. (Codex review,
+paywalled_boilerplate #89 és Serverside #154.)
+
+### Javítva — a kampány egy kattintásé (`lib/persistence.ts`, `lib/gateway.ts`)
+
+A `persistTrackingParams()` (`sb_tracking`) és a `collectAttribution()`
+(`__sb_attribution`) mezőnként olvasztotta a friss URL-t a tárolóba: egy
+`utm_source=newsletter` látogatás mellett a korábbi `utm_campaign=spring`
+megmaradt — egy soha nem létezett kampány ment a konverzióba. Most ha a friss
+URL bármelyik UTM-et hozza, a tárolt UTM-csoport egészben kiesik
+(`withoutStaleCampaign`). UTM nélküli látogatás nem törli a tárolt kampányt.
+(Codex review, paywalled_boilerplate #92.)
+
+### Hozzáadva — `GatewayConversionInput.eventTime` (`server/backend/gateway-dispatch.ts`)
+
+A `buildGatewayPayload` eddig mindig a küldés pillanatát írta `event_time`-nak.
+Egy késleltetett szerver-dispatch (Stripe-webhook, cron-retry) így a konverziót
+a küldés idejére könyvelte. Az új, opcionális `eventTime` (unix mp) az eredeti
+idő; hiányzó, értelmetlen vagy jövőbeli érték esetén marad a „most”.
+
+---
+
 ## 6.16.0 (2026-10-19)
 
 Három kis csomag-változás az attribúció köré — a skinlab kanonikus kitre

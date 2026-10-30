@@ -23,7 +23,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
 import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
-  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, readMarketingLocalStorage, ATTR_STORAGE_KEY
+  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, getStoredData, readMarketingLocalStorage, ATTR_STORAGE_KEY, withoutStaleCampaign
 } from './persistence';
 import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
@@ -31,6 +31,7 @@ import { report } from './observability';
 import { BROWSER_GATEWAY_EVENTS, SERVER_INGRESS_ONLY_EVENTS } from './event-contract';
 import {
   applyGoogleClickId,
+  pickGoogleClickId,
   resolveGoogleClickId,
   type ResolvedGoogleClickId
 } from './google-click-id';
@@ -393,6 +394,8 @@ const ATTR_CLICK_PARAMS = [
   'li_fat_id',
   'twclid'
 ];
+/** Non-Google click IDs that `sb_tracking` (persistence.ts) also keeps per page view. */
+const TRACKED_CLICK_PARAMS = ['fbclid', 'msclkid'] as const;
 const ATTR_UTM_PARAMS = [
   'utm_source',
   'utm_medium',
@@ -569,14 +572,32 @@ export function collectAttribution(): AttributionParams {
   // át) — így a tárolt érték marad az egyetlen jelölt. Ez szándékos: az
   // UNKNOWN-állapot nem törölhet egy korábbi grant alatt eltárolt ID-t, csak a
   // drótra nem engedi (lentebb).
+  //
+  // A LEGFRISSEBB LANDING (6.17.1). Ez a tároló (`__sb_attribution`) csak akkor
+  // íródik, amikor valaki ezt a függvényt hívja — jellemzően a konverziós oldalon.
+  // A landing kattintását az oldalmegtekintésenként írt `sb_tracking` őrzi. Ha azt
+  // nem nézzük, egy landing → árlap → vásárlás úton az árlapon már nincs URL-jel,
+  // és a régi `_gcl_aw` gclid (vagy egy korábbi vásárlás tárolt ID-je) leverte a
+  // friss landing gbraid-jét; az msclkid/fbclid pedig elveszett vagy elavult
+  // (Codex, paywalled_boilerplate #92 + #94). Az `sb_tracking` ugyanazon a
+  // marketing read-gate-en jön, és ad-grant nélkül nem is olvassuk.
+  const tracked = adGranted ? getStoredData() : null;
+  const trackedGoogle = tracked ? pickGoogleClickId(tracked as unknown as Record<string, string>) : undefined;
   const resolved = resolveGoogleClickId({
     url: adGranted ? urlParams : undefined,
     gclAw: adGranted ? getCookie('_gcl_aw') : undefined,
-    stored
+    ...(trackedGoogle ? { stored: tracked as unknown as Record<string, string>, storedAt: tracked?.googleClickAt } : { stored })
   });
 
   // Last-touch: the fresh URL signals override the stored ones.
-  const merged: AttributionParams = { ...stored, ...fresh };
+  // A kampány egy kattintásé: friss UTM mellett a tárolt UTM-csoport kiesik.
+  const merged: AttributionParams = { ...withoutStaleCampaign(stored, fresh), ...fresh };
+  // A nem-Google klikk-ID-ket a landing óta frissebb `sb_tracking` adja, ha az URL
+  // most nem hozott sajátot.
+  for (const k of TRACKED_CLICK_PARAMS) {
+    const v = tracked?.[k];
+    if (!fresh[k] && v) merged[k] = v;
+  }
   healGoogleClickIds(merged, resolved);
 
   // First-touch landing context (don't overwrite if already present).

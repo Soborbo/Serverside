@@ -24,6 +24,14 @@
  * 3. A COOKIE CSAK VÉGSŐ MENTSVÁR AZ URL UTÁN. Nem azért, mert rosszabb, hanem
  *    mert a `_gcl_aw` mindig `gclid`-et hordoz: ha az URL `gbraid`-et hozott, a
  *    cookie gclid-je a prioritási sorrend miatt LEVERNÉ a frisset.
+ * 4. COOKIE KONTRA TÁROLÓ: AZ ÚJABB KATTINTÁS NYER (6.17.1). A `_gcl_aw` csak
+ *    gclid-es landingnél frissül; egy KÉSŐBBI gbraid/wbraid-es (iOS) kattintás
+ *    után is a régi gclid-et hordozza. A cookie > tároló sorrend így a friss
+ *    landing gbraid-jét a régi gclid-re cserélte, amint a látogató továbblépett a
+ *    landingről (Codex, paywalled_boilerplate #92 + #94). Ha MINDKÉT időpont
+ *    ismert — a cookie a saját `GCL.<mp>.` bélyegét hordozza, a tároló a
+ *    `storedAt`-et (ms) —, az újabb nyer. Ha a tárolóé ismeretlen (régi blob),
+ *    marad a 2. pont sorrendje.
  *
  * ── Miért drága, ha elromlik ─────────────────────────────────────────────────
  * Az offline / Enhanced Conversions feltöltés ezekből köti a konverziót a
@@ -76,6 +84,13 @@ export function parseGclAwCookie(raw: string | null | undefined): string | undef
   return parts.length >= 3 ? parts.slice(2).join('.') || undefined : undefined;
 }
 
+/** A `_gcl_aw` süti saját időbélyege ms-ban (a sütiben másodperc), vagy undefined. */
+export function parseGclAwTimestampMs(raw: string | null | undefined): number | undefined {
+  if (!raw) return undefined;
+  const ts = Number(raw.split('.')[1]);
+  return Number.isFinite(ts) && ts > 0 ? ts * 1000 : undefined;
+}
+
 /**
  * EGY forrásból a győztes klikk-ID (`gclid` > `gbraid` > `wbraid`).
  * Nem néz más forrásba — a forrás-sorrendet a `resolveGoogleClickId` intézi.
@@ -97,6 +112,7 @@ export function pickGoogleClickId(
  * @param input.url    a mostani oldalbetöltés query-paraméterei (ha van hozzá jog)
  * @param input.stored a korábban eltárolt attribúció (bármilyen tároló-modell)
  * @param input.gclAw  a `_gcl_aw` süti NYERS értéke (`GCL.<ts>.<gclid>`)
+ * @param input.storedAt a tárolt klikk-ID érkezési ideje (ms), ha a tároló ismeri
  *
  * Egy forrást úgy zársz ki, hogy nem adod át — például consent hiányában az
  * `url`/`gclAw` elhagyásával a tárolt érték marad az egyetlen jelölt.
@@ -105,14 +121,18 @@ export function resolveGoogleClickId(input: {
   url?: ClickIdSource;
   stored?: ClickIdSource;
   gclAw?: string | null;
+  storedAt?: number | undefined;
 }): ResolvedGoogleClickId | undefined {
   const fromUrl = pickGoogleClickId(input.url);
   if (fromUrl) return { ...fromUrl, source: 'url' };
 
   const fromCookie = parseGclAwCookie(input.gclAw);
-  if (fromCookie) return { key: 'gclid', value: fromCookie, source: 'gcl_aw_cookie' };
-
   const fromStore = pickGoogleClickId(input.stored);
+  const cookieAt = parseGclAwTimestampMs(input.gclAw);
+  const storeIsNewer =
+    !!fromStore && input.storedAt !== undefined && cookieAt !== undefined && input.storedAt > cookieAt;
+
+  if (fromCookie && !storeIsNewer) return { key: 'gclid', value: fromCookie, source: 'gcl_aw_cookie' };
   if (fromStore) return { ...fromStore, source: 'stored' };
 
   return undefined;

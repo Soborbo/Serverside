@@ -56,6 +56,13 @@ export interface TrackingData {
   /** First-capture timestamp for fbclid (ms). Used to reconstruct
    *  Meta's `_fbc` cookie when the Pixel hasn't run yet. */
   fbclidAt?: number;
+  /** Microsoft Ads click ID. 6.17.1 előtt nem volt a blobban, így egy msclkid-es
+   *  landing utáni továbblépésnél (landing → árlap → vásárlás) elveszett. */
+  msclkid?: string;
+  /** A tárolt Google klikk-ID (`gclid`/`gbraid`/`wbraid`) érkezési ideje (ms). Ezzel
+   *  dönthető el, hogy a `_gcl_aw` süti régi gclid-je vagy a tárolt kattintás az
+   *  újabb (`resolveGoogleClickId`, 4. szabály). Régi blobban nincs. */
+  googleClickAt?: number;
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
@@ -303,7 +310,7 @@ function urlTrackingParams(): Partial<TrackingData> | null {
   const u = new URLSearchParams(window.location.search);
   const p: Partial<TrackingData> = {};
   let any = false;
-  for (const k of ['gclid','gbraid','wbraid','fbclid','utm_source','utm_medium','utm_campaign','utm_content','utm_term','utm_id','utm_source_platform','utm_creative_format','utm_marketing_tactic'] as const) {
+  for (const k of ['gclid','gbraid','wbraid','fbclid','msclkid','utm_source','utm_medium','utm_campaign','utm_content','utm_term','utm_id','utm_source_platform','utm_creative_format','utm_marketing_tactic'] as const) {
     const v = u.get(k);
     if (v) { (p as Record<string,string>)[k] = v; any = true; }
   }
@@ -315,6 +322,27 @@ let capturedParams: Partial<TrackingData> | null = null;
 
 export function captureUrlParams(): void {
   capturedParams = urlTrackingParams();
+}
+
+/**
+ * A kampány (UTM-csoport) EGY kattintásé: ha a friss URL bármelyik UTM-et hozza,
+ * a tárolt UTM-ek MIND kiesnek, mielőtt a kettő összeolvad. A mezőnkénti merge
+ * egy `utm_source=newsletter` látogatás mellé a korábbi `utm_campaign=spring`-et
+ * hagyta — egy soha nem létezett kampányt (Codex, paywalled_boilerplate #92).
+ * Ugyanaz a szabály, mint a Google klikk-ID-nél: egy kattintás, egy csoport.
+ */
+export const UTM_KEYS = [
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
+  'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic',
+] as const;
+
+export function withoutStaleCampaign<T extends object>(stored: T | null | undefined, fresh: object | null | undefined): T | undefined {
+  if (!stored) return undefined;
+  const f = (fresh ?? {}) as Record<string, unknown>;
+  if (!UTM_KEYS.some((k) => f[k])) return { ...stored };
+  const out = { ...stored } as Record<string, unknown>;
+  for (const k of UTM_KEYS) delete out[k];
+  return out as T;
 }
 
 function persistFirstTouch(params: Partial<TrackingData>): void {
@@ -361,15 +389,20 @@ export function persistTrackingParams(): void {
   // offline/EC feltoltes az ilyen sort ELUTASITJA — a konverzio nem torzul,
   // hanem ELVESZ. A dontest a primitiv hozza (URL > tarolo), a testvereket
   // pedig az `applyGoogleClickId` takaritja ki.
+  const google = resolveGoogleClickId({ url: clickIdsOf(fresh), stored: clickIdsOf(stored) });
+  // A Google-kattintás ideje csak FRISS Google klikk-ID-vel áll be újra; egyébként a
+  // tárolt kattintásé marad (a cookie-val való összevetéshez — google-click-id.ts).
+  // Klikk-ID nélkül nincs bélyeg sem.
+  const googleClickAt = !google ? undefined : google.source === 'url' ? Date.now() : stored?.googleClickAt;
+  const { googleClickAt: _staleStamp, ...base } = withoutStaleCampaign(stored, fresh) ?? {};
   const merged = {
-    ...stored, ...fresh,
+    ...base, ...fresh,
     fbclidAt,
+    ...(googleClickAt !== undefined ? { googleClickAt } : {}),
     timestamp: Date.now(),
     landingPage: stored?.landingPage || window.location.pathname,
   } satisfies TrackingData;
-  applyGoogleClickId(merged, resolveGoogleClickId({
-    url: clickIdsOf(fresh), stored: clickIdsOf(stored),
-  }));
+  applyGoogleClickId(merged, google);
   lsSet(TRACKING_KEY, JSON.stringify(merged));
   capturedParams = null;
 }
