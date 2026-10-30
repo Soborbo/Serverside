@@ -10,6 +10,30 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.17.2 (2026-10-30)
+
+Két javítás, a 6.17.1 független (Codex GPT-6 Astra xhigh) reviewjából (Serverside #156).
+Gateway-változás nincs.
+
+### Javítva — a gateway-tároló és az `sb_tracking` szinkronban marad (`lib/gateway.ts`, `lib/persistence.ts`)
+
+A 6.17.1 a `collectAttribution`-ben feltétel nélkül az `sb_tracking`-et tekintette a
+frissebb forrásnak. Ha az `initTracking` a CookieYes API elkészülte előtt futott, az
+`sb_tracking` nem kapta meg az oldal kattintását, a `collectAttribution` viszont (a
+süti alapján) igen — a következő URL-jel nélküli oldalon a régebbi tárolt ID írta
+vissza az újabbat (Google és msclkid/fbclid egyaránt). Most a `collectAttribution`
+ad-grant mellett előbb maga perzisztálja az URL-jeleket (`persistTrackingParams({ granted: true })`),
+így a két tároló ugyanazt a kattintást látja.
+
+### Javítva — változatlan Google-kattintás nem kap új bélyeget (`lib/persistence.ts`)
+
+Ugyanaz a címkézett URL újra-perzisztálva (pl. consent-callback) a `googleClickAt`-et
+a mostani időre állította, így egy közben érkezett újabb `_gcl_aw` elé került, és a
+következő konverzió a régi braid-et vitte. A bélyeg most csak új klikk-ID-nél
+(kulcs vagy érték változik) frissül — ahogy az `fbclidAt` is.
+
+---
+
 ## 6.17.1 (2026-10-29)
 
 Egy javítás, a paywalled_boilerplate #92 + #94 Codex-review-jából. Gateway-változás

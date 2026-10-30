@@ -361,9 +361,11 @@ function persistFirstTouch(params: Partial<TrackingData>): void {
   }));
 }
 
-/** Persist captured params to localStorage. ONLY after marketing consent. */
-export function persistTrackingParams(): void {
-  if (!hasMarketingConsent()) return;
+/** Persist captured params to localStorage. ONLY after marketing consent.
+ *  `granted`: a hívó már eldöntötte, hogy van marketing-grant (a `collectAttribution`
+ *  a CookieYes sütit is nézi, nem csak a JS API-t, ami induláskor még késhet). */
+export function persistTrackingParams(opts: { granted?: boolean } = {}): void {
+  if (!opts.granted && !hasMarketingConsent()) return;
   const fresh = capturedParams || urlTrackingParams();
   if (!fresh) return;
   const clickIdsOf = (o: Partial<TrackingData> | null | undefined) => ({
@@ -390,10 +392,14 @@ export function persistTrackingParams(): void {
   // hanem ELVESZ. A dontest a primitiv hozza (URL > tarolo), a testvereket
   // pedig az `applyGoogleClickId` takaritja ki.
   const google = resolveGoogleClickId({ url: clickIdsOf(fresh), stored: clickIdsOf(stored) });
-  // A Google-kattintás ideje csak FRISS Google klikk-ID-vel áll be újra; egyébként a
+  // A Google-kattintás ideje csak ÚJ Google klikk-ID-vel áll be újra; egyébként a
   // tárolt kattintásé marad (a cookie-val való összevetéshez — google-click-id.ts).
+  // Ugyanaz az URL újra-perzisztálva (consent-callback, ismételt hívás) NEM új
+  // kattintás: a bélyeg nem frissülhet, különben egy közben érkezett újabb `_gcl_aw`
+  // elé kerülne (Codex Astra, Serverside #156) — mint az `fbclidAt`-nél.
   // Klikk-ID nélkül nincs bélyeg sem.
-  const googleClickAt = !google ? undefined : google.source === 'url' ? Date.now() : stored?.googleClickAt;
+  const sameGoogleClick = !!google && !!stored && stored[google.key] === google.value && stored.googleClickAt !== undefined;
+  const googleClickAt = !google ? undefined : google.source === 'url' && !sameGoogleClick ? Date.now() : stored?.googleClickAt;
   const { googleClickAt: _staleStamp, ...base } = withoutStaleCampaign(stored, fresh) ?? {};
   const merged = {
     ...base, ...fresh,
