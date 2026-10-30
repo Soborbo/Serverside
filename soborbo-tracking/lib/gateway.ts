@@ -23,7 +23,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
 import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
-  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, getStoredData, readMarketingLocalStorage, ATTR_STORAGE_KEY, withoutStaleCampaign
+  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, getStoredData, persistTrackingParams, readMarketingLocalStorage, ATTR_STORAGE_KEY, withoutStaleCampaign
 } from './persistence';
 import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
@@ -581,6 +581,12 @@ export function collectAttribution(): AttributionParams {
   // friss landing gbraid-jét; az msclkid/fbclid pedig elveszett vagy elavult
   // (Codex, paywalled_boilerplate #92 + #94). Az `sb_tracking` ugyanazon a
   // marketing read-gate-en jön, és ad-grant nélkül nem is olvassuk.
+  //
+  // Előbb SZINKRONIZÁLJUK: ha az `initTracking` a CookieYes API elkészülte előtt
+  // futott, az `sb_tracking` nem kapta meg ennek az oldalnak a kattintását, és a
+  // következő URL-jel nélküli oldalon a régebbi tárolt ID visszaírta volna az
+  // újabbat (Codex Astra, Serverside #156). Itt a grant már eldőlt.
+  if (adGranted) persistTrackingParams({ granted: true });
   const tracked = adGranted ? getStoredData() : null;
   const trackedGoogle = tracked ? pickGoogleClickId(tracked as unknown as Record<string, string>) : undefined;
   const resolved = resolveGoogleClickId({

@@ -79,6 +79,36 @@ describe('Google: az újabb kattintás nyer, nem a forrás rangja', () => {
     page('/other?utm_source=newsletter');
     expect(getStoredData()?.googleClickAt, 'utm-only landing nem frissíti a kattintás idejét').toBeTypeOf('number');
   });
+
+  it('ugyanaz a kattintás újra-perzisztálva nem kap új bélyeget, így egy közben jött újabb _gcl_aw nyer', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000_000_000);
+    page('/landing?gbraid=OLD-BRAID');
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000_600_000);
+    document.cookie = `_gcl_aw=GCL.${1_000_000_300}.NEWER-GCLID; path=/`;
+    persistTrackingParams(); // pl. consent-callback ugyanazon az URL-en
+    expect(getStoredData()?.googleClickAt).toBe(1_000_000_000_000);
+    setUrl('/pricing');
+    expect(collectAttribution().gclid).toBe('NEWER-GCLID');
+  });
+
+  it('új Google klikk-ID-vel a bélyeg frissül', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000_000_000);
+    page('/landing?gbraid=A');
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000_600_000);
+    page('/landing?gbraid=B');
+    expect(getStoredData()).toMatchObject({ gbraid: 'B', googleClickAt: 1_000_000_600_000 });
+  });
+});
+
+describe('a gateway-tároló és az sb_tracking szinkronban marad', () => {
+  it('ha az init a consent-API előtt futott, a collectAttribution maga menti a kattintást', () => {
+    page('/old?msclkid=MS-OLD&gbraid=OLD-BRAID');
+    // Új landing, de a persist kimaradt (a CookieYes API még nem állt fel):
+    setUrl('/landing?msclkid=MS-NEW&gbraid=NEW-BRAID');
+    expect(collectAttribution()).toMatchObject({ msclkid: 'MS-NEW', gbraid: 'NEW-BRAID' });
+    setUrl('/pricing');
+    expect(collectAttribution()).toMatchObject({ msclkid: 'MS-NEW', gbraid: 'NEW-BRAID' });
+  });
 });
 
 describe('a döntő primitív (resolveGoogleClickId, 4. szabály)', () => {
