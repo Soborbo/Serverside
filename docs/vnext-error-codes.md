@@ -8,14 +8,14 @@
 > vele" tudás van, amit generálni nem lehet. Ez a tábla a TELJESSÉGET garantálja —
 > azt, hogy egyetlen kód se maradjon dokumentálatlanul.
 
-**Kódok száma:** 156
+**Kódok száma:** 157
 
 | Retryability | Kódok | Jelentés |
 |---|---|---|
 | `RETRYABLE` | 48 | átmeneti — egy későbbi próbálkozás sikerülhet |
 | `OPERATOR_ACTION` | 48 | emberi beavatkozás kell |
 | `TERMINAL` | 25 | végleges — ugyanez a payload sosem megy át |
-| `CONFIG_BLOCKED` | 22 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
+| `CONFIG_BLOCKED` | 23 | a mi konfigurációnk hiányzik — deploy/KV-írás kell |
 | `POLICY_SKIP` | 9 | szándékos kihagyás vagy informatív jel — nincs mit újrapróbálni |
 | `UNKNOWN` | 4 | az eredmény ismeretlen — nem „valószínűleg jó" |
 
@@ -146,6 +146,7 @@
 | `TRK-910-008` | `CONSENT_GRANTED_BUT_SKIPPED` | consent | warning | `OPERATOR_ACTION` | `scheduled/consent-check.ts` | Something went wrong on our side. Your request was not affected. | A delivery was skipped while its consent receipt says GRANTED — the exact anomaly Phase D exists to explain; check the skip_reason breakdown | — |
 | `TRK-910-009` | `CONSENT_STATE_UNAVAILABLE` | consent | warning | `RETRYABLE` | `routes/lead-status.ts`, `scheduled/retry.ts` | Something went wrong on our side. Your request was not affected. | Current consent state could not be read before a replay — send withheld, record stays retryable | `replay-consent-gate.test.ts` |
 | `TRK-910-010` | `CONSENT_UNVERIFIED_DECISION` | consent | warning | `OPERATOR_ACTION` | `routes/consent.ts` | Something went wrong on our side. Your request was not affected. | Unverified (no/wrong sbo_consent_key cookie, or a legacy keyless chain) restricting decision stored — it can only narrow consent; a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look | — |
+| `TRK-910-011` | `CONSENT_PROVIDER_CONFIG_LAG` | consent | critical | `CONFIG_BLOCKED` | `routes/consent.ts` | Something went wrong on our side. Your request was not affected. | An sbo CMP client (request carries an sbo_consent cookie) posted a consent decision to a host whose site config is missing or not provider=sbo — answered 503 so the browser keeps the proof and resends; fix the KV consent block for this hostname | — |
 | `TRK-950-001` | `RECON_VENDOR_FAILURE_RATE` | reconciliation | warning | `OPERATOR_ACTION` | `scheduled/reconciliation.ts` | Something went wrong on our side. Your request was not affected. | Vendor delivery failure rate exceeded threshold (reconciliation) | — |
 | `TRK-950-002` | `RECON_COVERAGE_DRIFT` | reconciliation | warning | `OPERATOR_ACTION` | `scheduled/reconciliation.ts` | Something went wrong on our side. Your request was not affected. | Eligible events did not reach the platform — coverage drift (reconciliation) | — |
 | `TRK-950-003` | `RECON_QUERY_FAILED` | reconciliation | warning | `RETRYABLE` | `lib/business-counts.ts`, `lib/reconciliation.ts` +1 | Something went wrong on our side. Your request was not affected. | Reconciliation D1 query failed | — |

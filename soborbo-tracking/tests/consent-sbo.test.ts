@@ -257,6 +257,19 @@ describe('pending receipt — 503 után a kliens az egyetlen őrző', () => {
     expect(localStorage.getItem('sbo_consent_pending')).toBeNull();
   });
 
+  it('404 (hiányzó site-proxy / host-config) → a pending MARAD, és a flush 204-re üríti', async () => {
+    // 2026-09-18 → 10-16 a SkinLab minden döntésének proofja így veszett el: a
+    // végpont config-lemaradás miatt elutasított, a kliens pedig törölte a sort.
+    mockFetch(404);
+    applySboDecision({ analytics: true, marketing: true }, CTX);
+    await flushAsync();
+    expect(JSON.parse(localStorage.getItem('sbo_consent_pending')!)).toHaveLength(1);
+
+    mockFetch(204);
+    await flushPendingSboConsent();
+    expect(localStorage.getItem('sbo_consent_pending')).toBeNull();
+  });
+
   it('network-hiba → retryable, a pending marad', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
     applySboDecision({ analytics: true, marketing: true }, CTX);

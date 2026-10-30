@@ -25,6 +25,7 @@ import { handleConsent } from '../src/routes/consent';
  */
 
 const HOST = 'consent-test.example.com';
+const NO_CONFIG_HOST = 'consent-no-config.example.com';
 
 const SBO_SITE = {
   site_id: 'consent-test',
@@ -135,19 +136,64 @@ function post(path: string, body: unknown, host = HOST, cookie?: string): Reques
 }
 
 describe('inertség — provider=cookieyes', () => {
-  it('403, és EGYETLEN D1-írás sem történik', async () => {
+  it('403, és EGYETLEN D1-írás sem történik (sbo_consent süti nélküli hívó)', async () => {
     // Ez a Fázis 1 legfontosabb tesztje. Ha ez elromlik, a merge már nem inert.
     const { env, calls } = makeEnv(COOKIEYES_SITE);
-    const res = await handleConsent(post('/api/consent', DECISION), env);
+    const res = await handleConsent(post('/api/consent', DECISION, HOST, ''), env);
     expect(res.status).toBe(403);
     expect(calls).toHaveLength(0);
   });
 
   it('a hiányzó consent blokk ugyanúgy 403 (a default nem sbo)', async () => {
     const { env, calls } = makeEnv({ ...COOKIEYES_SITE, consent: undefined });
-    const res = await handleConsent(post('/api/consent', DECISION), env);
+    const res = await handleConsent(post('/api/consent', DECISION, HOST, ''), env);
     expect(res.status).toBe(403);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('konfig-lemaradás — a saját CMP kliense nem sbo-configú hostra küld (pilot-review A3/B3)', () => {
+  // 2026-09-18 → 10-16 a SkinLab sbo-buildje élesben futott, a KV még nem volt
+  // `provider: 'sbo'`. Minden döntés 403-at kapott, a kliens pedig 4xx-re TÖRÖLTE
+  // a pending proofot — négy hétnyi consent-bizonyíték veszett el némán.
+
+  it('sbo_consent sütivel, provider≠sbo → 503 + Retry-After, és SEMMI nem íródik D1-be', async () => {
+    const { env, calls } = makeEnv(COOKIEYES_SITE);
+    const res = await handleConsent(post('/api/consent', DECISION), env);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('3600');
+    expect(await res.text()).toBe('consent_provider_config_lag');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sbo_consent sütivel, NINCS site-config (pl. www-host consent-blokk nélkül) → 503, nem 404', async () => {
+    // Saját host: a lookupSiteConfig a hiányzó configot is cache-eli hostnévre.
+    const { env, calls } = makeEnv(null);
+    const res = await handleConsent(post('/api/consent', DECISION, NO_CONFIG_HOST), env);
+    expect(res.status).toBe(503);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('süti nélkül a nem létező host továbbra is 404', async () => {
+    const { env } = makeEnv(null);
+    const res = await handleConsent(post('/api/consent', DECISION, NO_CONFIG_HOST, ''), env);
+    expect(res.status).toBe(404);
+  });
+
+  it('csak a DÖNTÉS-írásra vonatkozik: a /shown ping provider≠sbo mellett 403 marad', async () => {
+    const { env, calls } = makeEnv(COOKIEYES_SITE);
+    const res = await handleConsent(
+      post('/api/consent/shown', { banner_version: 'b1' }, HOST, sboCookie(DECISION.consent_id)),
+      env
+    );
+    expect(res.status).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('hibás formátumú sbo_consent süti nem számít a saját kliensnek → 403', async () => {
+    const { env } = makeEnv(COOKIEYES_SITE);
+    const res = await handleConsent(post('/api/consent', DECISION, HOST, 'sbo_consent=garbage'), env);
+    expect(res.status).toBe(403);
   });
 });
 

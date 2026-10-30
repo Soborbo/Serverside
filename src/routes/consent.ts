@@ -185,6 +185,32 @@ export async function handleConsent(request: Request, env: Env): Promise<Respons
   const hostname = url.hostname;
   const cors = corsHeaders(request, env);
 
+  // A saját CMP kliense küld-e DÖNTÉST: POST /api/consent + `sbo_consent` süti a
+  // kérésen. Ha igen, és a host configja hiányzik vagy nem sbo, az konfig-lemaradás
+  // (a KV a site-build mögött jár) — NEM végleges elutasítás. 403/404-re a kliens
+  // törli a pending proofot (2026-09-18 → 10-16 így veszett el minden SkinLab-
+  // döntés bizonyítéka); 503-ra megőrzi és újraküldi. Minden MÁS kérés (CookieYes-
+  // site, süti nélküli hívó) változatlanul 403/404 — az inertség marad.
+  const isSboDecisionPost =
+    request.method === 'POST' &&
+    url.pathname.replace(/\/+$/, '') === '/api/consent' &&
+    readSboConsentIdFromCookie(request.headers.get('Cookie')) !== undefined;
+  const configLag = (siteId: string | undefined, reason: 'no_site_config' | 'provider_not_sbo') => {
+    logStructured({
+      level: 'error',
+      error_code: TrackingErrorCode.CONSENT_PROVIDER_CONFIG_LAG,
+      message: ERROR_DESCRIPTIONS[TrackingErrorCode.CONSENT_PROVIDER_CONFIG_LAG],
+      hostname,
+      site_id: siteId,
+      reason,
+      duration_ms: Date.now() - startedAt
+    });
+    return new Response('consent_provider_config_lag', {
+      status: 503,
+      headers: { ...cors, 'Retry-After': '3600' }
+    });
+  };
+
   // CLAUDE.md 14.: hostname-alapú site-feloldás, fallback-config SOHA.
   const { config: siteConfig, unavailable } = await lookupSiteConfig(hostname, env);
   if (!siteConfig) {
@@ -212,6 +238,7 @@ export async function handleConsent(request: Request, env: Env): Promise<Respons
       hostname,
       duration_ms: Date.now() - startedAt
     });
+    if (isSboDecisionPost) return configLag(undefined, 'no_site_config');
     return new Response('Not found', { status: 404, headers: cors });
   }
 
@@ -242,6 +269,7 @@ export async function handleConsent(request: Request, env: Env): Promise<Respons
   // consent-döntést: az ott nem a mi modulunkból jönne, tehát nem is bizonyítana
   // semmit, viszont a `consent_log`-ot szennyezné.
   if (!isConsentProviderSbo(siteConfig)) {
+    if (isSboDecisionPost) return configLag(siteConfig.site_id, 'provider_not_sbo');
     logStructured({
       level: 'info',
       message: 'Consent endpoint: provider is not sbo, ignoring',
