@@ -279,6 +279,13 @@ export const TrackingErrorCode = {
    * után, VAGY egy azonosítót ismerő harmadik fél. Ugrás esetén vizsgálandó.
    */
   CONSENT_UNVERIFIED_DECISION: 'TRK-910-010',
+  /**
+   * A saját CMP kliense (a kérés `sbo_consent` sütit hoz) olyan hostra küld
+   * döntést, amelynek a site-configja még nem `provider='sbo'` (vagy hiányzik).
+   * 503-at kap, a kliens MEGŐRZI és újraküldi — 403/404-re törölné, és a
+   * consent-proof némán elveszne (SkinLab 2026-09-18 → 10-16, pilot-review A3).
+   */
+  CONSENT_PROVIDER_CONFIG_LAG: 'TRK-910-011',
 
   RECON_VENDOR_FAILURE_RATE: 'TRK-950-001',
   RECON_COVERAGE_DRIFT: 'TRK-950-002',
@@ -570,6 +577,8 @@ export const ERROR_DESCRIPTIONS: Record<TrackingErrorCode, string> = {
     'Current consent state could not be read before a replay — send withheld, record stays retryable',
   [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]:
     'Unverified (no/wrong sbo_consent_key cookie, or a legacy keyless chain) restricting decision stored — it can only narrow consent; a lost-key withdrawal or a third party knowing the consent_id; a spike needs a look',
+  [TrackingErrorCode.CONSENT_PROVIDER_CONFIG_LAG]:
+    'An sbo CMP client (request carries an sbo_consent cookie) posted a consent decision to a host whose site config is missing or not provider=sbo — answered 503 so the browser keeps the proof and resends; fix the KV consent block for this hostname',
   [TrackingErrorCode.PLATFORM_IDENTIFIER_INVALID]:
     'An EXPECTED platform has a config block, but its identifier is malformed (unfilled placeholder or typo) — no vendor call was made; the event is held in the DLQ with a long backoff and replays once the identifier is fixed in KV',
   [TrackingErrorCode.RECON_VENDOR_FAILURE_RATE]:
@@ -790,6 +799,9 @@ export const ERROR_SEVERITY: Record<TrackingErrorCode, ErrorSeverity> = {
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'warning',
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]: 'warning',
   [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]: 'warning',
+  // Egy élő CMP-site konfig-hibája: amíg áll, MINDEN döntés proofja csak a
+  // böngészőkben él. 2026-09-18 → 10-16 négy hétig senki nem vette észre.
+  [TrackingErrorCode.CONSENT_PROVIDER_CONFIG_LAG]: 'critical',
 
   [TrackingErrorCode.INVALID_JSON]: 'info',
   [TrackingErrorCode.INVALID_LEAD_STATUS_PAYLOAD]: 'info',
@@ -999,6 +1011,7 @@ export const ERROR_RETRYABILITY: Record<TrackingErrorCode, Retryability> = {
   [TrackingErrorCode.CONSENT_GRANTED_BUT_SKIPPED]: 'OPERATOR_ACTION',
   [TrackingErrorCode.CONSENT_STATE_UNAVAILABLE]: 'RETRYABLE',
   [TrackingErrorCode.CONSENT_UNVERIFIED_DECISION]: 'OPERATOR_ACTION',
+  [TrackingErrorCode.CONSENT_PROVIDER_CONFIG_LAG]: 'CONFIG_BLOCKED',
 
   // 950 — reconciliation. A findingek definíció szerint emberi döntést kérnek;
   // a „query failed" ágak viszont átmenetiek.

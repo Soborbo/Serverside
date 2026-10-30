@@ -10,6 +10,28 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.17.4 (2026-10-30)
+
+A consent-proof nem veszhet el konfig-lemaradás miatt (CMP pilot-review, A3/B3).
+Gateway-változás is van, lásd lent.
+
+### Javítva — 404-re a döntés megmarad a pending sorban (`lib/consent-sbo.ts`)
+
+A kliens minden 4xx-re (429 kivételével) törölte a még nem nyugtázott döntést. A
+SkinLabon 2026-09-18 → 10-16 a KV még nem volt `provider: 'sbo'`, a végpont
+elutasított, és a négy hét összes consent-bizonyítéka némán elveszett — a süti
+közben élt és konverziókat kapuzott (gazdátlan `consent_id`-k a receiptekben). A
+404 (hiányzó site-proxy vagy host-config) mostantól retryable: a pending marad, és
+a következő oldalletöltés újraküldi. A 400 (hibás payload) továbbra is végleges.
+
+### Gateway (`src/routes/consent.ts`) — 503 a saját kliens config-lemaradására
+
+Ha a `POST /api/consent` kérés `sbo_consent` sütit hoz, de a host configja hiányzik
+vagy nem `provider: 'sbo'`, a válasz **503 + `Retry-After: 3600`** (TRK-910-011,
+critical), nem 403/404. Ez a MÁR kint lévő klienseket is védi (a 6.9.0–6.17.3 az
+5xx-et eddig is újraküldte). Süti nélküli hívóra és CookieYes-site-ra a végpont
+változatlanul inert 403.
+
 ## 6.17.3 (2026-10-30)
 
 Két javítás, a 6.16.0 → 6.17.x GitHubos Codex-reviewjából (Serverside #156).

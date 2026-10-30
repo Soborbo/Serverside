@@ -14,6 +14,9 @@
  *   204  → tárolva (vagy idempotens duplikátum) → a pending példány törölhető
  *   4xx  → a payload hibás/tiltott — az ismétlés ugyanazt adná → eldobjuk, DE
  *          hangosan (TRK-4002); a süti-állapot lokálisan attól még érvényes
+ *   404  → KIVÉTEL: a végpont (még) nincs ott — hiányzó site-proxy vagy
+ *          host-config. Ez konfig-lemaradás, nem a döntés hibája → megőrizzük.
+ *          (A gateway a saját config-lemaradására 503-at ad, TRK-910-011.)
  *   429 / 5xx / network → a kliens AZ EGYETLEN ŐRZŐ → a pending megmarad, és a
  *          következő oldalletöltés UGYANAZZAL a consent_event_id-vel újraküldi
  *          (az idempotenciát a szerver UNIQUE indexe adja)
@@ -249,7 +252,7 @@ async function postConsent(payload: SboConsentWirePayload): Promise<PostOutcome>
       report('CONSENT_POST_REJECTED', { status: res.status, decision: payload.decision, reason: 'key_mismatch' });
       return 'key_mismatch';
     }
-    if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+    if (res.status >= 400 && res.status < 500 && res.status !== 429 && res.status !== 404) {
       // 400 = hibás payload (megnevezett okkal), 403 = origin/provider-tiltás.
       // Az újraküldés determinisztikusan ugyanezt adná — de a kudarc HANGOS.
       report('CONSENT_POST_REJECTED', { status: res.status, decision: payload.decision });
