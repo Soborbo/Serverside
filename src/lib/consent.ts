@@ -263,6 +263,57 @@ export function parseConsentCookieHeader(cookieHeader: string | null | undefined
   };
 }
 
+const SBO_DECISIONS: ReadonlySet<string> = new Set(['accept_all', 'reject_all', 'custom', 'withdrawn']);
+
+/**
+ * A worker SAJÁT olvasata `provider='sbo'` site-on: a `sbo_consent` süti a HTTP
+ * Cookie headerből. sbo alatt EZ a döntés forrása — a `cookieyes-consent` ott egy
+ * 09-18 előtti maradvány, amit a kliens sem tekint hozzájárulásnak.
+ *
+ * Formátum: `v2.<a>.<m>.<revision>.<decision>.<consent_id>.<decidedAtSec>.<policy>`.
+ * SZERKEZETI parse: a policy-verziót és a lejáratot a worker nem ismeri (a site
+ * buildje hordozza), ezért itt nem is ellenőrizzük — ez telemetria, nem kapu.
+ * Bármi hibás → NULL, nem találgatunk.
+ *
+ * A nyers stringet SZÁNDÉKOSAN nem adjuk vissza: `consent_id`-t hordoz, és a
+ * `consent_debug`-ba (raw_server) azonosító nem kerülhet.
+ */
+export function parseSboConsentCookieHeader(cookieHeader: string | null | undefined): {
+  snapshot: ConsentSourceSnapshot;
+  raw?: string;
+} {
+  if (!cookieHeader) return { snapshot: { ...CONSENT_SOURCE_UNAVAILABLE } };
+
+  let raw: string | undefined;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() !== 'sbo_consent') continue;
+    try {
+      raw = decodeURIComponent(part.slice(idx + 1).trim());
+    } catch {
+      raw = part.slice(idx + 1).trim();
+    }
+    break;
+  }
+  if (!raw) return { snapshot: { ...CONSENT_SOURCE_UNAVAILABLE } };
+
+  const p = raw.split('.');
+  const bit = (v: string | undefined) => v === '0' || v === '1';
+  if (
+    p.length !== 8 ||
+    p[0] !== 'v2' ||
+    !bit(p[1]) ||
+    !bit(p[2]) ||
+    !/^[1-9]\d{0,4}$/.test(p[3]) ||
+    !SBO_DECISIONS.has(p[4]) ||
+    !/^[A-Za-z0-9_:-]{8,64}$/.test(p[5])
+  ) {
+    return { snapshot: { ...CONSENT_SOURCE_UNAVAILABLE } };
+  }
+  return { snapshot: { analytics: p[1] === '1', marketing: p[2] === '1' } };
+}
+
 /**
  * Minden NEM-NULL forrás egyezik-e.
  *
@@ -472,8 +523,19 @@ export interface ConsentTelemetryInput {
   /** `consent_strict` a site-configból (default false). */
   strict: boolean;
   ingressKind: IngressKind;
-  /** A worker SAJÁT Cookie-header olvasata. */
+  /**
+   * A worker SAJÁT Cookie-header olvasata. sbo site-on a `sbo_consent`-ből
+   * (parseSboConsentCookieHeader), minden más site-on a `cookieyes-consent`-ből.
+   */
   serverCookie: { snapshot: ConsentSourceSnapshot; raw?: string };
+  /**
+   * `consent.provider === 'sbo'`. Ilyenkor a kliens `cookie`/`api` pillanatképe a
+   * CookieYes-t olvassa (párhuzamos mérési ablak), ami sbo alatt NEM döntési
+   * forrás: a receiptre kiírjuk, de a forrás-egyezésbe nem számít bele — különben
+   * egy régi CookieYes-maradvány és a saját süti eltérése `consent_strict`
+   * mellett hamis TRK-910-003-mal blokkolná a valódi konverziót.
+   */
+  sboSite?: boolean;
 }
 
 export interface ConsentTelemetry {
@@ -525,7 +587,7 @@ export function buildConsentTelemetry(input: ConsentTelemetryInput): ConsentTele
   const diagnostics = diagnoseConsent({
     rawConsent: input.rawConsent,
     consent: input.consent,
-    sources: [cookie, api, server],
+    sources: input.sboSite ? [server] : [cookie, api, server],
     client_lib_version: client?.client_lib_version,
     consent_age_s: client?.consent_age_s
   });

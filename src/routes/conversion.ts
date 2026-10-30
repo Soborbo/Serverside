@@ -26,6 +26,7 @@ import {
   resolveConsent,
   buildConsentTelemetry,
   parseConsentCookieHeader,
+  parseSboConsentCookieHeader,
   parseConsentSources,
   type ConsentDecision,
   type ConsentTelemetry
@@ -658,7 +659,13 @@ export async function handleConversion(
     requireConsent,
     strict: siteConfig.consent_strict === true,
     ingressKind: serverIngress ? 'server' : 'browser',
-    serverCookie: parseConsentCookieHeader(request.headers.get('Cookie'))
+    // sbo alatt a worker a SAJÁT sütit olvassa: a régi (6.9.0-s) kliensek nem
+    // jelentik a forrásukat, és enélkül a receipt 'none'-t mutatna egy valójában
+    // sbo_consent-tel kapuzott döntés fölött (2026-10 pilot-review, A1).
+    serverCookie: sboSite
+      ? parseSboConsentCookieHeader(request.headers.get('Cookie'))
+      : parseConsentCookieHeader(request.headers.get('Cookie')),
+    sboSite
   });
   for (const code of consentTelemetry.errorCodes) {
     logStructured({
