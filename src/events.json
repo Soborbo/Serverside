@@ -482,5 +482,35 @@
     "legacy_ga4": null,
     "legacy_datalayer": null,
     "description": "CRM offline (P10): reszleges jovairas / felszorzas — a mar feltoltott konverzio ERTEKENEK helyesbitese. MA NEM KEZBESITHETO, ugyanazert, mint a revenue_retracted."
+  },
+  {
+    "name": "waitlist_signup_submitted",
+    "kind": "conversion",
+    "module": "leadgen",
+    "ga4_key_event": true,
+    "meta": "Lead",
+    "channels": [
+      "browser"
+    ],
+    "provenance": false,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "Varolistara feliratkozas bekuldve (double opt-in elso lepese; pl. nonmono.dating). Csak GA4, gateway nelkul."
+  },
+  {
+    "name": "waitlist_signup_confirmed",
+    "kind": "conversion",
+    "module": "leadgen",
+    "ga4_key_event": true,
+    "meta": "CompleteRegistration",
+    "channels": [
+      "browser"
+    ],
+    "provenance": false,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "Varolista-feliratkozas megerositve (e-mail link). Hozzajarulassal a site Worker GA4 Measurement Protocollal kuldi a feliratkozo latogatas client_id-javal, kulonben a bongeszo; NEM a gatewayen at."
   }
 ]
