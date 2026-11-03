@@ -14,6 +14,11 @@ interface ImportMetaEnv {
    * `/api/consent/`. Lásd lib/config.ts `consentEndpoint`.
    */
   readonly PUBLIC_TRACKING_CONSENT_ENDPOINT?: string;
+  /**
+   * Az advanced mód jogi jóváhagyása `<YYYY-MM-DD>:<hivatkozás>` alakban — nélküle
+   * az eea_uk rulesetben az advanced build bukik. Lásd lib/config.ts advancedModeBlocker.
+   */
+  readonly PUBLIC_TRACKING_ADVANCED_APPROVAL?: string;
   /** Vite dev flag — used by consent.ts isDevMode(). */
   readonly DEV?: boolean;
   readonly [key: string]: string | boolean | undefined;

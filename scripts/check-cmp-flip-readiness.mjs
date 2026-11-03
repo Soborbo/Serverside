@@ -140,6 +140,24 @@ if (configPath) {
     } else {
       ok('require_consent: true');
     }
+    // Döntés (2026-11-03): EEA/UK alatt a basic a kötelező alap. A KV `consent.mode`
+    // a site build-env (PUBLIC_TRACKING_CONSENT_MODE) párja — a kettő ne mondjon
+    // mást, és az advanced egyik helyen se jelenjen meg jóváhagyás nélkül. A build
+    // maga is bukik ilyenkor (soborbo-tracking/lib/config.ts advancedModeBlocker).
+    if (cfg.consent?.mode === 'advanced') {
+      const approval = typeof cfg.consent.advanced_approval === 'string' ? cfg.consent.advanced_approval.trim() : '';
+      if (!/^\d{4}-\d{2}-\d{2}:[A-Za-z0-9._/-]{3,}$/.test(approval)) {
+        fail(
+          'CMP-FLIP-008',
+          "consent.mode: 'advanced' jogi jóváhagyás nélkül.",
+          "EEA/UK alatt a basic a kötelező alap. Advancedhez: consent.advanced_approval = '<YYYY-MM-DD>:<jóváhagyó dokumentum>' (és ugyanez a site PUBLIC_TRACKING_ADVANCED_APPROVAL env-jében)."
+        );
+      } else {
+        warn('CMP-FLIP-008', `advanced mód, jóváhagyás: ${approval} — a site build-env-jében is meg kell lennie.`);
+      }
+    } else {
+      ok(`consent.mode: ${cfg.consent?.mode ?? 'basic (default)'}`);
+    }
     if (cfg.meta?.test_event_code) {
       fail('CMP-FLIP-007', 'A configban test_event_code van!', 'CLAUDE.md 17. — éles KV-be SOSEM. Távolítsd el a flip előtt.');
     }

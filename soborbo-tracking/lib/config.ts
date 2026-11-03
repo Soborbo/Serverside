@@ -117,7 +117,7 @@ function readEnv(key: string): string | undefined {
  * böngészőbe másolódik, nincs bundler-injektálás). A gateway minimuma:
  * Serverside `src/lib/consent.ts` MIN_CLIENT_LIB_VERSION.
  */
-export const CLIENT_LIB_VERSION = '6.18.0';
+export const CLIENT_LIB_VERSION = '6.19.0';
 
 export const trackingConfig: TrackingConfig = {
   country: (readEnv('PUBLIC_TRACKING_COUNTRY') as Market) || 'GB',
@@ -132,6 +132,32 @@ export const trackingConfig: TrackingConfig = {
   vendors: parseVendors(readEnv('PUBLIC_TRACKING_VENDORS')),
   consentEndpoint: readEnv('PUBLIC_TRACKING_CONSENT_ENDPOINT')?.trim() || '/api/consent',
 };
+
+/**
+ * Az advanced mód kapuja EEA/UK szabályrendszer alatt (döntés: 2026-11-03).
+ *
+ * Az advanced mód döntés előtt és elutasítás után is küld süti nélküli pingeket a
+ * Google-nek; az EDPB 2/2023 iránymutatása szerint az ePrivacy 5(3) erre is
+ * kiterjedhet. Ezért az `eea_uk` rulesetben az advanced CSAK dokumentált jogi
+ * jóváhagyással buildelhető: `PUBLIC_TRACKING_ADVANCED_APPROVAL=<YYYY-MM-DD>:<hivatkozás>`
+ * (a jóváhagyás napja és a jóváhagyó dokumentum azonosítója). Enélkül a build
+ * hangosan bukik — egy env-sorral senki nem „próbálhatja ki" élesben.
+ *
+ * Visszatérés: a hibaüzenet, vagy `null`, ha a konfiguráció megengedett.
+ */
+export const ADVANCED_APPROVAL_RE = /^\d{4}-\d{2}-\d{2}:[A-Za-z0-9._/-]{3,}$/;
+export function advancedModeBlocker(
+  mode: ConsentModeKind,
+  ruleset: string,
+  approval: string | undefined
+): string | null {
+  if (mode !== 'advanced' || ruleset !== 'eea_uk') return null;
+  if (approval && ADVANCED_APPROVAL_RE.test(approval.trim())) return null;
+  return (
+    'PUBLIC_TRACKING_CONSENT_MODE=advanced az eea_uk rulesetben jogi jóváhagyás nélkül nem buildelhető. ' +
+    'Maradj basic módban, vagy add meg: PUBLIC_TRACKING_ADVANCED_APPROVAL=<YYYY-MM-DD>:<jóváhagyó dokumentum>.'
+  );
+}
 
 /** EGY helyen definiált provider-kérdés — ne szóródjon `=== 'sbo'` összehasonlítás. */
 export function isSboConsentProvider(): boolean {
