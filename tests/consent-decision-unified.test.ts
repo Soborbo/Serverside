@@ -8,7 +8,7 @@ vi.mock('../src/lib/notify', () => ({
 
 import { handleLeadStatus } from '../src/routes/lead-status';
 import { retrySingle } from '../src/scheduled/retry';
-import { decideAdConsent, type ConsentLogState } from '../src/lib/consent-log';
+import { consentTextVendors, decideAdConsent, type ConsentLogState } from '../src/lib/consent-log';
 import type { DeadLetterRecord } from '../src/lib/deadletter';
 import type { Env } from '../src/env';
 
@@ -29,8 +29,10 @@ const STATE = (o: Partial<ConsentLogState> = {}): ConsentLogState => ({
   ad_personalization: 'GRANTED',
   ad_storage: 'GRANTED',
   analytics_storage: 'GRANTED',
-  client_decided_at: '2026-10-01T10:00:00.000Z',
-  server_received_at: '2026-10-01T10:00:01.000Z',
+  // Relatív idő: a 180 napos lejárat miatt egy rögzített dátum idővel elévülne.
+  client_decided_at: new Date(Date.now() - 3_600_000).toISOString(),
+  server_received_at: new Date(Date.now() - 3_599_000).toISOString(),
+  consent_text_version: '2026-09-a.ga4_google_ads_google_ec_meta',
   ...o
 });
 const ONLY_MARKETING = STATE({
@@ -139,6 +141,81 @@ function leadStatus(body: Record<string, unknown>): Request {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('decideAdConsent — lejárat és vendor-fedés (saját CMP)', () => {
+  const DAY = 86_400_000;
+  const NOW = Date.parse('2026-11-03T12:00:00.000Z');
+  const at = (daysAgo: number) => new Date(NOW - daysAgo * DAY).toISOString();
+  const run = (state: ConsentLogState, extra: { platform?: string; nowMs?: number } = {}) =>
+    decideAdConsent({
+      sbo: true, requireConsent: true, category: 'ads', receipt: null,
+      consentLog: { kind: 'found', state }, nowMs: NOW, ...extra
+    });
+
+  it('180 napon belüli engedély érvényes, a 180. nap után consent_expired', () => {
+    expect(run(STATE({ server_received_at: at(179) }), { platform: 'gads' }).kind).toBe('allowed');
+    expect(run(STATE({ server_received_at: at(181) }), { platform: 'gads' })).toMatchObject({
+      kind: 'denied', source: 'consent_log', skip_reason: 'consent_expired'
+    });
+  });
+
+  it('a lejárat a SZERVER beérkezési idejéből számít, nem a kliens órájából', () => {
+    // A kliens „ma"-t állít, de a sor 200 napja érkezett → lejárt.
+    expect(run(STATE({ client_decided_at: at(0), server_received_at: at(200) })).kind).toBe('denied');
+  });
+
+  it('olvashatatlan beérkezési idő → lejártnak számít (bizonytalanból nincs engedély)', () => {
+    expect(run(STATE({ server_received_at: 'nem-dátum' }))).toMatchObject({ skip_reason: 'consent_expired' });
+  });
+
+  it('a visszavonás a lejárat ELŐTT dönt: régi visszavont állapot → consent_withdrawn marad', () => {
+    expect(run(STATE({ decision: 'withdrawn', ad_user_data: 'DENIED', server_received_at: at(400) }))).toMatchObject({
+      skip_reason: 'consent_withdrawn'
+    });
+  });
+
+  it('Google offline: a google_ec szöveg is fedi (befilo-alak)', () => {
+    expect(run(STATE({ consent_text_version: '2026-09-a.clarity_ga4_google_ec' }), { platform: 'gads' }).kind).toBe('allowed');
+    expect(run(STATE({ consent_text_version: '2026-09-a.clarity_ga4_google_ec.t431acc4a' }), { platform: 'gads' }).kind).toBe('allowed');
+  });
+
+  it('a szövegben meg nem nevezett platform → consent_vendor_not_covered', () => {
+    // nonmono-hu alak: GA4 + Clarity — se Meta, se Google hirdetés.
+    expect(run(STATE({ consent_text_version: '2026-09-a.clarity_ga4' }), { platform: 'meta' })).toMatchObject({
+      kind: 'denied', skip_reason: 'consent_vendor_not_covered'
+    });
+    expect(run(STATE({ consent_text_version: '2026-09-a.clarity_ga4' }), { platform: 'gads' })).toMatchObject({
+      skip_reason: 'consent_vendor_not_covered'
+    });
+    // Olyan platform, amire vendor-azonosító sincs → soha nem fedett.
+    expect(run(STATE(), { platform: 'msads' })).toMatchObject({ skip_reason: 'consent_vendor_not_covered' });
+  });
+
+  it('hiányzó vagy ismeretlen szövegverzió → nincs fedés (fail-closed)', () => {
+    expect(run(STATE({ consent_text_version: '2026-09-a.ga4_tiktok' }), { platform: 'gads' }).kind).toBe('denied');
+    expect(run(STATE({ consent_text_version: '' as string }), { platform: 'gads' }).kind).toBe('denied');
+  });
+
+  it('platform nélkül a vendor-szűkítés kimarad (a lejárat nem)', () => {
+    expect(run(STATE({ consent_text_version: '2026-09-a.clarity_ga4' })).kind).toBe('allowed');
+  });
+});
+
+describe('consentTextVendors — a consent_text_version felbontása', () => {
+  it('az aláhúzásos azonosítókat egyben ismeri fel', () => {
+    expect(consentTextVendors('2026-09-a.ga4_google_ads_google_ec_meta')).toEqual(['ga4', 'google_ads', 'google_ec', 'meta']);
+    expect(consentTextVendors('2026-09-a.clarity_ga4_google_ec.t431acc4a')).toEqual(['clarity', 'ga4', 'google_ec']);
+  });
+  it('vendorlista nélküli (2026-08-a kori) szöveg → az alapkészlet', () => {
+    expect(consentTextVendors('2026-08-a')).toEqual(['ga4', 'google_ads', 'meta']);
+    expect(consentTextVendors('2026-08-a.t0000beef')).toEqual(['ga4', 'google_ads', 'meta']);
+  });
+  it('none → üres; ismeretlen darab vagy hiány → null', () => {
+    expect(consentTextVendors('2026-09-a.none')).toEqual([]);
+    expect(consentTextVendors('2026-09-a.ga4_googl')).toBeNull();
+    expect(consentTextVendors(undefined)).toBeNull();
+  });
+});
 
 describe('CRM-esemény (lead-status) sbo-site-on: nincs visszaesés régi engedélyre', () => {
   it('consent_id ismert, de nincs consent_log-sora → a GRANTED receipt ellenére NINCS feltöltés', async () => {

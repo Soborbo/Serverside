@@ -1,6 +1,6 @@
 # Hozzájárulási döntések — hol születnek, melyik szabály szerint
 
-Állapot: 2026-10-18 (review-egységesítés, 6.13.0). Ez a térkép a kód párja: ha
+Állapot: 2026-11-03 (lejárat + vendor-fedés a kézbesítési kapun); előtte 2026-10-18 (review-egységesítés, 6.13.0). Ez a térkép a kód párja: ha
 egy új út hirdetési vagy analitikai kézbesítésről dönt, ide kerül, és a meglévő
 közös függvényt hívja.
 
@@ -38,6 +38,17 @@ Adatbázishiba soha nem válik engedéllyé, és nem okoz végleges eseményvesz
 - **CookieYes-site:** nincs consent_log és nincs visszavonás-forrás. Az
   újraküldésnél ott a capture-kori kapu döntése áll; a lead-olvasás hibája nem
   állítja meg a küldést (nincs mit elmulasztani).
+- **Saját CMP (sbo) — az engedély érvényessége:** a consent_log szerinti
+  engedély a beérkezésétől (szerveridő) **180 napig** érvényes, utána
+  `consent_expired`: ugyanennyi után kérdez újra a böngésző is. Az engedély
+  ráadásul csak a szövegében (`consent_text_version` vendorlistája)
+  **megnevezett** platformra szól; ami nincs benne, az
+  `consent_vendor_not_covered`. A Google offline feltöltést a `google_ads` és a
+  `google_ec` is fedi; a vendorlista nélküli 2026-08-a kori szöveg az
+  alapkészletet (`ga4`, `google_ads`, `meta`) nevezte meg. Mindkettő terminális,
+  és a CRM-úton `do_not_replay`-t ír. A policy-verzió puszta váltása NEM
+  érvényteleníti a korábbi engedélyt — csak az, ha a cél-vendor kimaradt
+  (döntés: 2026-11-03).
 - **Saját CMP (sbo):** a capture-kori receipt, a CRM `ad_allowed` jele és a
   CookieYes-süti NEM evidencia. Üzleti hatás: a webes döntés nélküli (pl.
   telefonos) leadek offline konverziója sbo-site-on nem töltődik fel.

@@ -48,8 +48,10 @@ const WITHDRAWN = {
   ad_personalization: 'DENIED',
   ad_storage: 'DENIED',
   analytics_storage: 'DENIED',
-  client_decided_at: '2026-10-01T10:00:00.000Z',
-  server_received_at: '2026-10-01T10:00:01.000Z'
+  // Relatív idő: a 180 napos lejárat miatt egy rögzített dátum idővel elévülne.
+  client_decided_at: new Date(Date.now() - 3_600_000).toISOString(),
+  server_received_at: new Date(Date.now() - 3_599_000).toISOString(),
+  consent_text_version: '2026-09-a.ga4_google_ads_google_ec_meta'
 };
 const GRANTED = { ...WITHDRAWN, revision: 3, decision: 'accept_all', cat_analytics: 1, cat_marketing: 1,
   ad_user_data: 'GRANTED', ad_personalization: 'GRANTED', ad_storage: 'GRANTED', analytics_storage: 'GRANTED' };
@@ -153,6 +155,25 @@ describe('R1 — minden hirdetési replay az AKTUÁLIS consent-állapotot nézi'
     expect(result.success).toBe(true);
     expect(result.skipped).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('meta: a GRANTED állapot szövege nem nevezte meg a Metát → terminális skip, kimenő kérés nélkül', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const ledger = makeLedger({ consentLog: { ...GRANTED, consent_text_version: '2026-09-a.clarity_ga4' } });
+    const result = await retrySingle(makeEnv(SBO_SITE, ledger), record('meta', { consent_id: 'consent-12345678' }));
+    expect(result).toMatchObject({ success: true, skipped: true, skip_reason: 'consent_vendor_not_covered' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('gads: 180 napnál régebbi GRANTED engedély → consent_expired, kimenő kérés nélkül', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const old = new Date(Date.now() - 181 * 86_400_000).toISOString();
+    const ledger = makeLedger({ consentLog: { ...GRANTED, client_decided_at: old, server_received_at: old } });
+    const result = await retrySingle(makeEnv(SBO_SITE, ledger), record('gads', { consent_id: 'consent-12345678' }));
+    expect(result).toMatchObject({ success: true, skipped: true, skip_reason: 'consent_expired' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('CookieYes-site, consent_id nélkül: a mai viselkedés bitre változatlan (küld)', async () => {

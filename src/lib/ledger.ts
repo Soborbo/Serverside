@@ -884,7 +884,7 @@ async function readOwnConsentState(
   //  unverif  — a legutóbb BEÉRKEZETT igazolatlan sor (szigorítás a védett láncon).
   const cols = `consent_id, revision, decision, cat_analytics, cat_marketing,
                 ad_user_data, ad_personalization, ad_storage, analytics_storage,
-                client_decided_at, server_received_at, verified, rowid AS seq`;
+                client_decided_at, server_received_at, consent_text_version, verified, rowid AS seq`;
   try {
     const where = 'FROM consent_log WHERE site_id = ? AND consent_id = ?';
     const one = (filter: string, order: string) =>
@@ -936,6 +936,7 @@ interface ConsentRow {
   analytics_storage: string;
   client_decided_at: string;
   server_received_at: string;
+  consent_text_version: string;
   verified: number;
   /** A beszúrási sorrend (SQLite rowid) — a „később érkezett" egyetlen megbízható mércéje. */
   seq: number;
@@ -953,7 +954,8 @@ function toConsentState(row: ConsentRow): ConsentLogState {
     ad_storage: row.ad_storage as ConsentLogState['ad_storage'],
     analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
     client_decided_at: row.client_decided_at,
-    server_received_at: row.server_received_at
+    server_received_at: row.server_received_at,
+    consent_text_version: row.consent_text_version
   };
 }
 
