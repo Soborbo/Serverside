@@ -57,8 +57,8 @@ describe('friss Google klikk-ID érkezik', () => {
     const out = collectAttribution();
     expect(out.gbraid).toBe('UJ-GBRAID');
     expect(out.gclid, 'a régi gclid ott maradt az új gbraid mellett').toBeUndefined();
-    // A nem-Google mezők érintetlenek: ez nem általános takarítás.
-    expect(out.utm_source).toBe('google');
+    // A friss klikk-ID új érintés (K2, 6.18.0): a régi kampány sem marad mellette.
+    expect(out.utm_source).toBeUndefined();
     expect(stored().gclid).toBeUndefined();
   });
 

@@ -142,6 +142,14 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
      Stored first touch still wins; the provider's non-empty values replace only
      the built-in fallback, and its referrer goes through the same external-only
      filter (`landing_page` must be a same-site URL or a `/path`).
+   - **Attribution model (6.18.0):** `sb_first_touch` is written ONCE — the first
+     visit that carries tracking params AFTER marketing consent (a direct or
+     organic first visit writes nothing), and never overwritten. `sb_tracking` is
+     the last touch: any fresh UTM, or a click id different from the stored one,
+     replaces the whole UTM group and `landingPage` (the page where that click
+     landed); a URL without tracking params changes nothing. `getAttribution()`
+     exposes `first_*` (source/medium/campaign/term/content/gclid) and `last_*`.
+     The gateway copy's `landing_page` / `referrer` stay first touch.
 6. **GTM**: import `gtm/container.json` into the user's GTM container and wire the
    GA4 event names per `docs/CANONICAL-EVENTS.md` (`docs/gtm-setup.md`).
 7. **Verify locally**: `npm test` + `npm run typecheck` +

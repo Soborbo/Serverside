@@ -222,7 +222,7 @@ function dispatchToGateway(
     event_id: eventId,
     event_time: Math.floor(Date.now() / 1000),
     ...(typeof params.value === 'number' ? { value: params.value } : {}),
-    ...(params.currency ? { currency: params.currency } : {}),
+    ...(typeof params.value === 'number' && params.currency ? { currency: params.currency } : {}),
     user_data: {
       email: params.email,
       phone_number: params.phone,

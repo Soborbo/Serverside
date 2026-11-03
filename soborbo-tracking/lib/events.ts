@@ -269,8 +269,10 @@ function buildConversionPayload(data: ConversionData): Record<string, unknown> {
     device: getDevice(),
     page_url: getPageUrl(),
     ...getAttribution(),
+    // K7 (6.18.0): valós érték nélkül se `value`, se `currency` — a piaci
+    // alapértékű pénznem egy érték nélküli konverzió mellett félrevezető.
     ...(data.value != null && data.value > 0 && { value: data.value }),
-    ...(data.currency && { currency: data.currency }),
+    ...(data.value != null && data.value > 0 && data.currency && { currency: data.currency }),
     ...(data.gclid && { gclid: data.gclid }),
   };
 }

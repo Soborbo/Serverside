@@ -41,7 +41,11 @@ describe('kiterjesztett UTM-ek — a kanonikus attribúcióban', () => {
     expect(src).toMatch(new RegExp(`'${field}'`));
   });
 
+  // 6.18.0: a `getAllTrackingData` a UTM-csoportot egyben veszi — új érintésnél
+  // az URL-ből, különben a tárolóból — a közös `UTM_KEYS` listán végigmenve.
   it.each(EXTENDED)('a `%s`-t az URL-olvasás is felveszi (stored fallbackkel)', (field) => {
-    expect(src).toMatch(new RegExp(`${field}: u\\.get\\('${field}'\\) \\|\\| s\\?\\.${field}`));
+    const utmKeys = src.match(/export const UTM_KEYS = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
+    expect(utmKeys).toMatch(new RegExp(`'${field}'`));
+    expect(src).toMatch(/for \(const k of UTM_KEYS\) \(out as Record<string, string \| undefined>\)\[k\] = campaign\[k\]/);
   });
 });
