@@ -97,8 +97,19 @@ describe('attribution — first/last touch + source type', () => {
     expect(s?.utm_campaign).toBeUndefined();
   });
 
-  it('UTM nélküli látogatás nem törli a tárolt kampányt', () => {
+  // K2 (6.18.0): egy friss klikk-ID új érintés — a régi kampány nem marad mellette.
+  // (6.17.x-ig ez a teszt az ellenkezőjét rögzítette.)
+  it('K2: UTM nélküli, ÚJ klikk-ID-s érkezés a tárolt kampányt is kiveszi', () => {
     setUrl('/?utm_source=google&utm_campaign=spring');
+    captureUrlParams(); persistTrackingParams();
+    setUrl('/?fbclid=FB1');
+    captureUrlParams(); persistTrackingParams();
+    expect(getStoredData()?.utm_campaign).toBeUndefined();
+    expect(getStoredData()?.fbclid).toBe('FB1');
+  });
+
+  it('K2: UGYANAZ a klikk-ID újra (consent-callback, ismételt perzisztálás) nem törli a kampányt', () => {
+    setUrl('/?fbclid=FB1&utm_source=facebook&utm_campaign=spring');
     captureUrlParams(); persistTrackingParams();
     setUrl('/?fbclid=FB1');
     captureUrlParams(); persistTrackingParams();

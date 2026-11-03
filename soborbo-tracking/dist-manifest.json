@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.17.4",
+  "version": "6.18.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "a8c96cf76296a7edc019954f4ab8573d995718e89ab49bdcfddd96114f62a276",
+      "sha256": "838f0e64fc6f8c68c3708d138b93c38ef2c3efcdfa6e9446dcdd9346bb285fed",
       "bytes": 6594,
       "role": "browser"
     },
@@ -60,13 +60,13 @@
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "92226b73b56f856d490fbdcfd5c3049881926898d746843b7e602b23667f08d8",
-      "bytes": 19541,
+      "sha256": "f101924da843b31ea6fa9b007635f907d4cea9a13d4f361a57d9592c6fe1ed87",
+      "bytes": 19749,
       "role": "browser"
     },
     "lib/gateway.ts": {
-      "sha256": "d0803d9ec4dabfb6b1b6949f2179b4feca032310329f9ac5db9778c3900d26a5",
-      "bytes": 37062,
+      "sha256": "af6d8b4daab21771fbd7bee9933c87961d56977e4a12c0ccacde50c74a0c58e8",
+      "bytes": 37503,
       "role": "browser"
     },
     "lib/google-click-id.ts": {
@@ -75,8 +75,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "059f4776bd093a87c927ea11ab559261fd1e5d5dd351c19e7ad64c5257c97295",
-      "bytes": 30697,
+      "sha256": "8fb6c3df6c94d0bf5c84e0173313dd47830b5a3d7454292136142b28b0f44e79",
+      "bytes": 30733,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -85,8 +85,8 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "5e4262f3873193faaf9ecc6fbdbb09deb639ee7f889891583e7e6d475be7dea8",
-      "bytes": 39831,
+      "sha256": "23ef162a4955286760dcf273038ccc8c02cc54a66da7a14fb931d352e4c37e69",
+      "bytes": 41229,
       "role": "browser"
     },
     "lib/submit.ts": {
@@ -150,7 +150,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "61955fda2e7ddeec04fd4362abe706635c308c2b1b4328c90cfb62e6c88dd89d",
+      "sha256": "2b5ad2064061017e6e6057525fd9a37353fa7c64b30a923bfce791e6b83a88ad",
       "bytes": 38515,
       "role": "backend"
     },

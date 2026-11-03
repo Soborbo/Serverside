@@ -10,6 +10,51 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.18.0 (2026-11-03)
+
+A leadgen-template attribúciós leletei (`leadgen-template-site` docs/kit-handoff.md,
+K1–K7). Minor, mert a last-touch rekord viselkedése változik. Gateway-oldali
+(worker) változás nincs; a `lib/gateway.ts` böngésző-kódja igen.
+
+### Változott — friss klikk-ID is új érintés (K2; `lib/persistence.ts`, `lib/gateway.ts`)
+
+Egy csak auto-taggelt `?gclid=…` (vagy `fbclid`, `msclkid`, `gbraid`, `wbraid`)
+érkezés eddig megtartotta az előző kampány UTM-jeit: a CRM egy Google-leadet
+Facebook-kampánynak címkézett. Mostantól minden friss, a tárolttól ELTÉRŐ
+klikk-ID új érintés, és a teljes UTM-csoport vele cserélődik (`isNewTouch`). Ugyanaz
+az ID újra nem érintés. **Ez megfordítja a 6.17.x egyik rögzített szabályát**
+(„UTM nélküli látogatás nem törli a tárolt kampányt”) — a két érintett teszt ennek
+megfelelően változott. A `getAllTrackingData()` (rejtett mezők) és a gateway-tároló
+ugyanígy dönt.
+
+### Javítva — `landingPage` a last-touch csoport része (K5; `lib/persistence.ts`)
+
+Eddig az első valaha tárolt oldal maradt 90 napig, és a perzisztálás pillanatában
+olvasott útvonal volt (ahol a látogató a bannert elfogadta). Mostantól új érintésnél
+az az oldal, ahol a kattintás ÉRKEZETT (a `captureUrlParams()` rögzíti). A gateway
+`landing_page` / `referrer` mezői first-touch maradnak (6.16.0).
+
+### Javítva — érték nélkül nincs pénznem (K7; `lib/events.ts`, `lib/index.ts`, `lib/gateway.ts`)
+
+Valós érték nélküli (vagy 0-s) konverzió a piaci alap `currency`-t vitte `value`
+nélkül. Mostantól a `currency` csak a `value` mellett megy — dataLayerben,
+gateway-hívásban és a `trackEvent` útján is.
+
+### Dokumentáció — K4, K6
+
+- `INSTALL.md`: a first/last touch modell (K4).
+- `gtm/README.md`: a `session_id` nem regisztrálható GA4 egyedi dimenzióként (K6).
+
+### Nem ebben a kiadásban
+
+- K1 klikk-ID több hirdetőnél (régi `fbclid` Google-érkezéskor és fordítva): a
+  gateway szándékosan a `_gcl_aw` sütiből veszi a Google-ID-t (6.17.1), így a
+  böngésző-oldali törlés egymagában szétválasztaná a két másolatot. Döntésre vár;
+  `it.fails`-ként rögzítve.
+- Hozzájárulás előtti UTM elvesztése view transition után: consent-politikai döntés.
+
+Teszt: `tests/attribution-k-items.test.ts` (26 eset).
+
 ## 6.17.4 (2026-10-30)
 
 A consent-proof nem veszhet el konfig-lemaradás miatt (CMP pilot-review, A3/B3).

@@ -23,7 +23,7 @@
 import { hasAnalyticsConsent, hasMarketingConsent, readCookieYesApiConsentRaw } from './consent';
 import { readSboConsent, sboConsentAgeSeconds } from './consent-sbo-state';
 import {
-  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, getStoredData, persistTrackingParams, readMarketingLocalStorage, ATTR_STORAGE_KEY, withoutStaleCampaign
+  getFbp, getFbcCookie, getExternalId, getStorageReadBlocked, getStoredData, persistTrackingParams, readMarketingLocalStorage, ATTR_STORAGE_KEY, withoutStaleCampaign, TOUCH_CLICK_KEYS
 } from './persistence';
 import { CLIENT_LIB_VERSION, isSboConsentProvider, trackingConfig } from './config';
 import { generateUUID } from './uuid';
@@ -605,8 +605,11 @@ export function collectAttribution(): AttributionParams {
   // így a kampánya legalább olyan friss, mint a tárolóé. Friss URL-UTM mellett az nyer;
   // kampány nélküli `sb_tracking` (csak klikk-ID-s landing) a tárolóét nem törli —
   // ugyanígy viselkedik maga a `persistTrackingParams` is.
+  // K2 (6.18.0): a csak klikk-ID-s landing IS érintés — az `sb_tracking` ilyenkor
+  // UTM nélkül íródik, és a tároló régi kampánya nem maradhat a friss ID mellett.
   const t = (tracked ?? {}) as unknown as Record<string, string | undefined>;
-  if (!ATTR_UTM_PARAMS.some((k) => fresh[k]) && ATTR_UTM_PARAMS.some((k) => t[k])) {
+  const trackedIsTouch = ATTR_UTM_PARAMS.some((k) => t[k]) || TOUCH_CLICK_KEYS.some((k) => t[k]);
+  if (!ATTR_UTM_PARAMS.some((k) => fresh[k]) && trackedIsTouch) {
     for (const k of ATTR_UTM_PARAMS) {
       const v = t[k];
       if (v) base[k] = v;
@@ -835,7 +838,8 @@ export async function trackConversion(
       event: eventName,
       event_id: eventId,
       ...(params.value !== undefined && { value: params.value }),
-      ...(params.currency && { currency: params.currency }),
+      // K7: pénznem csak érték mellett — érték nélkül egy currency-only konverzió.
+      ...(params.value !== undefined && params.currency && { currency: params.currency }),
       ...(params.source && { source: params.source }),
       ...(params.service && { service: params.service })
     });
@@ -848,7 +852,7 @@ export async function trackConversion(
       event_id: eventId,
       event_time: eventTime,
       value: params.value,
-      currency: params.currency,
+      currency: params.value !== undefined ? params.currency : undefined,
       source: params.source,
       service: params.service,
       user_data: params.user_data,

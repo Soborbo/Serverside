@@ -63,8 +63,9 @@ container you import **into**, so you don't edit that.
    `consultation_request_submitted`, `training_signup_submitted`,
    `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`,
    `quote_calculator_submitted` as Key Events (see `CANONICAL-EVENTS.md`).
-3. **GA4 custom dimensions.** Register `event_id`, `session_id`, `source`, `service`,
-   `device`, `calculator_name`, `step_id` (event-scoped).
+3. **GA4 custom dimensions.** Register `event_id`, `source`, `service`,
+   `device`, `calculator_name`, `step_id` (event-scoped). NOT `session_id`: GA4
+   rejects it as a reserved name — the session is GA4's own (`ga_session_id`).
 4. **GA4 double-counting.** This container fires GA4 **browser-side** — and that is
    the ONLY GA4: the gateway sends none (omit the `ga4` block in the site KV; it is
    diagnostics-only legacy). GA4 does not dedup. See `CANONICAL-EVENTS.md`.

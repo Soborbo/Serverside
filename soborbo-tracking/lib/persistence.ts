@@ -319,9 +319,12 @@ function urlTrackingParams(): Partial<TrackingData> | null {
 
 /** In-memory capture of URL params on page load (before consent). */
 let capturedParams: Partial<TrackingData> | null = null;
+/** Az oldal, ahol a `capturedParams` érkezett — a last-touch `landingPage` (K5). */
+let capturedLandingPath: string | null = null;
 
 export function captureUrlParams(): void {
   capturedParams = urlTrackingParams();
+  capturedLandingPath = capturedParams ? window.location.pathname : null;
 }
 
 /**
@@ -330,16 +333,29 @@ export function captureUrlParams(): void {
  * egy `utm_source=newsletter` látogatás mellé a korábbi `utm_campaign=spring`-et
  * hagyta — egy soha nem létezett kampányt (Codex, paywalled_boilerplate #92).
  * Ugyanaz a szabály, mint a Google klikk-ID-nél: egy kattintás, egy csoport.
+ *
+ * Egy friss, a tárolttól ELTÉRŐ klikk-ID is új érintés (K2, 6.18.0): a csak
+ * auto-taggelt `?gclid=…` érkezés eddig az előző kampány UTM-jeit örökölte, és a
+ * CRM egy Google-leadet Facebook-kampánynak címkézett. Ugyanaz az ID újra
+ * (consent-callback, ismételt perzisztálás) NEM új érintés.
  */
 export const UTM_KEYS = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
   'utm_source_platform', 'utm_creative_format', 'utm_marketing_tactic',
 ] as const;
 
+export const TOUCH_CLICK_KEYS = ['gclid', 'gbraid', 'wbraid', 'fbclid', 'msclkid'] as const;
+
+/** A friss jel új last-touch érintés-e: bármely UTM, vagy a tárolttól eltérő klikk-ID. */
+export function isNewTouch(stored: object | null | undefined, fresh: object | null | undefined): boolean {
+  const f = (fresh ?? {}) as Record<string, unknown>;
+  const s = (stored ?? {}) as Record<string, unknown>;
+  return UTM_KEYS.some((k) => f[k]) || TOUCH_CLICK_KEYS.some((k) => f[k] && f[k] !== s[k]);
+}
+
 export function withoutStaleCampaign<T extends object>(stored: T | null | undefined, fresh: object | null | undefined): T | undefined {
   if (!stored) return undefined;
-  const f = (fresh ?? {}) as Record<string, unknown>;
-  if (!UTM_KEYS.some((k) => f[k])) return { ...stored };
+  if (!isNewTouch(stored, fresh)) return { ...stored };
   const out = { ...stored } as Record<string, unknown>;
   for (const k of UTM_KEYS) delete out[k];
   return out as T;
@@ -401,16 +417,21 @@ export function persistTrackingParams(opts: { granted?: boolean } = {}): void {
   const sameGoogleClick = !!google && !!stored && stored[google.key] === google.value && stored.googleClickAt !== undefined;
   const googleClickAt = !google ? undefined : google.source === 'url' && !sameGoogleClick ? Date.now() : stored?.googleClickAt;
   const { googleClickAt: _staleStamp, ...base } = withoutStaleCampaign(stored, fresh) ?? {};
+  // K5 (6.18.0): a `landingPage` a last-touch csoport része — az az oldal, ahol a
+  // MOSTANI kampány/kattintás érkezett, a capture pillanatában rögzítve (nem ahol a
+  // látogató a bannert elfogadta). Új érintés nélkül a tárolt marad.
+  const freshLanding = (capturedParams && capturedLandingPath) || window.location.pathname;
   const merged = {
     ...base, ...fresh,
     fbclidAt,
     ...(googleClickAt !== undefined ? { googleClickAt } : {}),
     timestamp: Date.now(),
-    landingPage: stored?.landingPage || window.location.pathname,
+    landingPage: isNewTouch(stored, fresh) ? freshLanding : stored?.landingPage || freshLanding,
   } satisfies TrackingData;
   applyGoogleClickId(merged, google);
   lsSet(TRACKING_KEY, JSON.stringify(merged));
   capturedParams = null;
+  capturedLandingPath = null;
 }
 
 export function getAttribution(): AttributionData {
@@ -532,16 +553,13 @@ export function getFbclid(): string | null {
 
 export function getAllTrackingData(): Partial<TrackingData> {
   const s = getStoredData(); const u = new URLSearchParams(window.location.search);
-  const out: Partial<TrackingData> = {
-    fbclid: u.get('fbclid') || s?.fbclid,
-    utm_source: u.get('utm_source') || s?.utm_source, utm_medium: u.get('utm_medium') || s?.utm_medium,
-    utm_campaign: u.get('utm_campaign') || s?.utm_campaign, utm_content: u.get('utm_content') || s?.utm_content,
-    utm_term: u.get('utm_term') || s?.utm_term,
-    utm_id: u.get('utm_id') || s?.utm_id,
-    utm_source_platform: u.get('utm_source_platform') || s?.utm_source_platform,
-    utm_creative_format: u.get('utm_creative_format') || s?.utm_creative_format,
-    utm_marketing_tactic: u.get('utm_marketing_tactic') || s?.utm_marketing_tactic,
-  };
+  // A UTM-csoport egyben jön: új érintésnél (friss UTM vagy eltérő klikk-ID) csak
+  // az URL-ből, különben csak a tárolóból — a rejtett mezők így ugyanazt a
+  // kattintást írják le, mint az `sb_tracking` (K1/K2).
+  const urlSignals = Object.fromEntries([...UTM_KEYS, ...TOUCH_CLICK_KEYS].map((k) => [k, u.get(k) || undefined]));
+  const campaign = (isNewTouch(s, urlSignals) ? urlSignals : (s ?? {})) as Record<string, string | undefined>;
+  const out: Partial<TrackingData> = { fbclid: u.get('fbclid') || s?.fbclid };
+  for (const k of UTM_KEYS) (out as Record<string, string | undefined>)[k] = campaign[k] || undefined;
   // A Google klikk-ID-t NEM kulcsonkent merge-eljuk: ugy a friss URL-beli
   // `gbraid` melle a tarolt `gclid` is bekerulne, es a hidden mezokbe KET
   // kattintas azonositoja menne egyszerre.
