@@ -321,6 +321,7 @@ export async function checkReplayConsent(
     sbo: isConsentProviderSbo(siteConfig),
     requireConsent: siteConfig.require_consent === true,
     category: record.platform === 'ga4' ? 'analytics' : 'ads',
+    platform: record.platform,
     consentLog: consentId ? await readConsentState(env, record.site_id, consentId) : null,
     // A replay-en a receipt csak a consent_id forrása, nem evidencia: a capture-
     // kori kapu már döntött. A hibája viszont saját CMP-n számít (lásd decide).

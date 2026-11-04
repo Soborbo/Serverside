@@ -129,7 +129,7 @@ A vízválasztó **policy vs. hiba**:
 
 | skip_reason | számít veszteségnek? | miért |
 |---|:--:|---|
-| `consent_denied`, `consent_withdrawn`, `consent_missing_failclosed`, `consent_missing_legacy`, `consent_uncertain_failclosed` | ❌ | a rendszer helyesen döntött úgy, hogy nem küld |
+| `consent_denied`, `consent_withdrawn`, `consent_expired`, `consent_vendor_not_covered`, `consent_missing_failclosed`, `consent_missing_legacy`, `consent_uncertain_failclosed` | ❌ | a rendszer helyesen döntött úgy, hogy nem küld |
 | `not_expected`, `eea_rule`, `dedup` | ❌ | policy / nem is elvárt / nem is veszteség |
 | `not_configured`, `invalid_identifier`, `no_identifiers`, `template_guard` | ✅ | config- / adatminőség- / transport-hiba: a pénz emiatt nem ér célba |
 | ismeretlen vagy hiányzó ok | ✅ | a pénzúton a „nem tudjuk, miért nem ment el" nem minősülhet rendben lévőnek |
