@@ -7,7 +7,14 @@ import type {
   ConsentSourceName,
   IngressKind
 } from './consent';
-import { signalsFromCategories, type ConsentLogEntry, type ConsentMetricEntry, type ConsentLogState } from './consent-log';
+import {
+  consentTextVendors,
+  narrowConsentScope,
+  signalsFromCategories,
+  type ConsentLogEntry,
+  type ConsentMetricEntry,
+  type ConsentLogState
+} from './consent-log';
 import type { Platform } from './deadletter';
 import type { SkipReason } from './skip-reason';
 import { sanitizeErrorMessage, VENDOR_DETAIL_MAX_LEN } from './log-sanitize';
@@ -860,15 +867,26 @@ export async function readConsentState(
 
 /**
  * Két consent-állapot METSZETE (pure): egy kategória csak akkor engedélyezett,
- * ha mindkettőben az. Ha semmi nem szűkül, az eredeti állapot változatlan.
+ * ha mindkettőben az; a kézbesítési hatókör (effective_*) is metsződik. Ha a
+ * kategóriák nem szűkülnek, a bizonyíték-mezők az eredeti állapotéi maradnak.
  */
 export function intersectConsentState(a: ConsentLogState, b: ConsentLogState): ConsentLogState {
   const analytics = a.cat_analytics && b.cat_analytics;
   const marketing = a.cat_marketing && b.cat_marketing;
-  if (analytics === a.cat_analytics && marketing === a.cat_marketing) return a;
+  // A kézbesítési hatókör (vendorlista, érvényesség) is metsződik — egy szűkebb
+  // utód-lánc vendorlistája a régi consent_id-hoz kötött eseményekre is hat.
+  const scope = narrowConsentScope(a, b);
+  if (analytics === a.cat_analytics && marketing === a.cat_marketing) return { ...a, ...scope };
   const decision: ConsentLogState['decision'] =
     analytics && marketing ? a.decision : !analytics && !marketing ? 'withdrawn' : 'custom';
-  return { ...a, decision, cat_analytics: analytics, cat_marketing: marketing, ...signalsFromCategories(analytics, marketing) };
+  return {
+    ...a,
+    ...scope,
+    decision,
+    cat_analytics: analytics,
+    cat_marketing: marketing,
+    ...signalsFromCategories(analytics, marketing)
+  };
 }
 
 /** Egy lánc SAJÁT aktuális állapota (utódok nélkül). */
@@ -912,10 +930,22 @@ async function readOwnConsentState(
     // revision-felpumpálás sem.
     const baseRow = verified ?? latest;
     let state = toConsentState(baseRow);
-    const later = (unverifiedRows.results ?? []).filter((r) => r.seq > baseRow.seq).reverse();
+    const unverified = unverifiedRows.results ?? [];
+    const later = unverified.filter((r) => r.seq > baseRow.seq).reverse();
     for (const u of later) {
       const next = toConsentState(u);
-      state = narrowsOrKeeps(u, state) ? next : intersectConsentState(state, next);
+      // A „megtartó" igazolatlan sor a kategóriákat átveheti, a HATÓKÖRT nem:
+      // annak csak szűkíteni szabad (lejárat, vendorlista — lásd narrowConsentScope).
+      state = narrowsOrKeeps(u, state)
+        ? { ...next, ...narrowConsentScope(state, next) }
+        : intersectConsentState(state, next);
+    }
+    // Régi, kulcs nélküli láncon NINCS igazolt alap: a legmagasabb revisionű sor
+    // maga is lehet egy kulcs nélküli utólagos írás. A hatókör ezért a lánc
+    // MINDEN sorának metszete (legfeljebb a lekért 50) — a lánc első
+    // SORÁTÓL számít a lejárat, és csak a mindvégig megnevezett vendor marad.
+    if (!verified) {
+      for (const r of unverified) state = { ...state, ...narrowConsentScope(state, toConsentState(r)) };
     }
     return { kind: 'found', state };
   } catch (err) {
@@ -955,7 +985,9 @@ function toConsentState(row: ConsentRow): ConsentLogState {
     analytics_storage: row.analytics_storage as ConsentLogState['analytics_storage'],
     client_decided_at: row.client_decided_at,
     server_received_at: row.server_received_at,
-    consent_text_version: row.consent_text_version
+    consent_text_version: row.consent_text_version,
+    effective_vendors: consentTextVendors(row.consent_text_version),
+    effective_received_at: row.server_received_at
   };
 }
 

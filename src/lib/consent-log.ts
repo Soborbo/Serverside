@@ -428,6 +428,37 @@ export interface ConsentLogState {
   server_received_at: string;
   /** A döntés mögötti szöveg és vendorlista (`2026-09-a.ga4_meta[.t<hash>]`) — lásd consentTextVendors. */
   consent_text_version: string;
+  /**
+   * A kézbesítési HATÓKÖR — ezt nézi a decideAdConsent, nem a fenti bizonyíték-
+   * mezőket. Igazolatlan (kulcs nélküli) sor és lánc-metszés csak SZŰKÍTHETI
+   * (narrowConsentScope): a vendorlista metszet, az érvényesség kezdete a
+   * KORÁBBI időpont. Különben egy kulcs nélküli, kategóriát „megtartó" POST
+   * meghosszabbíthatna egy lejárt engedélyt, vagy új platformot nyithatna.
+   */
+  effective_vendors: string[] | null;
+  effective_received_at: string;
+}
+
+/**
+ * Két hatókör metszete (pure): a vendorlista közös része (ismeretlen = `null`
+ * marad), az érvényesség kezdete a korábbi időpont (olvashatatlan → az is
+ * olvashatatlan marad, és a kapu lejártnak veszi).
+ */
+export function narrowConsentScope(
+  a: Pick<ConsentLogState, 'effective_vendors' | 'effective_received_at'>,
+  b: Pick<ConsentLogState, 'effective_vendors' | 'effective_received_at'>
+): Pick<ConsentLogState, 'effective_vendors' | 'effective_received_at'> {
+  const vendors =
+    a.effective_vendors && b.effective_vendors
+      ? a.effective_vendors.filter((v) => b.effective_vendors!.includes(v))
+      : null;
+  const ta = Date.parse(a.effective_received_at);
+  const tb = Date.parse(b.effective_received_at);
+  const received =
+    !Number.isFinite(ta) ? a.effective_received_at
+    : !Number.isFinite(tb) ? b.effective_received_at
+    : ta <= tb ? a.effective_received_at : b.effective_received_at;
+  return { effective_vendors: vendors, effective_received_at: received };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -562,15 +593,16 @@ export function decideAdConsent(input: AdConsentInput): AdConsentVerdict {
       st.decision !== 'withdrawn' &&
       (input.category === 'ads' ? st.ad_user_data === 'GRANTED' : st.analytics_storage === 'GRANTED');
     if (!granted) return { kind: 'denied', source: 'consent_log', skip_reason: 'consent_withdrawn' };
-    // Lejárat: a beérkezés (szerveridő) számít, nem a kliens órája. Olvashatatlan
+    // Lejárat: a hatókör szerinti beérkezés (szerveridő) számít, nem a kliens órája
+    // és nem egy későbbi igazolatlan sor ideje. Olvashatatlan
     // időbélyeg → lejártnak tekintjük: bizonytalanból nem lesz engedély.
-    const receivedMs = Date.parse(st.server_received_at);
+    const receivedMs = Date.parse(st.effective_received_at);
     if (!Number.isFinite(receivedMs) || (input.nowMs ?? Date.now()) - receivedMs > SBO_CONSENT_VALID_MS) {
       return { kind: 'denied', source: 'consent_log', skip_reason: 'consent_expired' };
     }
     // Vendor-fedés: az engedély csak a szövegben MEGNEVEZETT platformra szól.
     if (input.platform !== undefined) {
-      const named = consentTextVendors(st.consent_text_version);
+      const named = st.effective_vendors;
       const needed = PLATFORM_VENDORS[input.platform] ?? [];
       if (!named || !needed.some((v) => named.includes(v))) {
         return { kind: 'denied', source: 'consent_log', skip_reason: 'consent_vendor_not_covered' };

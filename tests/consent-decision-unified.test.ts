@@ -19,7 +19,10 @@ import type { Env } from '../src/env';
  * Saját CMP (sbo) alatt a régi CookieYes-receipt és a CRM-jel NEM evidencia.
  */
 
-const STATE = (o: Partial<ConsentLogState> = {}): ConsentLogState => ({
+// A hatókör (effective_*) alapból a bizonyíték-mezőkből következik, ahogy a
+// ledger toConsentState-je is képzi; egy teszt külön is felülírhatja.
+const STATE = (o: Partial<ConsentLogState> = {}): ConsentLogState => {
+  const s = {
   consent_id: 'cid-0123456789abcdef',
   revision: 2,
   decision: 'accept_all',
@@ -34,7 +37,13 @@ const STATE = (o: Partial<ConsentLogState> = {}): ConsentLogState => ({
   server_received_at: new Date(Date.now() - 3_599_000).toISOString(),
   consent_text_version: '2026-09-a.ga4_google_ads_google_ec_meta',
   ...o
-});
+  };
+  return {
+    effective_vendors: consentTextVendors(s.consent_text_version),
+    effective_received_at: s.server_received_at,
+    ...s
+  } as ConsentLogState;
+};
 const ONLY_MARKETING = STATE({
   decision: 'custom', cat_analytics: false, analytics_storage: 'DENIED'
 });
