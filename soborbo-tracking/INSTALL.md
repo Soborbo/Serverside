@@ -117,6 +117,11 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
    `<Tracking gtmId="GTM-XXXX" cookieYesId="<CookieYes id>" />`; at the top of
    `<body>` add `<TrackingNoscript gtmId="GTM-XXXX" />`.
    (Copy from `examples/Layout.astro`. No Turnstile component — it's gone.)
+   `gtmId` is optional (6.20.0+): mount `<Tracking />` even while the site's GTM
+   id is still a placeholder — pass `gtmId={undefined}` (or omit it) and the kit
+   runs everything except the GTM script injection (consent, click/scroll
+   tracking, attribution, withdrawal purge, gateway leg). Do NOT gate the whole
+   component on the id: that switched the entire kit off.
 3. **Env** (`.env` / Worker vars): the market vars `PUBLIC_TRACKING_COUNTRY` /
    `PUBLIC_TRACKING_CURRENCY` / `PUBLIC_TRACKING_LOCALE` (keep in sync with the
    gateway KV `country_code`/`currency`). See `examples/.env.example`.
