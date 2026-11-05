@@ -306,7 +306,7 @@ export function getSessionId(): string { return getSession().id; }
 
 // ── Attribution ────────────────────────────────────────────────────
 
-function urlTrackingParams(): Partial<TrackingData> | null {
+export function urlTrackingParams(): Partial<TrackingData> | null {
   const u = new URLSearchParams(window.location.search);
   const p: Partial<TrackingData> = {};
   let any = false;
