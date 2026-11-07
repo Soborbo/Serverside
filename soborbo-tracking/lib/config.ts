@@ -58,6 +58,14 @@ export interface TrackingConfig {
    */
   acceptEmphasis: boolean;
   /**
+   * URL-passthrough (PUBLIC_TRACKING_URL_PASSTHROUGH=1, alapból KI; csak sbo CMP
+   * alatt hat) — a Consent Mode `url_passthrough` mintájára. Döntés ELŐTT a
+   * landing URL-jében érkezett klikk-ID-k/UTM-ek a belső linkekre (és belső GET-
+   * formokra) íródnak, így a banner elfogadása egy későbbi oldalon is megtalálja
+   * őket. Tárolót nem ír, nem olvas. Lásd `lib/url-passthrough.ts`.
+   */
+  urlPassthrough: boolean;
+  /**
    * A site adatkezelési tájékoztatójának verziója (consent_log.policy_version).
    * A site állítja be (PUBLIC_TRACKING_POLICY_VERSION); a default szándékosan
    * kimondja, hogy NINCS beállítva — a pilot élesítési checklist része.
@@ -117,7 +125,7 @@ function readEnv(key: string): string | undefined {
  * böngészőbe másolódik, nincs bundler-injektálás). A gateway minimuma:
  * Serverside `src/lib/consent.ts` MIN_CLIENT_LIB_VERSION.
  */
-export const CLIENT_LIB_VERSION = '6.18.0';
+export const CLIENT_LIB_VERSION = '6.21.0';
 
 export const trackingConfig: TrackingConfig = {
   country: (readEnv('PUBLIC_TRACKING_COUNTRY') as Market) || 'GB',
@@ -126,6 +134,7 @@ export const trackingConfig: TrackingConfig = {
   consentProvider: readEnv('PUBLIC_TRACKING_CONSENT_PROVIDER') === 'sbo' ? 'sbo' : 'cookieyes',
   consentMode: readEnv('PUBLIC_TRACKING_CONSENT_MODE') === 'advanced' ? 'advanced' : 'basic',
   acceptEmphasis: readEnv('PUBLIC_TRACKING_CONSENT_ACCEPT_EMPHASIS') === '1',
+  urlPassthrough: readEnv('PUBLIC_TRACKING_URL_PASSTHROUGH') === '1',
   policyVersion: readEnv('PUBLIC_TRACKING_POLICY_VERSION') || 'policy-unset',
   ruleset: readEnv('PUBLIC_TRACKING_RULESET') || 'eea_uk',
   devConsentAllow: readEnv('PUBLIC_TRACKING_DEV_CONSENT_ALLOW') === '1',
