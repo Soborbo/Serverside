@@ -23,13 +23,20 @@
  *    saját consent-parancsot — ha igen, a szkriptet el kell hagyni, és az ablak
  *    a perzisztens sütiből mér.
  *
+ * `gtmId` OPCIONÁLIS (6.20.0): nélküle MINDEN fut (consent-boot, banner-loader,
+ * initTracking, scroll, tel:/mailto:/WhatsApp-kötés, attribúció-perzisztálás,
+ * visszavonási purge, gateway-láb) — csak a GTM-szkript NEM injektálódik. A
+ * dataLayer-pushok ártalmatlanul gyűlnek. Így egy site, amelynek a GTM-id-je még
+ * placeholder, már a kit többi részét futtatja.
+ *
  * GTM noscript a <body> után — <TrackingNoscript /> (sbo-pilotnál NEM kell:
  * noscript alatt consent-döntés sincs, tehát a GTM-iframe consent előtt futna).
  */
 import { advancedModeBlocker, trackingConfig, type ConsentProvider } from '../lib/config';
 
 interface Props {
-  gtmId: string;
+  /** Hiányában (vagy üres stringgel) nincs GTM-betöltés; minden más fut. */
+  gtmId?: string;
   cookieYesId?: string;
   /** Default a PUBLIC_TRACKING_CONSENT_PROVIDER env (ami default 'cookieyes'). */
   consentProvider?: ConsentProvider;
@@ -71,7 +78,7 @@ if (isSbo) {
   </script>
 )}
 
-{!isSbo && (
+{!isSbo && gtmId && (
   <script is:inline define:vars={{ gtmId }}>
     (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
     new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
@@ -82,7 +89,7 @@ if (isSbo) {
 )}
 
 {isSbo && (
-  <script is:inline define:vars={{ gtmId, policyVersion: trackingConfig.policyVersion, consentMode: trackingConfig.consentMode }}>
+  <script is:inline define:vars={{ gtmId: gtmId || '', policyVersion: trackingConfig.policyVersion, consentMode: trackingConfig.consentMode }}>
     /* Soborbo consent-boot (CMP Fázis 2.1) — inline, SZINKRON, minden más előtt.
        A parser a lib/consent-sbo-state.ts párja (formátum:
        v2.<a>.<m>.<rev>.<decision>.<consent_id>.<ts>.<policy_version>) — bundler
@@ -110,6 +117,8 @@ if (isSbo) {
       var loaded = false;
       w.__sboLoadGtm = function(){
         if (loaded) return; loaded = true;
+        /* GTM-id nélkül a döntés-folyamat ugyanaz, csak nincs mit betölteni. */
+        if (!gtmId) return;
         w.dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});
         var f = d.getElementsByTagName('script')[0], j = d.createElement('script');
         j.async = true;

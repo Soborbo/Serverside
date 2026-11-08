@@ -53,7 +53,8 @@ interface BootResult {
 function runBoot(
   cookie: string | null,
   policyVersion: string,
-  consentMode?: 'basic' | 'advanced'
+  consentMode?: 'basic' | 'advanced',
+  gtmId = 'GTM-TEST'
 ): BootResult {
   document.cookie
     .split(';')
@@ -92,7 +93,7 @@ function runBoot(
 
   try {
     // eslint-disable-next-line no-new-func
-    new Function('gtmId', 'policyVersion', 'consentMode', BOOT)('GTM-TEST', policyVersion, consentMode);
+    new Function('gtmId', 'policyVersion', 'consentMode', BOOT)(gtmId, policyVersion, consentMode);
   } finally {
     (document as unknown as { createElement: typeof document.createElement }).createElement =
       realCreate;
@@ -278,5 +279,32 @@ describe('advanced mód (PUBLIC_TRACKING_CONSENT_MODE=advanced)', () => {
   it('ismeretlen mód-érték basic-ként viselkedik (elgépelés nem indíthat pre-consent GTM-et)', () => {
     const r = runBoot(null, POLICY, 'advnaced' as 'advanced');
     expect(r.gtmLoaded).toBe(false);
+  });
+});
+
+describe('GTM-id nélkül (6.20.0) — a döntés-folyamat fut, csak a GTM nem töltődik', () => {
+  const RAW_SRC = Object.values(RAW)[0]!;
+
+  it('accept_all: a consent default + update a dataLayerben, de GTM-szkript NINCS', () => {
+    const r = runBoot(cookieFor(), POLICY, 'basic', '');
+    expect(r.update).not.toBeNull();
+    expect(r.gtmLoaded).toBe(false);
+    const w = window as unknown as { __sboLoadGtm?: () => void; dataLayer: Record<string, unknown>[] };
+    // A banner továbbra is hívhatja a loadert — no-op, nem dob.
+    expect(typeof w.__sboLoadGtm).toBe('function');
+    expect(() => w.__sboLoadGtm!()).not.toThrow();
+    expect(w.dataLayer.some((e) => e && e['gtm.start'] !== undefined)).toBe(false);
+  });
+
+  it('advanced módban sem injektál GTM-et id nélkül', () => {
+    expect(runBoot(null, POLICY, 'advanced', '').gtmLoaded).toBe(false);
+  });
+
+  it('a CookieYes-ág GTM-loadere az id-re kapuzott, a kliens-init NEM', () => {
+    expect(RAW_SRC).toContain('{!isSbo && gtmId && (');
+    // Az initTracking-et futtató (bundlolt) <script> feltétel nélküli maradjon.
+    const clientScript = RAW_SRC.slice(RAW_SRC.lastIndexOf('<script>'));
+    expect(clientScript).toContain('initTracking()');
+    expect(RAW_SRC.slice(0, RAW_SRC.lastIndexOf('<script>')).trimEnd().endsWith('(')).toBe(false);
   });
 });

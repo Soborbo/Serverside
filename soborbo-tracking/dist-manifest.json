@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.19.0",
+  "version": "6.20.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "0109bb43bf6e0b4fc341e70b206a78bcd58288086d248ef67618512edd6bb30e",
+      "sha256": "e18937a191013d0b968e032eeb773639d209ef7571c232dbe16c1c5e0718f355",
       "bytes": 7886,
       "role": "browser"
     },
@@ -140,8 +140,8 @@
       "role": "browser"
     },
     "components/Tracking.astro": {
-      "sha256": "e6cffff652ae5db5b464b7bd011c7815e8607026686cc5eb28ec7f0fe4e31596",
-      "bytes": 10066,
+      "sha256": "42678bbfd6ff69cda974f70462cb1bb0beada0e471ad292b3cde35919405bb5e",
+      "bytes": 10680,
       "role": "browser"
     },
     "components/TrackingNoscript.astro": {
@@ -150,7 +150,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "385a4415dd3ff125506ea2d640b3c761001b3e98c74e246da2c896da7658a3ff",
+      "sha256": "99da8adeee3b8f67db3dfd21383010021b68ec7912da31db2d478401b4c631ca",
       "bytes": 38515,
       "role": "backend"
     },
