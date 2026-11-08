@@ -31,6 +31,22 @@ Site-teendő a re-vendor után: a layoutban a `<Tracking />`-ot NE kapuzd a GTM-
 
 ---
 
+## 6.19.0 (2026-11-03)
+
+Minor, mert egy eddig buildelhető konfiguráció mostantól build-hiba.
+
+### Új — az advanced mód csak jogi jóváhagyással (`lib/config.ts`, `components/Tracking.astro`)
+
+Döntés (2026-11-03): EEA/UK alatt a basic mód a kötelező alap. Az advanced mód
+döntés előtt és elutasítás után is küld süti nélküli pingeket a Google-nek, ami
+az EDPB 2/2023 szerint az ePrivacy 5(3) alá eshet. Ezért `PUBLIC_TRACKING_RULESET=eea_uk`
+(a default) mellett a `PUBLIC_TRACKING_CONSENT_MODE=advanced` build csak akkor megy
+át, ha `PUBLIC_TRACKING_ADVANCED_APPROVAL=<YYYY-MM-DD>:<jóváhagyó dokumentum>` is
+meg van adva. Enélkül a `<Tracking />` build-időben hibát dob (`advancedModeBlocker`).
+Ma egyetlen site sem fut advanced módban, tehát a flottán viselkedés nem változik.
+
+---
+
 ## 6.18.0 (2026-11-03)
 
 A leadgen-template attribúciós leletei (`leadgen-template-site` docs/kit-handoff.md,

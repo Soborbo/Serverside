@@ -323,6 +323,23 @@ zone_name = "thebespokejoinery.co.uk"
 pattern = "www.thebespokejoinery.co.uk/api/consent*"
 zone_name = "thebespokejoinery.co.uk"
 #
+# Exquisite Laser & Clinic (exquisitelaser.co.uk) — 2026-11-05, consent-only sbo
+# site like befilo (site Worker on a custom domain + GATEWAY binding). The
+# /api/consent* routes are added by hand (not in the generated routes.toml).
+# SITE_CONFIG KV: exquisitelaser.co.uk + www (site_id: exquisite-laser).
+[[routes]]
+pattern = "exquisitelaser.co.uk/api/event/*"
+zone_name = "exquisitelaser.co.uk"
+[[routes]]
+pattern = "www.exquisitelaser.co.uk/api/event/*"
+zone_name = "exquisitelaser.co.uk"
+[[routes]]
+pattern = "exquisitelaser.co.uk/api/consent*"
+zone_name = "exquisitelaser.co.uk"
+[[routes]]
+pattern = "www.exquisitelaser.co.uk/api/consent*"
+zone_name = "exquisitelaser.co.uk"
+#
 # Hét 6-7: SkinLab + Life Story Video
 # [[routes]]
 # pattern = "skinlab.hu/api/event/*"

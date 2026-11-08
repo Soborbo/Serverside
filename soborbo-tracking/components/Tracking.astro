@@ -32,7 +32,7 @@
  * GTM noscript a <body> után — <TrackingNoscript /> (sbo-pilotnál NEM kell:
  * noscript alatt consent-döntés sincs, tehát a GTM-iframe consent előtt futna).
  */
-import { trackingConfig, type ConsentProvider } from '../lib/config';
+import { advancedModeBlocker, trackingConfig, type ConsentProvider } from '../lib/config';
 
 interface Props {
   /** Hiányában (vagy üres stringgel) nincs GTM-betöltés; minden más fut. */
@@ -43,6 +43,15 @@ interface Props {
 }
 const { gtmId, cookieYesId, consentProvider = trackingConfig.consentProvider } = Astro.props;
 const isSbo = consentProvider === 'sbo';
+// BUILD-időben: az advanced mód EEA/UK alatt csak jogi jóváhagyással (lib/config.ts).
+if (isSbo) {
+  const blocker = advancedModeBlocker(
+    trackingConfig.consentMode,
+    trackingConfig.ruleset,
+    import.meta.env.PUBLIC_TRACKING_ADVANCED_APPROVAL
+  );
+  if (blocker) throw new Error(blocker);
+}
 ---
 
 {cookieYesId && (

@@ -1,3 +1,6 @@
+import { CONSENT_MAX_AGE_S } from './consent';
+import { DEFAULT_VENDORS, VENDORS } from '../../soborbo-tracking/lib/consent-vendors';
+
 /**
  * Soborbo CMP · Fázis 1 — a consent-döntés payload validálása és leképezése
  * (pure; D1 nélkül tesztelhető). A tényleges írás/olvasás a ledger.ts-ben van,
@@ -423,6 +426,39 @@ export interface ConsentLogState {
   analytics_storage: ConsentSignalValue;
   client_decided_at: string;
   server_received_at: string;
+  /** A döntés mögötti szöveg és vendorlista (`2026-09-a.ga4_meta[.t<hash>]`) — lásd consentTextVendors. */
+  consent_text_version: string;
+  /**
+   * A kézbesítési HATÓKÖR — ezt nézi a decideAdConsent, nem a fenti bizonyíték-
+   * mezőket. Igazolatlan (kulcs nélküli) sor és lánc-metszés csak SZŰKÍTHETI
+   * (narrowConsentScope): a vendorlista metszet, az érvényesség kezdete a
+   * KORÁBBI időpont. Különben egy kulcs nélküli, kategóriát „megtartó" POST
+   * meghosszabbíthatna egy lejárt engedélyt, vagy új platformot nyithatna.
+   */
+  effective_vendors: string[] | null;
+  effective_received_at: string;
+}
+
+/**
+ * Két hatókör metszete (pure): a vendorlista közös része (ismeretlen = `null`
+ * marad), az érvényesség kezdete a korábbi időpont (olvashatatlan → az is
+ * olvashatatlan marad, és a kapu lejártnak veszi).
+ */
+export function narrowConsentScope(
+  a: Pick<ConsentLogState, 'effective_vendors' | 'effective_received_at'>,
+  b: Pick<ConsentLogState, 'effective_vendors' | 'effective_received_at'>
+): Pick<ConsentLogState, 'effective_vendors' | 'effective_received_at'> {
+  const vendors =
+    a.effective_vendors && b.effective_vendors
+      ? a.effective_vendors.filter((v) => b.effective_vendors!.includes(v))
+      : null;
+  const ta = Date.parse(a.effective_received_at);
+  const tb = Date.parse(b.effective_received_at);
+  const received =
+    !Number.isFinite(ta) ? a.effective_received_at
+    : !Number.isFinite(tb) ? b.effective_received_at
+    : ta <= tb ? a.effective_received_at : b.effective_received_at;
+  return { effective_vendors: vendors, effective_received_at: received };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -459,6 +495,61 @@ export interface AdConsentInput {
    * ott a consent_log AKTUÁLIS állapota dönt.
    */
   passedCaptureGate?: boolean;
+  /**
+   * A célplatform. Saját CMP-n a döntés szövegének vendorlistája csak az ott
+   * MEGNEVEZETT platformra ad engedélyt (lásd PLATFORM_VENDORS). Nélküle a
+   * vendor-szűkítés kimarad — a hívó kötelessége megadni.
+   */
+  platform?: string;
+  /** A döntés pillanata (ms) — tesztelhetőség; alapból Date.now(). */
+  nowMs?: number;
+}
+
+/**
+ * Egy saját CMP-s engedély ennyi ideig érvényes a beérkezésétől — ugyanaz a 180
+ * nap, ami után a böngésző (sbo_consent max-age + consent-sbo-state parser) újra
+ * kérdez. A szerver az offline/replay kézbesítésnél ugyanígy kezeli: a lejárt
+ * engedély „új döntés szükséges", nem örök felhatalmazás.
+ */
+export const SBO_CONSENT_VALID_MS = CONSENT_MAX_AGE_S * 1000;
+
+/**
+ * Melyik vendor-azonosító (soborbo-tracking/lib/consent-vendors.ts) fedi az adott
+ * platformra küldést. A Google offline feltöltést a `google_ads` ÉS a
+ * `google_ec` szöveg is megnevezi („az ajánlatkérés egyeztetése a Google
+ * hirdetésméréssel"). Ismeretlen platform → nincs fedő vendor → nincs küldés.
+ */
+const PLATFORM_VENDORS: Readonly<Record<string, readonly string[]>> = {
+  gads: ['google_ads', 'google_ec'],
+  meta: ['meta'],
+  ga4: ['ga4']
+};
+
+/**
+ * A `consent_text_version` vendorlistája. Alak: `<alap>[.<vendorok>][.t<hash>]`,
+ * a vendorok `_`-vel fűzve — de maguk az azonosítók is tartalmaznak `_`-t
+ * (`google_ec`), ezért a felbontás az ismert azonosítókra illeszt.
+ *  - vendorlista nélküli (2026-08-a kori) szöveg → a DEFAULT_VENDORS készlet;
+ *  - `none` → üres lista;
+ *  - hiányzó érték vagy bármilyen ismeretlen darab → `null` (nem tudjuk, mit
+ *    olvasott → nincs fedés).
+ */
+export function consentTextVendors(textVersion: string | null | undefined): string[] | null {
+  if (!textVersion) return null;
+  const parts = textVersion.split('.');
+  const list = parts[1];
+  if (list === undefined || /^t[0-9a-f]{8}$/.test(list)) return [...DEFAULT_VENDORS];
+  if (list === 'none') return [];
+  const known = Object.keys(VENDORS).sort((a, b) => b.length - a.length);
+  const out: string[] = [];
+  let rest = list;
+  while (rest.length > 0) {
+    const id = known.find((k) => rest === k || rest.startsWith(`${k}_`));
+    if (!id) return null;
+    out.push(id);
+    rest = rest.slice(id.length + 1);
+  }
+  return out;
 }
 
 export type AdConsentVerdict =
@@ -468,7 +559,11 @@ export type AdConsentVerdict =
       /** A platform felé jelenthető, BIZONYÍTOTT jelek (kitalált GRANTED nincs). */
       signals: { ad_user_data?: 'GRANTED'; ad_personalization?: ConsentSignalValue };
     }
-  | { kind: 'denied'; source: 'consent_log' | 'receipt' | 'crm' | 'fallback'; skip_reason: 'consent_withdrawn' | 'consent_denied' }
+  | {
+      kind: 'denied';
+      source: 'consent_log' | 'receipt' | 'crm' | 'fallback';
+      skip_reason: 'consent_withdrawn' | 'consent_denied' | 'consent_expired' | 'consent_vendor_not_covered';
+    }
   /** Nincs érvényes döntés a site szabálya szerint (saját CMP: nincs consent_log-sor). */
   | { kind: 'needs_decision'; skip_reason: 'consent_missing_failclosed' }
   /** Átmenetileg nem ellenőrizhető (D1-hiba) — se küldés, se végleges kihagyás. */
@@ -480,6 +575,8 @@ const isSignal = (v: string | null | undefined): v is ConsentSignalValue => v ==
  * A kézbesítés consent-döntése (pure). Sorrend:
  *  1. D1-hiba bármelyik SZÜKSÉGES olvasásnál → `unavailable` (sosem engedély).
  *  2. consent_log-állapot → az dönt (a kategória szerint); tiltás `consent_withdrawn`.
+ *     Az engedély akkor is kimarad, ha 180 napnál régebbi (`consent_expired`), vagy
+ *     a szövege nem nevezte meg a célplatformot (`consent_vendor_not_covered`).
  *  3. Saját CMP-n ennél nincs tovább: hiányzó consent_id / sor → `needs_decision`.
  *     A capture-kori receipt, a CRM-jel és a CookieYes-süti itt NEM evidencia — a
  *     régi CookieYes-engedélyre nem lehet visszaesni.
@@ -495,13 +592,27 @@ export function decideAdConsent(input: AdConsentInput): AdConsentVerdict {
     const granted =
       st.decision !== 'withdrawn' &&
       (input.category === 'ads' ? st.ad_user_data === 'GRANTED' : st.analytics_storage === 'GRANTED');
-    return granted
-      ? {
-          kind: 'allowed',
-          source: 'consent_log',
-          signals: { ad_user_data: 'GRANTED', ad_personalization: st.ad_personalization }
-        }
-      : { kind: 'denied', source: 'consent_log', skip_reason: 'consent_withdrawn' };
+    if (!granted) return { kind: 'denied', source: 'consent_log', skip_reason: 'consent_withdrawn' };
+    // Lejárat: a hatókör szerinti beérkezés (szerveridő) számít, nem a kliens órája
+    // és nem egy későbbi igazolatlan sor ideje. Olvashatatlan
+    // időbélyeg → lejártnak tekintjük: bizonytalanból nem lesz engedély.
+    const receivedMs = Date.parse(st.effective_received_at);
+    if (!Number.isFinite(receivedMs) || (input.nowMs ?? Date.now()) - receivedMs > SBO_CONSENT_VALID_MS) {
+      return { kind: 'denied', source: 'consent_log', skip_reason: 'consent_expired' };
+    }
+    // Vendor-fedés: az engedély csak a szövegben MEGNEVEZETT platformra szól.
+    if (input.platform !== undefined) {
+      const named = st.effective_vendors;
+      const needed = PLATFORM_VENDORS[input.platform] ?? [];
+      if (!named || !needed.some((v) => named.includes(v))) {
+        return { kind: 'denied', source: 'consent_log', skip_reason: 'consent_vendor_not_covered' };
+      }
+    }
+    return {
+      kind: 'allowed',
+      source: 'consent_log',
+      signals: { ad_user_data: 'GRANTED', ad_personalization: st.ad_personalization }
+    };
   }
   if (input.sbo) return { kind: 'needs_decision', skip_reason: 'consent_missing_failclosed' };
 

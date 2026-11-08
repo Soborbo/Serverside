@@ -115,7 +115,19 @@ export type SkipReason =
    * nem ír delivery-sort. A türelmi idő után a kapu terminális
    * `consent_missing_failclosed`-ot ad (scheduled/retry.ts checkReplayConsent).
    */
-  | 'consent_pending';
+  | 'consent_pending'
+  /**
+   * Saját CMP: a consent_log szerinti engedély 180 napnál régebbi (a böngésző
+   * ennyi után újra kérdez). A kézbesítés pillanatában számít — TERMINÁLIS, a
+   * retry nem frissíti a döntést. TRK-910-004 párja a szerveroldalon.
+   */
+  | 'consent_expired'
+  /**
+   * Saját CMP: az engedély szövege (consent_text_version vendorlistája) nem
+   * nevezte meg a célplatformot — a látogató nem ehhez a címzetthez járult
+   * hozzá. TERMINÁLIS.
+   */
+  | 'consent_vendor_not_covered';
 
 /**
  * A perzisztálható skip-okok teljes listája — a `deliveries.skip_reason` oszlop
@@ -136,7 +148,9 @@ export const SKIP_REASONS: readonly SkipReason[] = [
   'invalid_identifier',
   'consent_withdrawn',
   'conversion_window_expired',
-  'consent_pending'
+  'consent_pending',
+  'consent_expired',
+  'consent_vendor_not_covered'
 ];
 
 export function isSkipReason(v: unknown): v is SkipReason {
