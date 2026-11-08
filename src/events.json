@@ -133,6 +133,22 @@
     "description": "WhatsApp gombra kattintas"
   },
   {
+    "name": "booking_link_clicked",
+    "kind": "conversion",
+    "module": "leadgen",
+    "ga4_key_event": true,
+    "meta": "Contact",
+    "channels": [
+      "browser",
+      "server"
+    ],
+    "provenance": true,
+    "flow": null,
+    "legacy_ga4": null,
+    "legacy_datalayer": null,
+    "description": "Kulso foglalasi linkre kattintas (a[data-booking-link], pl. Booksy) - masodlagos lead, a foglalas tenye nem merheto"
+  },
+  {
     "name": "view_item",
     "kind": "ecommerce",
     "module": "ecommerce",

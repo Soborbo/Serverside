@@ -117,6 +117,7 @@ export type GatewayEventName =
   | 'phone_number_clicked'
   | 'email_address_clicked'
   | 'whatsapp_button_clicked'
+  | 'booking_link_clicked'
   | 'begin_checkout'
   | 'video_play';
 
@@ -506,7 +507,7 @@ export function readSboConsentCookieHeader(
  * reports as `consent_sources.client_lib_version`. Keep in sync with the
  * package version and with the browser lib's `lib/config.ts CLIENT_LIB_VERSION`.
  */
-export const BACKEND_LIB_VERSION = '6.18.0';
+export const BACKEND_LIB_VERSION = '6.22.0';
 
 export interface ConsentSourceSnapshot {
   analytics: boolean | null;

@@ -40,7 +40,7 @@ runs in the tag's context, so the PII never enters the dataLayer.
 ## Triggers (Custom Event)
 One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_step_completed`,
 `quote_calculator_option_selected`, `quote_calculator_submitted`, `quote_calculator_submitted`, `contact_form_submitted`,
-`phone_number_clicked`, `callback_request_submitted`, `email_address_clicked`, `whatsapp_button_clicked`, `form_abandoned`,
+`phone_number_clicked`, `callback_request_submitted`, `email_address_clicked`, `whatsapp_button_clicked`, `booking_link_clicked`, `form_abandoned`,
 `scroll_depth`, `consultation_request_submitted`, `training_signup_submitted`.
 
 ## Tags — base
@@ -72,6 +72,7 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
 | `phone_number_clicked` | `phone_number_clicked` | ✅ | event_id, session_id, device |
 | `email_address_clicked` | `email_address_clicked` | ✅ | event_id, session_id |
 | `whatsapp_button_clicked` | `whatsapp_button_clicked` | ✅ | event_id, session_id |
+| `booking_link_clicked` | `booking_link_clicked` | ✅ | event_id, session_id, device, link_host |
 | `quote_calculator_submitted` | `quote_calculator_submitted` | ✅ | value, currency, event_id, calculator_name |
 | `quote_calculator_opened/step/option` | `quote_calculator_opened` / `_step` / `_option` | ❌ | calculator_name, step_id, step_index |
 | `form_abandoned` | `form_abandoned` | ❌ | form_id, last_field |
@@ -89,7 +90,7 @@ One each for the dataLayer events: `quote_calculator_opened`, `quote_calculator_
   var cd = (typeof v === 'number' && v > 0) ? { value: v, currency: '{{DLV - currency}}' } : {};
   fbq('track', 'Lead', cd, { eventID: '{{DLV - event_id}}' });
   ```
-- **Contact** (CE-`contact_form_submitted` / `phone_number_clicked` / `email_address_clicked` / `whatsapp_button_clicked`):
+- **Contact** (CE-`contact_form_submitted` / `phone_number_clicked` / `email_address_clicked` / `whatsapp_button_clicked` / `booking_link_clicked`):
   ```js
   fbq('track', 'Contact', {}, { eventID: '{{DLV - event_id}}' });
   ```
@@ -106,6 +107,9 @@ same standard event, or the dedup pair never meets.
 Conversion Value: {{DLV - value}}. Transaction ID: {{DLV - event_id}}.
 User-provided data: {{CJS - User Provided Data}}. ad_storage + ad_user_data.
 Trigger: the conversion CEs (quote_calculator_submitted/callback_request_submitted/phone_number_clicked/quote_calculator_submitted/consultation_request_submitted/training_signup_submitted).
+`booking_link_clicked` is deliberately NOT on this tag: it is a SECONDARY lead (the off-site booking is
+unverifiable) and this tag books into the site's one primary label. To see it in Google Ads, import the
+GA4 key event `booking_link_clicked` as a conversion action set to **Secondary**.
 **Don't set a fixed value default of 1+currency** — it poisons the bidding (see INVARIANTS).
 
 ## Enhanced Conversions

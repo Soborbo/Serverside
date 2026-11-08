@@ -14,7 +14,7 @@ and [`../docs/CANONICAL-EVENTS.md`](../docs/CANONICAL-EVENTS.md).
 | Kind | Items |
 |---|---|
 | **Base tags** | Conversion Linker, GA4 Configuration |
-| **GA4 event tags** | `contact_form_submitted`, `callback_request_submitted`, `consultation_request_submitted`, `training_signup_submitted`, `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `quote_calculator_submitted` (Key Events) + `quote_calculator_opened/step/option`, `form_abandoned`, `scroll_depth` (engagement) — each emits the **canonical GA4 event name** |
+| **GA4 event tags** | `contact_form_submitted`, `callback_request_submitted`, `consultation_request_submitted`, `training_signup_submitted`, `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `booking_link_clicked`, `quote_calculator_submitted` (Key Events) + `quote_calculator_opened/step/option`, `form_abandoned`, `scroll_depth` (engagement) — each emits the **canonical GA4 event name** |
 | **Meta Pixel** | Base (PageView), Lead, Contact, Schedule (`consultation_request_submitted`), CompleteRegistration (`training_signup_submitted`) — every one with `eventID` = `{{DLV - event_id}}` → Pixel↔CAPI dedup |
 | **Google Ads** | Conversion tag (orderId = `event_id`, value/currency, Enhanced Conversions via the side-channel) |
 | **Triggers** | one Custom Event trigger per dataLayer event |
@@ -62,6 +62,7 @@ container you import **into**, so you don't edit that.
 2. **GA4 Key Events.** In GA4 mark `contact_form_submitted`, `callback_request_submitted`,
    `consultation_request_submitted`, `training_signup_submitted`,
    `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`,
+   `booking_link_clicked`,
    `quote_calculator_submitted` as Key Events (see `CANONICAL-EVENTS.md`).
 3. **GA4 custom dimensions.** Register `event_id`, `source`, `service`,
    `device`, `calculator_name`, `step_id` (event-scoped). NOT `session_id`: GA4

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   trackCalculatorStart, trackCalculatorStep, trackCalculatorOption, trackCalculatorComplete,
-  trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick,
+  trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick, trackBookingClick,
   pushLeadConversion, pushContactConversion,
   pushConsultationConversion, pushTrainingSignupConversion,
 } from '../lib/events';
@@ -15,7 +15,7 @@ const BROWSER_EVENTS = [
   'quote_calculator_opened', 'quote_calculator_step_completed', 'quote_calculator_option_selected', 'quote_calculator_submitted',
   'contact_form_submitted', 'phone_number_clicked', 'callback_request_submitted',
   'consultation_request_submitted', 'training_signup_submitted',
-  'email_address_clicked', 'whatsapp_button_clicked', 'form_abandoned', 'scroll_depth',
+  'email_address_clicked', 'whatsapp_button_clicked', 'booking_link_clicked', 'form_abandoned', 'scroll_depth',
 ];
 
 beforeEach(() => {
@@ -37,11 +37,12 @@ describe('contract — browser dataLayer event names', () => {
     trackCallbackClick();
     trackEmailClick();
     trackWhatsappClick();
+    trackBookingClick();
 
     const emitted = new Set(getDataLayer().map((e) => e.event as string));
     for (const name of ['quote_calculator_opened', 'quote_calculator_step_completed', 'quote_calculator_option_selected', 'quote_calculator_submitted',
       'contact_form_submitted', 'consultation_request_submitted', 'training_signup_submitted',
-      'phone_number_clicked', 'callback_request_submitted', 'email_address_clicked', 'whatsapp_button_clicked']) {
+      'phone_number_clicked', 'callback_request_submitted', 'email_address_clicked', 'whatsapp_button_clicked', 'booking_link_clicked']) {
       expect(emitted.has(name)).toBe(true);
     }
     // no emitted name falls outside the documented list
@@ -59,8 +60,8 @@ describe('contract — gateway event names the code actually dispatches', () => 
     for (const n of used) {
       expect(BROWSER_GATEWAY_EVENTS.has(n), n).toBe(true);
     }
-    // sanity: phone/email/whatsapp dispatch, callback is dataLayer-only (server-ingress-only)
-    expect(used.sort()).toEqual(['email_address_clicked', 'phone_number_clicked', 'whatsapp_button_clicked']);
+    // sanity: phone/email/whatsapp/booking dispatch, callback is dataLayer-only (server-ingress-only)
+    expect(used.sort()).toEqual(['booking_link_clicked', 'email_address_clicked', 'phone_number_clicked', 'whatsapp_button_clicked']);
     expect(CLICK_GATEWAY_EVENT.callback).toBeNull();
   });
 });

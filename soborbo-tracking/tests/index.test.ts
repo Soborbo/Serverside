@@ -11,6 +11,7 @@ import { getUserDataForEC } from '../lib/events';
 import {
   trackLeadSubmit, trackContactSubmit, trackServerEvent,
   trackPhoneConversion, trackCallbackConversion, trackEmailConversion, trackWhatsappConversion,
+  trackBookingConversion,
   attachEventIdToForm,
 } from '../lib/index';
 import { sendToWorker } from '../lib/gateway';
@@ -151,6 +152,36 @@ describe('click conversions — channels per the ingress contract', () => {
     mockSend.mockClear();
     trackWhatsappConversion({ phone: '07123456789' });
     expect(mockSend.mock.calls[0][0].event_name).toBe('whatsapp_button_clicked');
+  });
+
+  it('trackBookingConversion pushes booking_link_clicked AND dispatches with the SAME event_id, no PII/value', () => {
+    const id = trackBookingConversion({ linkHost: 'booksy.com' });
+    expect(id).toBeTruthy();
+    const dl = lastEvent('booking_link_clicked')!;
+    expect(dl.event_id).toBe(id);
+    expect(dl.link_host).toBe('booksy.com');
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const payload = mockSend.mock.calls[0][0];
+    expect(payload.event_name).toBe('booking_link_clicked');
+    expect(payload.event_id).toBe(id);
+    // Secondary lead: never an invented value (§3), never PII on the gateway leg.
+    expect(payload.value).toBeUndefined();
+    expect(payload.currency).toBeUndefined();
+    expect(payload.user_data?.email).toBeUndefined();
+    expect(payload.user_data?.phone_number).toBeUndefined();
+  });
+
+  it('booking dedup covers BOTH channels; no consent at all → no-op', () => {
+    expect(trackBookingConversion({ linkHost: 'booksy.com' })).toBeTruthy();
+    expect(trackBookingConversion({ linkHost: 'booksy.com' })).toBeNull();
+    expect(getDataLayer().filter((e) => e.event === 'booking_link_clicked')).toHaveLength(1);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+
+    resetAll(); mockSend.mockClear();
+    setCkyConsent({ analytics: false, marketing: false });
+    expect(trackBookingConversion({ linkHost: 'booksy.com' })).toBeNull();
+    expect(getDataLayer().some((e) => e.event === 'booking_link_clicked')).toBe(false);
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it('trackCallbackConversion is dataLayer-ONLY: callback_request_submitted is server-ingress-only', () => {

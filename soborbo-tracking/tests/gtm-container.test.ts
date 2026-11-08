@@ -24,7 +24,7 @@ describe('gtm/container.json — importable export', () => {
     for (const name of [
       'contact_form_submitted', 'callback_request_submitted', 'phone_number_clicked',
       'email_address_clicked', 'whatsapp_button_clicked', 'quote_calculator_submitted',
-      'consultation_request_submitted', 'training_signup_submitted',
+      'consultation_request_submitted', 'training_signup_submitted', 'booking_link_clicked',
     ]) {
       expect(ga4Names).toContain(name);
     }
@@ -38,10 +38,25 @@ describe('gtm/container.json — importable export', () => {
     for (const name of [
       'quote_calculator_submitted', 'contact_form_submitted', 'callback_request_submitted', 'phone_number_clicked',
       'email_address_clicked', 'whatsapp_button_clicked', 'quote_calculator_submitted',
-      'consultation_request_submitted', 'training_signup_submitted',
+      'consultation_request_submitted', 'training_signup_submitted', 'booking_link_clicked',
     ]) {
       expect(events).toContain(name);
     }
+  });
+
+  // 6.22.0 — booking_link_clicked: Pixel Contact (= events.json meta, dedup with
+  // the CAPI leg) but NOT the shared Ads conversion tag (secondary lead, one label).
+  it('booking_link_clicked fires Pixel Contact + GA4 (with link_host), not the Ads conversion tag', () => {
+    const trig = cv.trigger.find((t: { name: string }) => t.name === 'CE - booking_link_clicked');
+    expect(trig).toBeTruthy();
+    const byName = (n: string) => cv.tag.find((t: { name: string }) => t.name === n);
+    expect(byName('Meta Pixel - Contact').firingTriggerId).toContain(trig.triggerId);
+    expect(byName('Google Ads - Conversion').firingTriggerId).not.toContain(trig.triggerId);
+    const ga4 = byName('GA4 - booking_link_clicked');
+    expect(ga4.firingTriggerId).toEqual([trig.triggerId]);
+    const params = JSON.stringify(ga4.parameter);
+    expect(params).toContain('link_host');
+    expect(params).not.toContain('{{DLV - value}}');
   });
 
   it('Meta Pixel tags use the shared event_id for dedup', () => {

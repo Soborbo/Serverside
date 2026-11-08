@@ -26,6 +26,7 @@ export const BROWSER_GATEWAY_EVENTS: ReadonlySet<string> = new Set([
   'phone_number_clicked',
   'email_address_clicked',
   'whatsapp_button_clicked',
+  'booking_link_clicked',
   'begin_checkout',
   'video_play',
 ]);

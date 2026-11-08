@@ -220,7 +220,8 @@ Calculator: `trackCalculatorStart/Step/Option/Complete`. Debug: `?debugTracking=
 ## Gateway event names (the ingress split)
 
 **Browser path** (`/api/event/conversion`, tokenless): `phone_number_clicked`,
-`email_address_clicked`, `whatsapp_button_clicked`, `begin_checkout`, `video_play`.
+`email_address_clicked`, `whatsapp_button_clicked`, `booking_link_clicked`,
+`begin_checkout`, `video_play`.
 
 **Server path only** (`/api/event/conversion-server`, per-site token — browser
 path answers 403/TRK-400-017): `quote_calculator_submitted`,

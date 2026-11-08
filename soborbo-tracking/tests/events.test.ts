@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   generateEventId, trackCalculatorStart, trackCalculatorStep, trackCalculatorComplete,
-  trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick,
+  trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick, trackBookingClick,
   pushLeadConversion, pushContactConversion,
   setUserDataForEC, clearUserDataForEC, USER_DATA_ELEMENT_ID,
 } from '../lib/events';
@@ -148,5 +148,20 @@ describe('click events carry the shared event_id', () => {
     setCkyConsent({ analytics: false, marketing: false });
     expect(trackEmailClick('M1')).toBe(false);
     expect(trackWhatsappClick('W1')).toBe(false);
+    expect(trackBookingClick('B1', 'booksy.com')).toBe(false);
+  });
+
+  it('booking_link_clicked carries event_id + link_host only — never value/currency', () => {
+    expect(trackBookingClick('B1', 'booksy.com')).toBe(true);
+    const e = lastEvent('booking_link_clicked')!;
+    expect(e.event_id).toBe('B1');
+    expect(e.link_host).toBe('booksy.com');
+    expect('value' in e).toBe(false);
+    expect('currency' in e).toBe(false);
+  });
+
+  it('booking_link_clicked omits link_host when none is given', () => {
+    expect(trackBookingClick('B2')).toBe(true);
+    expect('link_host' in lastEvent('booking_link_clicked')!).toBe(false);
   });
 });

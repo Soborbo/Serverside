@@ -31,9 +31,12 @@
     "quote_calculator_submitted",
     "callback_request_submitted",
     "contact_form_submitted",
+    "training_signup_submitted",
+    "consultation_request_submitted",
     "phone_number_clicked",
     "email_address_clicked",
     "whatsapp_button_clicked",
+    "booking_link_clicked",
     "view_item",
     "add_to_cart",
     "begin_checkout",
@@ -53,6 +56,11 @@
     "booking_confirmed",
     "job_completed",
     "revenue_confirmed",
-    "lead_disqualified"
+    "lead_disqualified",
+    "payment_received",
+    "revenue_retracted",
+    "revenue_restated",
+    "waitlist_signup_submitted",
+    "waitlist_signup_confirmed"
   ]
 }
