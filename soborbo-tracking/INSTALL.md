@@ -127,7 +127,17 @@ Reference: `examples/README.md`, `docs/cloudflare-setup.md`.
 5. **Conversion call sites**:
    - Forms: wrap in `<TrackedForm …>` (browser leg + hidden `event_id` for Step 3).
    - Clicks: `<PhoneLink/>`, `<CallbackButton/>` (dataLayer-only by design),
-     `<RevealContact type="email|phone" …/>`.
+     `<RevealContact type="email|phone" …/>`. `tel:` / `mailto:` / WhatsApp
+     links are auto-bound by `<Tracking/>`.
+   - **External booking links (6.22.0):** mark every off-site booking CTA (Booksy,
+     Treatwell, Calendly…) with the bare `data-booking-link` attribute —
+     `<a href="https://booksy.com/…" data-booking-link>Book online</a>`.
+     `<Tracking/>` auto-binds it to `booking_link_clicked` (dataLayer + gateway,
+     shared `event_id`, once per session, consent-gated like a phone click). It is a
+     SECONDARY lead: no `value`/`currency`, and only the link's host goes out as
+     `link_host` (never the URL). An unmarked booking link is NOT tracked. It is
+     not on the container's Google Ads conversion tag; to see it in Ads, import
+     the GA4 key event as a **Secondary** conversion action.
    - Custom browser-path points: `trackServerEvent('<name>')` — ONLY the
      browser-allowed names (`lib/event-contract.ts`); server-only names are
      blocked with TRK-1005.

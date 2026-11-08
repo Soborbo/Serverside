@@ -65,6 +65,8 @@
 - [ ] Check sessionStorage `sb_click_phone_*`
 - [ ] mailto: link → `email_address_clicked` on both channels
 - [ ] WhatsApp link (wa.me / *.whatsapp.com) → `whatsapp_button_clicked` on both
+- [ ] `a[data-booking-link]` (e.g. Booksy) → `booking_link_clicked` on both, with
+      `link_host` (host only, no path/query) on the dataLayer; no `value`/`currency`
 - [ ] **Callback CTA → dataLayer `callback_request_submitted` ONLY, NO gateway
       POST** (server-ingress-only; the browser POST would 403 — if the callback is
       a form POST, the backend sends the server leg)

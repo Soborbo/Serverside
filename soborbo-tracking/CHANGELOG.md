@@ -10,6 +10,49 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.22.0 (2026-11-08)
+
+Új kanonikus esemény: **`booking_link_clicked`** — külső foglalási linkre
+(Booksy, Treatwell, Calendly…) kattintás. Tulajdonosi döntés (2026-11-08): ez
+konverzió, de **másodlagos lead**, mert a foglalás ténye a külső oldalon dől el,
+nem mérhető. Minor, mert új eseményt és új auto-kötést hoz. A 6.19.0–6.21.0
+(Serverside #164–#166) előtte merge-elendő; ez a szám a sorban a következő szabad.
+
+### Új — esemény a szerződésben (`src/events.json`, `lib/event-contract.ts`)
+
+`kind: conversion`, `channels: browser+server`, böngésző-úton fogadott (NEM
+`server_ingress_only`), `meta: Contact`, GA4 key event. Pontosan úgy, mint a
+`phone_number_clicked`. A Meta-esemény szándékosan **Contact**, nem Schedule: a
+`Schedule` a szerződésben a BEKÜLDÖTT konzultáció-kérésé (szerver-ingress), egy
+igazolatlan kattintás nem tanítsa a Meta Schedule-optimalizálást. TikTok: Contact.
+A gads `conversion_actions` enum is ismeri (`server/site-config.schema.json`).
+A régi `booking_click` legacy alias (→ `begin_checkout`, beautyflow) **változatlan**.
+
+### Új — auto-kötés (`components/Tracking.astro`, `lib/index.ts`, `lib/events.ts`)
+
+A `<Tracking/>` az `a[data-booking-link]` linkeket köti (a site jelöli meg a
+külső foglalási CTA-it) → `trackBookingConversion()`: dataLayer + gateway, közös
+`event_id`, munkamenetenként egyszer, consent fail-closed, mint a telefon. Paraméter
+csak a link HOSTJA (`link_host`, pl. `booksy.com`) a dataLayerben — URL, query
+string soha. `value`/`currency` nincs (§3). Új export: `trackBookingClick`,
+`trackBookingConversion`, `CLICK_GATEWAY_EVENT.booking`.
+
+### GTM-konténer (`gtm/container.json`)
+
+Új `CE - booking_link_clicked` trigger, `GA4 - booking_link_clicked` tag
+(`event_id`, `session_id`, `device`, `link_host`), új `DLV - link_host`; a
+`Meta Pixel - Contact` tag erre is tüzel. A meglévő id-k nem változtak. A közös
+`Google Ads - Conversion` tagre **szándékosan nem** került: az a site egyetlen
+(elsődleges) címkéjére könyvel, egy második címkés awct tag pedig az élő
+GTM-konformitás-ellenőrzést (TRK-850-006) pirosra váltaná. Ads-be a GA4 key event
+importjával, **másodlagos** konverziós műveletként jut.
+
+### Dokumentáció
+
+`INSTALL.md` (hogyan jelöl a site foglalási linket), `docs/CANONICAL-EVENTS.md`,
+`docs/EVENTS.md`, `docs/gtm-setup.md`, `docs/testing.md`, `docs/MONITORING.md`,
+`gtm/README.md`, `SKILL.md`; a watchdog `KEY_EVENTS` listája.
+
 ## 6.18.0 (2026-11-03)
 
 A leadgen-template attribúciós leletei (`leadgen-template-site` docs/kit-handoff.md,

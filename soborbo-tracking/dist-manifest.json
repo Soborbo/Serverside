@@ -1,11 +1,11 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.18.0",
+  "version": "6.22.0",
   "file_count": 32,
   "files": {
     "lib/config.ts": {
-      "sha256": "838f0e64fc6f8c68c3708d138b93c38ef2c3efcdfa6e9446dcdd9346bb285fed",
+      "sha256": "b6caa2230ac7da60560d750f65d8ca49c4621423a18e5da9dc6c24bf642a92b8",
       "bytes": 6594,
       "role": "browser"
     },
@@ -55,13 +55,13 @@
       "role": "browser"
     },
     "lib/event-contract.ts": {
-      "sha256": "0ecb36dceb4a30cc41ba4eebdff03c0bfb98c26ad1a233e0b4e97f73de272ce0",
-      "bytes": 2935,
+      "sha256": "cf9e7b9a5d49fa186e692c52934b23e672ac7cbf0e075f339c414290a8f83d9e",
+      "bytes": 2961,
       "role": "browser"
     },
     "lib/events.ts": {
-      "sha256": "f101924da843b31ea6fa9b007635f907d4cea9a13d4f361a57d9592c6fe1ed87",
-      "bytes": 19749,
+      "sha256": "ba8c68ff2686edb97c7e58089bcf5e44bf3e20b5779cdcb66fd6d733a6fab500",
+      "bytes": 20321,
       "role": "browser"
     },
     "lib/gateway.ts": {
@@ -75,8 +75,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "8fb6c3df6c94d0bf5c84e0173313dd47830b5a3d7454292136142b28b0f44e79",
-      "bytes": 30733,
+      "sha256": "173dfd067a0d15ad286b6de3035c14cf00622fbb191605ad244b6534c48dfc49",
+      "bytes": 31364,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -140,8 +140,8 @@
       "role": "browser"
     },
     "components/Tracking.astro": {
-      "sha256": "9d240a903aa84e30a152edb4ba02d3cb5dc17733db56e5661ab7c0c9a296624a",
-      "bytes": 9739,
+      "sha256": "d38d47d0e8f3095acfd90cec4a6b4336ba2a39d42a386c1f35cc25727a6fb86a",
+      "bytes": 10183,
       "role": "browser"
     },
     "components/TrackingNoscript.astro": {
@@ -150,8 +150,8 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "2b5ad2064061017e6e6057525fd9a37353fa7c64b30a923bfce791e6b83a88ad",
-      "bytes": 38515,
+      "sha256": "7f2c4fce8ad5b4ef134a68d12f1080dc71343bd52b1d37b3832327a3149b7e4f",
+      "bytes": 38542,
       "role": "backend"
     },
     "server/backend/smoke.ts": {

@@ -34,7 +34,7 @@ CRM offline-loop
 
 | Útvonal | Auth | Mi mehet rajta |
 |---|---|---|
-| `/api/event/conversion` (böngésző) | nincs token; Origin allow-list + IP rate limit | CSAK low-risk klikk-eventek: `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `video_play`, engagement events |
+| `/api/event/conversion` (böngésző) | nincs token; Origin allow-list + IP rate limit | CSAK low-risk klikk-eventek: `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `booking_link_clicked`, `video_play`, engagement events |
 | `/api/event/conversion-server` (szerver) | per-site token (`X-Admin-Token` ↔ KV `crm_token_sha256`) | a high-value konverziók: `quote_calculator_submitted`, `callback_request_submitted`, `contact_form_submitted`, `order_request_submitted`, `purchase` |
 | `/api/event/lead-status` (CRM) | per-site token | offline lead-státuszok (`lead_qualified`, `booking_confirmed`, `revenue_confirmed`, …) |
 

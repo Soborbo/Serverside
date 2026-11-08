@@ -156,7 +156,7 @@ Email, telefon, név **soha nem mehet** GA4 Measurement Protocol-ra. Ez a Meta C
 
 **A Turnstile-validáció NINCS TÖBBÉ a gateway-ben** — a secret a Cloudflare teszt-kulcsa volt (minden tokenre `success:true`), miközben valódi konverziókat nyelt el. NE építsd vissza. A jelenlegi kapuk:
 
-- **Böngésző-út** (`/api/event/conversion`, tokenless): Origin allow-list (`lib/origin.ts`) + IP+hostname rate limit. CSAK low-risk klikk-eventek mehetnek rajta (`phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `video_play`, engagement).
+- **Böngésző-út** (`/api/event/conversion`, tokenless): Origin allow-list (`lib/origin.ts`) + IP+hostname rate limit. CSAK low-risk klikk-eventek mehetnek rajta (`phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`, `booking_link_clicked`, `video_play`, engagement).
 - **High-value gate**: a form/lead/purchase konverziók (`events.json` `server_ingress_only: true`) a böngésző-úton **403**-at kapnak (TRK-400-017) — az Origin curl-ből hamisítható. Ezek KIZÁRÓLAG a szerver-ingressen jöhetnek.
 - **Szerver-ingress** (`/api/event/conversion-server`, WAF-mentesített út): per-site token (`X-Admin-Token` ↔ KV `crm_token_sha256`, `lib/admin-auth.ts`). Token nélkül/rossz tokennel 401, böngésző-fallback NINCS. A site backendje SERVICE BINDINGON hívja (same-zone route fetch a Cloudflare loop-védelme miatt rövidre zárul).
 

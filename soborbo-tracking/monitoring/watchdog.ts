@@ -46,6 +46,7 @@ const KEY_EVENTS = [
   'phone_number_clicked',
   'email_address_clicked',
   'whatsapp_button_clicked',
+  'booking_link_clicked',
   'contact_form_submitted',
 ];
 // NOTE: these are the CANONICAL names. Sites whose GA4 stream still uses the

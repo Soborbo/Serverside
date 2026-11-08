@@ -327,6 +327,22 @@ tag('Meta Pixel - CompleteRegistration', 'html', [
   bool('supportDocumentWrite', false),
 ], [T_TRAINING], { consentSettings: consent('ad_storage', 'ad_user_data') });
 
+// ── booking_link_clicked (6.22.0) ────────────────────────────────────
+// External booking-link click (a[data-booking-link], e.g. Booksy) — a SECONDARY
+// lead, wired like phone_number_clicked: GA4 event + Meta Pixel Contact (= the
+// gateway CAPI leg's events.json `meta`, so eventID dedup holds). DELIBERATELY NOT
+// on the shared 'Google Ads - Conversion' tag: that tag books into the site's one
+// (primary) conversion label, and a second awct tag with another label trips the
+// live GTM conformance check (TRK-850-006). Ads gets it, if wanted, by importing
+// the GA4 key event as a SECONDARY action. No value/currency is ever pushed.
+// Appended last so existing tag/trigger/variable ids stay stable across exports.
+const T_BOOKING = customEventTrigger('booking_link_clicked');
+const V_LINK_HOST = dlv('link_host', 'link_host');
+ga4Event('GA4 - booking_link_clicked', 'booking_link_clicked', [T_BOOKING], [
+  ['event_id', V_EVENT_ID], ['session_id', V_SESSION], ['device', V_DEVICE], ['link_host', V_LINK_HOST],
+]);
+tags.find((t) => t.name === 'Meta Pixel - Contact').firingTriggerId.push(T_BOOKING);
+
 // ── Assemble export ──────────────────────────────────────────────────
 const container = {
   exportFormatVersion: 2,

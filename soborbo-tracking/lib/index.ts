@@ -49,7 +49,7 @@ export {
 export {
   trackCalculatorStart, trackCalculatorStep, trackCalculatorOption,
   trackCalculatorComplete, trackPhoneClick, trackCallbackClick,
-  trackEmailClick, trackWhatsappClick, setUserDataForEC, clearUserDataForEC, getUserDataForEC,
+  trackEmailClick, trackWhatsappClick, trackBookingClick, setUserDataForEC, clearUserDataForEC, getUserDataForEC,
   initScrollTracking, initFormAbandonTracking, enableDebug,
   generateEventId, pushLeadConversion, pushContactConversion,
   pushConsultationConversion, pushTrainingSignupConversion,
@@ -123,7 +123,7 @@ import {
 import {
   generateEventId, pushLeadConversion, pushContactConversion,
   pushConsultationConversion, pushTrainingSignupConversion, enableDebug,
-  trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick,
+  trackPhoneClick, trackCallbackClick, trackEmailClick, trackWhatsappClick, trackBookingClick,
   hasClickFired, markClickFired,
 } from './events';
 import { sendToWorker } from './gateway';
@@ -475,6 +475,7 @@ export const CLICK_GATEWAY_EVENT = {
   callback: null,
   email: 'email_address_clicked',
   whatsapp: 'whatsapp_button_clicked',
+  booking: 'booking_link_clicked',
 } as const;
 
 function trackClickConversion(
@@ -531,6 +532,18 @@ export function trackEmailConversion(params: { email?: string } = {}): string | 
 export function trackWhatsappConversion(params: { phone?: string } = {}): string | null {
   return trackClickConversion((id) => { trackWhatsappClick(id); }, CLICK_GATEWAY_EVENT.whatsapp, {
     dedupName: 'whatsapp', params: { phone: params.phone },
+  });
+}
+
+/**
+ * External booking-link click (`a[data-booking-link]`) → dataLayer + gateway
+ * `booking_link_clicked` (shared event_id, session-deduped). A SECONDARY lead:
+ * no value/currency (the booking is off-site, its worth unknown — §3). The
+ * gateway leg carries no PII; `linkHost` reaches the dataLayer only.
+ */
+export function trackBookingConversion(params: { linkHost?: string } = {}): string | null {
+  return trackClickConversion((id) => { trackBookingClick(id, params.linkHost); }, CLICK_GATEWAY_EVENT.booking, {
+    dedupName: 'booking',
   });
 }
 

@@ -25,7 +25,8 @@ the GA4 event name, and the gateway `event_name` are now the SAME string. The ol
 ## Ingress split (Run 6) — which path carries which event
 
 - **Browser path** (`/api/event/conversion`, tokenless): `phone_number_clicked`,
-  `email_address_clicked`, `whatsapp_button_clicked`, `begin_checkout`, `video_play`.
+  `email_address_clicked`, `whatsapp_button_clicked`, `booking_link_clicked`,
+  `begin_checkout`, `video_play`.
 - **Server path only** (`/api/event/conversion-server`, per-site token; browser
   path → 403/TRK-400-017): `quote_calculator_submitted`,
   `callback_request_submitted`, `contact_form_submitted`,
@@ -49,6 +50,7 @@ One name flows through `events.ts` (dataLayer) → GTM trigger → GA4 event →
 | Phone click (`tel:`) | `phone_number_clicked` | Contact | ✅ |
 | Email click (`mailto:`) | `email_address_clicked` | Contact | ✅ |
 | WhatsApp click | `whatsapp_button_clicked` | Contact | ✅ |
+| External booking link (`a[data-booking-link]`, e.g. Booksy) — **secondary lead**, no value | `booking_link_clicked` | Contact | ✅ |
 
 > **§2.1 change:** the lead/quote form now fires **Meta Lead** (was Contact). The
 > calculator completion and the lead-form submit share `quote_calculator_submitted`
@@ -94,7 +96,8 @@ target is `lead_qualified` (a real lead), not the raw click.
 1. **Key Events (Admin → Events → Mark as key event):**
    `quote_calculator_submitted`, `contact_form_submitted`, `callback_request_submitted`,
    `consultation_request_submitted`, `training_signup_submitted`,
-   `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`.
+   `phone_number_clicked`, `email_address_clicked`, `whatsapp_button_clicked`,
+   `booking_link_clicked`.
 2. **Custom dimensions (event-scoped):** `event_id`, `session_id`, `source`, `service`,
    `device`, `calculator_name`, `step_id`, `lead_provenance`. (Campaign params flow
    natively with the `campaign_details` event.)

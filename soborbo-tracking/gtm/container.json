@@ -1213,7 +1213,8 @@
           "2",
           "4",
           "5",
-          "6"
+          "6",
+          "15"
         ],
         "tagFiringOption": "ONCE_PER_EVENT",
         "consentSettings": {
@@ -1615,6 +1616,108 @@
             ]
           }
         }
+      },
+      {
+        "accountId": "0",
+        "containerId": "0",
+        "tagId": "22",
+        "name": "GA4 - booking_link_clicked",
+        "type": "gaawe",
+        "parameter": [
+          {
+            "type": "TEMPLATE",
+            "key": "measurementId",
+            "value": "{{Const - GA4 Measurement ID}}"
+          },
+          {
+            "type": "TEMPLATE",
+            "key": "eventName",
+            "value": "booking_link_clicked"
+          },
+          {
+            "type": "LIST",
+            "key": "eventParameters",
+            "list": [
+              {
+                "type": "MAP",
+                "map": [
+                  {
+                    "type": "TEMPLATE",
+                    "key": "name",
+                    "value": "event_id"
+                  },
+                  {
+                    "type": "TEMPLATE",
+                    "key": "value",
+                    "value": "{{DLV - event_id}}"
+                  }
+                ]
+              },
+              {
+                "type": "MAP",
+                "map": [
+                  {
+                    "type": "TEMPLATE",
+                    "key": "name",
+                    "value": "session_id"
+                  },
+                  {
+                    "type": "TEMPLATE",
+                    "key": "value",
+                    "value": "{{DLV - session_id}}"
+                  }
+                ]
+              },
+              {
+                "type": "MAP",
+                "map": [
+                  {
+                    "type": "TEMPLATE",
+                    "key": "name",
+                    "value": "device"
+                  },
+                  {
+                    "type": "TEMPLATE",
+                    "key": "value",
+                    "value": "{{DLV - device}}"
+                  }
+                ]
+              },
+              {
+                "type": "MAP",
+                "map": [
+                  {
+                    "type": "TEMPLATE",
+                    "key": "name",
+                    "value": "link_host"
+                  },
+                  {
+                    "type": "TEMPLATE",
+                    "key": "value",
+                    "value": "{{DLV - link_host}}"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "fingerprint": "0",
+        "firingTriggerId": [
+          "15"
+        ],
+        "tagFiringOption": "ONCE_PER_EVENT",
+        "consentSettings": {
+          "consentStatus": "NEEDED",
+          "consentType": {
+            "type": "LIST",
+            "list": [
+              {
+                "type": "TEMPLATE",
+                "value": "analytics_storage"
+              }
+            ]
+          }
+        }
       }
     ],
     "trigger": [
@@ -1962,6 +2065,31 @@
                 "type": "TEMPLATE",
                 "key": "arg1",
                 "value": "sbo_consent_update"
+              }
+            ]
+          }
+        ],
+        "fingerprint": "0"
+      },
+      {
+        "accountId": "0",
+        "containerId": "0",
+        "triggerId": "15",
+        "name": "CE - booking_link_clicked",
+        "type": "CUSTOM_EVENT",
+        "customEventFilter": [
+          {
+            "type": "EQUALS",
+            "parameter": [
+              {
+                "type": "TEMPLATE",
+                "key": "arg0",
+                "value": "{{_event}}"
+              },
+              {
+                "type": "TEMPLATE",
+                "key": "arg1",
+                "value": "booking_link_clicked"
               }
             ]
           }
@@ -2366,6 +2494,31 @@
             "type": "TEMPLATE",
             "key": "javascript",
             "value": "function(){\n  // PII is written by setUserDataForEC() to a hidden side-channel,\n  // NOT the dataLayer (GDPR). Keys: email, phone_number, first_name, last_name.\n  //\n  // PREFERRED: the package-owned getter. The raw window global is a\n  // fallback for containers published before the getter existed — it is\n  // enumerable by any third-party script, which is exactly why the getter\n  // is now canonical. Drop the fallback once every container is republished.\n  try {\n    if (window.sbTracking && typeof window.sbTracking.getUserDataForEC === \"function\") {\n      return window.sbTracking.getUserDataForEC() || {};\n    }\n    return window.__sbUserData || {};\n  } catch (e) { return {}; }\n}"
+          }
+        ],
+        "fingerprint": "0"
+      },
+      {
+        "accountId": "0",
+        "containerId": "0",
+        "variableId": "19",
+        "name": "DLV - link_host",
+        "type": "v",
+        "parameter": [
+          {
+            "type": "INTEGER",
+            "key": "dataLayerVersion",
+            "value": "2"
+          },
+          {
+            "type": "BOOLEAN",
+            "key": "setDefaultValue",
+            "value": false
+          },
+          {
+            "type": "TEMPLATE",
+            "key": "name",
+            "value": "link_host"
           }
         ],
         "fingerprint": "0"

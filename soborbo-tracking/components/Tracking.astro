@@ -158,15 +158,16 @@ const isSbo = consentProvider === 'sbo';
   import {
     initTracking, initScrollTracking,
     trackPhoneConversion, trackEmailConversion, trackWhatsappConversion,
+    trackBookingConversion,
   } from '../lib';
 
   // Auto-bind tel:/mailto:/WhatsApp links. Each fires BOTH channels (dataLayer +
   // gateway) with a shared event_id. tel:/mailto: are protocol-anchored (^=).
-  function bindClicks(selector: string, handler: () => void) {
+  function bindClicks(selector: string, handler: (link: HTMLAnchorElement) => void) {
     document.querySelectorAll<HTMLAnchorElement>(selector).forEach(link => {
       if (link.dataset.trackBound) return;
       link.dataset.trackBound = '1';
-      link.addEventListener('click', handler);
+      link.addEventListener('click', () => handler(link));
     });
   }
 
@@ -190,6 +191,10 @@ const isSbo = consentProvider === 'sbo';
     initScrollTracking();
     bindClicks('a[href^="tel:"]', () => trackPhoneConversion());
     bindClicks('a[href^="mailto:"]', () => trackEmailConversion());
+    // Off-site booking CTAs (Booksy & co.) are marked by the SITE with
+    // data-booking-link — a secondary lead. Only the resolved HOST leaves the
+    // page (never the URL: query strings can carry PII). Bound BEFORE WhatsApp: the site's explicit mark wins.
+    bindClicks('a[data-booking-link]', (link) => trackBookingConversion({ linkHost: link.hostname || undefined }));
     bindWhatsapp(() => trackWhatsappConversion());
   }
 

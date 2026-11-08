@@ -33,6 +33,7 @@ const DEFAULT_EVENT_MAP: Record<string, string> = {
   phone_number_clicked: 'Contact',
   email_address_clicked: 'Contact',
   whatsapp_button_clicked: 'Contact',
+  booking_link_clicked: 'Contact',
   quote_calculator_opened: 'ViewContent',
   video_play: 'ViewContent',
   view_item: 'ViewContent',

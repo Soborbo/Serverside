@@ -373,6 +373,20 @@ export function trackWhatsappClick(eventId?: string): boolean {
   return true;
 }
 
+/**
+ * External booking-link click (`a[data-booking-link]`, e.g. Booksy) — a SECONDARY
+ * lead: the booking itself happens off-site and cannot be measured. `linkHost` is
+ * the bare hostname only — never the full URL (query strings can carry PII).
+ */
+export function trackBookingClick(eventId?: string, linkHost?: string): boolean {
+  if (!canPush()) return false;
+  push({
+    event: 'booking_link_clicked', ...(eventId && { event_id: eventId }),
+    ...(linkHost && { link_host: linkHost }), session_id: getSessionId(), device: getDevice(),
+  });
+  return true;
+}
+
 // ── Form abandonment — returns cleanup function ────────────────────
 
 export function initFormAbandonTracking(

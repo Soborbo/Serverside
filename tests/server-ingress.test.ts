@@ -235,6 +235,27 @@ describe('server-to-server ingress — the browser path no longer needs a token'
     expect(res.status).toBe(204);
   });
 
+  // 6.22.0 — a külső foglalási link kattintása ugyanaz a low-risk klikk, mint a
+  // telefon: böngésző-úton jön, Meta Contact-ként megy ki, ÉRTÉK NÉLKÜL (§3).
+  it('accepts booking_link_clicked on the browser path → Meta Contact, no value/currency', async () => {
+    const { metaBodies } = installFetchSpy();
+    const { env } = makeEnv(await makeSiteConfig());
+    const { ctx, tasks } = collectingCtx();
+
+    const res = await handleConversion(
+      serverRequest({ eventName: 'booking_link_clicked' }),
+      env,
+      ctx
+    );
+    await Promise.all(tasks);
+    expect(res.status).toBe(204);
+    expect(metaBodies).toHaveLength(1);
+    const ev = metaBodies[0].data[0];
+    expect(ev.event_name).toBe('Contact');
+    expect(ev.custom_data?.value).toBeUndefined();
+    expect(ev.custom_data?.currency).toBeUndefined();
+  });
+
   it('403s a token-less HIGH-VALUE form conversion EVEN from an allowed origin (forged-Origin vector closed)', async () => {
     const { calls } = installFetchSpy();
     const { env, datapoints } = makeEnv(await makeSiteConfig());
