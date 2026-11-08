@@ -370,8 +370,10 @@ changes when set to `sbo`:
   UTMs of the current URL (`gclid`, `gbraid`, `wbraid`, `fbclid`, `msclkid`,
   `utm_*`) are appended at click time to same-origin link navigations and added
   as hidden fields to same-origin GET forms. Never to external links, `tel:`,
-  `mailto:`, `download` links, in-page anchors or POST forms; existing params on
-  the link are kept. Nothing is written to or read from storage — the next page's
+  `mailto:`, `download` links, in-page anchors or POST forms (the submitter's
+  `formaction`/`formmethod` count); a destination that already carries ANY click
+  id/UTM is left untouched (one touch, one group). Decoration lasts only for that
+  click/submit — the `href` is restored and the hidden fields removed right after. Nothing is written to or read from storage — the next page's
   `captureUrlParams()` reads them from its URL, and on accept the normal
   `persistTrackingParams()` stores them as today. After any decision (accept,
   reject, withdraw) it stops decorating. Without it, a click id captured before

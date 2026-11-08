@@ -23,8 +23,13 @@ elveszett. `PUBLIC_TRACKING_URL_PASSTHROUGH=1` (csak sbo CMP alatt) mellett —
 a Consent Mode `url_passthrough` mintájára — amíg nincs döntés, a jelenlegi URL
 `gclid`/`gbraid`/`wbraid`/`fbclid`/`msclkid`/`utm_*` jelei kattintáskor a belső
 linkekre íródnak (belső GET-formra rejtett mezőként). Külső linkre, `tel:`/
-`mailto:`/`download` linkre, oldalon belüli horgonyra és POST-formra soha; a
-link meglévő paraméterét nem írja felül. Tárolót nem ír és nem olvas; elfogadáskor
+`mailto:`/`download` linkre, oldalon belüli horgonyra és POST-formra soha (a
+beküldő gomb `formaction`/`formmethod`-ja számít). Egy érintés, egy csoport: ha a
+cél már BÁRMELY klikk-ID-t/UTM-et hoz, érintetlen marad (nincs kulcsonkénti merge).
+A dekoráció csak az adott kattintásé/beküldésé: a `href` a következő taskban
+visszaáll, a rejtett mezők (`data-sbo-passthrough`) eltűnnek, és minden beküldés
+előbb takarít — megszakított navigáció után egy elutasítás nem viszi tovább a
+jeleket. Tárolót nem ír és nem olvas; elfogadáskor
 a megszokott `persistTrackingParams` a dekorált URL-ből perzisztál. Döntés után
 (elfogadás, elutasítás, visszavonás) nem dekorál. A `urlTrackingParams` exportált
 lett (egy forrás a kulcslistára). Jogi megjegyzés és ismert korlát: `INSTALL.md`.

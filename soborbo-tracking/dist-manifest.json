@@ -95,8 +95,8 @@
       "role": "browser"
     },
     "lib/url-passthrough.ts": {
-      "sha256": "558137d6342ebeb5f10d85e159340c0db229ce460db08411d12c25f46e08133c",
-      "bytes": 3744,
+      "sha256": "2475578ccab3d83b441e608604d39cb4b126c0f607473bca512005669e83f41d",
+      "bytes": 5393,
       "role": "browser"
     },
     "lib/uuid.ts": {

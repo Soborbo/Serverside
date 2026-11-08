@@ -5,7 +5,8 @@
  * A probléma: döntés előtt a klikk-ID-k/UTM-ek csak memóriában élnek
  * (`captureUrlParams`). Ha a látogató a banner elfogadása ELŐTT egy másik oldalra
  * lép, a kattintás elveszik. Megoldás: amíg NINCS döntés, a belső link-navigáció
- * (és a belső GET-form) URL-jére átírjuk a jelenlegi URL jeleit — a következő
+ * (és a belső GET-form) URL-jére — csak arra az egy navigációra — átírjuk a
+ * jelenlegi URL jeleit, ha a cél még semmilyen jelet nem hoz — a következő
  * oldal `captureUrlParams`-a onnan olvassa, elfogadáskor a megszokott
  * `persistTrackingParams` perzisztál.
  *
@@ -18,7 +19,7 @@
  */
 import { isSboConsentProvider, trackingConfig } from './config';
 import { readSboConsent } from './consent-sbo-state';
-import { urlTrackingParams } from './persistence';
+import { TOUCH_CLICK_KEYS, UTM_KEYS, urlTrackingParams } from './persistence';
 
 /** Dekorálható jelek — `null`, ha a passthrough nem aktív, van döntés, vagy nincs jel. */
 function passthroughParams(): Record<string, string> | null {
@@ -27,19 +28,28 @@ function passthroughParams(): Record<string, string> | null {
   return urlTrackingParams() as Record<string, string> | null;
 }
 
-/** A hiányzó jelek ráírása; igaz, ha változott. A meglévő kulcsot nem írja felül. */
-function addMissing(u: URL, p: Record<string, string>): boolean {
-  let changed = false;
-  for (const [k, v] of Object.entries(p)) {
-    if (!u.searchParams.has(k)) { u.searchParams.set(k, v); changed = true; }
-  }
-  return changed;
+const SIGNAL_KEYS: readonly string[] = [...TOUCH_CLICK_KEYS, ...UTM_KEYS];
+
+/** A cél már hoz-e bármely jelet (klikk-ID vagy UTM) — akkor is, ha a jelenlegi URL-en nincs olyan. */
+function hasAny(has: (k: string) => boolean): boolean {
+  return SIGNAL_KEYS.some(has);
 }
 
 function isInternal(u: URL): boolean {
   // Az `origin` a tel:/mailto:/javascript:-re 'null' — azok így maguktól kiesnek.
   return u.origin === window.location.origin;
 }
+
+/**
+ * A dekoráció csak az adott kattintásé/beküldésé: a böngésző a navigációt az
+ * eseménykezelés UTÁN, ugyanabban a taskban indítja (és a router is szinkron
+ * olvassa a href-et), így a következő taskban visszaállítunk. Megszakított
+ * kattintás/beküldés után így nem marad dekorált link vagy rejtett mező, ami egy
+ * későbbi elutasítás után is elvinné a jeleket (Codex #166).
+ */
+const later = (fn: () => void): void => { setTimeout(fn, 0); };
+
+const OWNED = 'data-sbo-passthrough';
 
 function onClick(e: Event): void {
   const p = passthroughParams();
@@ -51,25 +61,44 @@ function onClick(e: Event): void {
   if (!isInternal(u)) return;
   // Oldalon belüli horgony: query-íráskor teljes újratöltés lenne belőle.
   if (u.pathname === window.location.pathname && u.hash) return;
-  if (addMissing(u, p)) a.href = u.href;
+  // Egy érintés, egy csoport: ha a cél bármely jelet hozza, a sajátja marad egésze
+  // (kulcsonkénti merge soha nem létezett kampányt gyártana, Codex #166).
+  if (hasAny((k) => u.searchParams.has(k))) return;
+  for (const [k, v] of Object.entries(p)) u.searchParams.set(k, v);
+  const original = a.getAttribute('href')!;
+  a.href = u.href;
+  later(() => { if (a.href === u.href) a.setAttribute('href', original); });
 }
 
 function onSubmit(e: Event): void {
-  const p = passthroughParams();
   const f = e.target;
-  if (!p || !(f instanceof HTMLFormElement) || f.method !== 'get') return;
+  if (!(f instanceof HTMLFormElement)) return;
+  // Korábbi (pl. megszakított) beküldés maradéka — döntés előtt mindig takarítunk.
+  f.querySelectorAll(`input[${OWNED}]`).forEach((el) => el.remove());
+  const p = passthroughParams();
+  if (!p) return;
+  // A beküldő gomb `formaction`/`formmethod`-ja felülírja a form sajátját.
+  const s = (e as SubmitEvent).submitter;
+  const method = (s?.getAttribute('formmethod') ?? f.method).toLowerCase();
+  const action = s?.getAttribute('formaction') ?? f.action;
+  if (method !== 'get') return;
   let u: URL;
-  try { u = new URL(f.action, window.location.href); } catch { return; }
+  try { u = new URL(action, window.location.href); } catch { return; }
   if (!isInternal(u)) return;
-  // GET-formnál az action query-jét a mezők felülírják — rejtett mező kell.
+  // GET-formnál az action query-jét a mezők felülírják — a cél jelei a mezők.
+  // Egy csoport: ha a form bármely jelet már hoz, nem keverünk bele.
+  if (hasAny((k) => !!f.elements.namedItem(k))) return;
+  const added: HTMLInputElement[] = [];
   for (const [k, v] of Object.entries(p)) {
-    if (f.elements.namedItem(k)) continue;
     const input = document.createElement('input');
     input.type = 'hidden';
     input.name = k;
     input.value = v;
+    input.setAttribute(OWNED, '');
     f.appendChild(input);
+    added.push(input);
   }
+  later(() => added.forEach((el) => el.remove()));
 }
 
 let installed = false;
