@@ -47,7 +47,12 @@ interface ConsentLogRow {
   analytics_storage: string;
   client_decided_at: string;
   server_received_at: string;
+  consent_text_version: string;
 }
+
+// Relatív idő: a 180 napos lejárat (decideAdConsent) miatt egy rögzített dátum
+// pár hónap múlva magától „lejárt" engedéllyé válna.
+const DECIDED_MS = Date.now() - 60 * 60 * 1000;
 
 function logRow(overrides: Partial<ConsentLogRow>): ConsentLogRow {
   return {
@@ -60,8 +65,9 @@ function logRow(overrides: Partial<ConsentLogRow>): ConsentLogRow {
     ad_personalization: 'GRANTED',
     ad_storage: 'GRANTED',
     analytics_storage: 'GRANTED',
-    client_decided_at: '2026-08-20T10:00:00.000Z',
-    server_received_at: '2026-08-20T10:00:01.000Z',
+    client_decided_at: new Date(DECIDED_MS).toISOString(),
+    server_received_at: new Date(DECIDED_MS + 1000).toISOString(),
+    consent_text_version: '2026-09-a.ga4_google_ads_google_ec_meta',
     ...overrides
   };
 }
@@ -219,6 +225,35 @@ describe('handleLeadStatus — consent_log precedencia (2.5)', () => {
     expect((await res.json()).consent_blocked).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
     // A skip VÉGLEGES: az idempotency táblába do_not_replay=1 került.
+    expect(doNotReplayCalls).toHaveLength(1);
+  });
+
+  it('GRANTED, de a szöveg nem nevezte meg a Google-t → skip + do_not_replay=1, upload nélkül', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const doNotReplayCalls: Array<{ sql: string; args: unknown[] }> = [];
+    const res = await handleLeadStatus(
+      makeRequest({
+        lead_id: 'lead-12345678',
+        status: 'lead_qualified',
+        ad_allowed: true,
+        user_data: { email: 'jane@example.com' }
+      }),
+      makeEnv(
+        makeLedger({
+          receipt: { ad_allowed: 1, ad_user_data: 'GRANTED', ad_personalization: 'GRANTED', consent_id: 'cid-0123456789abcdef' },
+          // nonmono-hu alak: csak analitikai eszközök a szövegben.
+          consentLog: logRow({ consent_text_version: '2026-09-a.clarity_ga4' }),
+          doNotReplayCalls
+        })
+      ),
+      makeCtx()
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).consent_blocked).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(doNotReplayCalls).toHaveLength(1);
   });
 

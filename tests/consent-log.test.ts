@@ -21,8 +21,13 @@ const BASE_STATE: ConsentLogState = {
   ad_personalization: 'GRANTED',
   ad_storage: 'GRANTED',
   analytics_storage: 'GRANTED',
-  client_decided_at: '2026-08-17T10:00:00.000Z',
-  server_received_at: '2026-08-17T10:00:01.000Z'
+  // Relatív idő: a 180 napos lejárat (decideAdConsent) miatt egy rögzített dátum
+  // pár hónap múlva magától „lejárt" engedéllyé válna.
+  client_decided_at: new Date(Date.now() - 3_600_000).toISOString(),
+  server_received_at: new Date(Date.now() - 3_599_000).toISOString(),
+  consent_text_version: '2026-08-a',
+  effective_vendors: ['ga4', 'google_ads', 'meta'],
+  effective_received_at: new Date(Date.now() - 3_599_000).toISOString()
 };
 
 /**

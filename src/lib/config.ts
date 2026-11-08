@@ -96,6 +96,12 @@ export interface SiteConfig {
      * A `consent_log.consent_mode` ezt rögzíti minden döntésnél.
      */
     mode?: 'basic' | 'advanced';
+    /**
+     * Az advanced mód jogi jóváhagyása `<YYYY-MM-DD>:<hivatkozás>` alakban
+     * (döntés 2026-11-03: EEA/UK alatt a basic a kötelező alap). A
+     * scripts/check-cmp-flip-readiness.mjs nélküle bukik (CMP-FLIP-008).
+     */
+    advanced_approval?: string;
   };
 
   // Extra engedélyezett böngésző-originek (`https://foo.example.com` vagy puszta

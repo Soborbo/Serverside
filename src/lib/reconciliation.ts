@@ -278,6 +278,9 @@ const OFFLINE_SKIP_COUNTS_AS_LOSS: Record<SkipReason, boolean> = {
   conversion_window_expired: false,
   // Átmeneti: a consent-döntés még úton (retry-only; delivery-sor nem is íródik).
   consent_pending: false,
+  // Policy: lejárt, ill. a platformot meg nem nevező engedély alatt helyes nem küldeni.
+  consent_expired: false,
+  consent_vendor_not_covered: false,
   // ── HIBA: a konverzió emiatt NEM ért célba ───────────────────────────────
   not_configured: true,
   invalid_identifier: true,

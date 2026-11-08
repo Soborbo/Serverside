@@ -446,6 +446,7 @@ export async function handleLeadStatus(
     sbo: isConsentProviderSbo(siteConfig),
     requireConsent: siteConfig.require_consent === true,
     category: 'ads',
+    platform: 'gads',
     consentLog: consentLogRead,
     receipt: leadConsentRead,
     crmAdAllowed: body.ad_allowed
@@ -507,8 +508,8 @@ export async function handleLeadStatus(
       consent_log_revision: consentLogState?.revision
     });
     if (consentSource === 'consent_log') {
-      // 2.5: az AKTUÁLIS állapot DENIED/withdrawn → a skip VÉGLEGES erre az
-      // eventre. A do_not_replay=1 nélkül egy későbbi CRM-retry vagy admin-replay
+      // 2.5: az AKTUÁLIS állapot DENIED/withdrawn — vagy az engedély lejárt, ill.
+      // nem nevezte meg a Google-t — → a skip VÉGLEGES erre az eventre. A do_not_replay=1 nélkül egy későbbi CRM-retry vagy admin-replay
       // — akár egy időközbeni ÚJ hozzájárulás után — újra kiküldené a döntés
       // idején tiltott konverziót. Best-effort: ha a jelölés elbukik, a skip
       // ettől a kérésen belül még áll, csak a replay-védelem gyengül (logolva).
