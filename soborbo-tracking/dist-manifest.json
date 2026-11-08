@@ -1,12 +1,12 @@
 {
   "_comment": "GENERÁLT — ne szerkeszd kézzel. Forrás: scripts/gen-dist-manifest.mjs. A `version` a package.json-é; a hash-ek sorvég-normalizáltak (CRLF→LF).",
   "name": "soborbo-tracking",
-  "version": "6.18.0",
-  "file_count": 32,
+  "version": "6.21.0",
+  "file_count": 33,
   "files": {
     "lib/config.ts": {
-      "sha256": "838f0e64fc6f8c68c3708d138b93c38ef2c3efcdfa6e9446dcdd9346bb285fed",
-      "bytes": 6594,
+      "sha256": "8a82ba381afb75388f855729a3a4b52ee907f00f82fe4d33df88b3cd360d3e35",
+      "bytes": 7120,
       "role": "browser"
     },
     "lib/consent-banner-a11y.ts": {
@@ -75,8 +75,8 @@
       "role": "browser"
     },
     "lib/index.ts": {
-      "sha256": "8fb6c3df6c94d0bf5c84e0173313dd47830b5a3d7454292136142b28b0f44e79",
-      "bytes": 30733,
+      "sha256": "4a85f1e1b5c02eb9f5cc5c7e038b3522722b4107ad3a4273e7295d4efb1a3c5f",
+      "bytes": 30919,
       "role": "browser"
     },
     "lib/observability.ts": {
@@ -85,13 +85,18 @@
       "role": "browser"
     },
     "lib/persistence.ts": {
-      "sha256": "23ef162a4955286760dcf273038ccc8c02cc54a66da7a14fb931d352e4c37e69",
-      "bytes": 41229,
+      "sha256": "e08ed5071ac1bb8da366b758250c897612e7fbab3abf17efa666f046246c97c1",
+      "bytes": 41236,
       "role": "browser"
     },
     "lib/submit.ts": {
       "sha256": "79872b7f69a52e63643f1ed619ce639b26b4aa7dc4704d42ee7ac8986d8638a2",
       "bytes": 5558,
+      "role": "browser"
+    },
+    "lib/url-passthrough.ts": {
+      "sha256": "2475578ccab3d83b441e608604d39cb4b126c0f607473bca512005669e83f41d",
+      "bytes": 5393,
       "role": "browser"
     },
     "lib/uuid.ts": {
@@ -150,7 +155,7 @@
       "role": "browser"
     },
     "server/backend/gateway-dispatch.ts": {
-      "sha256": "2b5ad2064061017e6e6057525fd9a37353fa7c64b30a923bfce791e6b83a88ad",
+      "sha256": "5e4c0b8e16707cdd2b1317d143bfd1c75cdb86a624a0d2094d11d70447157ef6",
       "bytes": 38515,
       "role": "backend"
     },

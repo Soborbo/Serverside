@@ -127,6 +127,7 @@ import {
   hasClickFired, markClickFired,
 } from './events';
 import { sendToWorker } from './gateway';
+import { installUrlPassthrough } from './url-passthrough';
 import { trackingConfig } from './config';
 
 // ── Init ───────────────────────────────────────────────────────────
@@ -146,6 +147,8 @@ export function initTracking(): void {
   // megvolt minden olvasás előtt — az arány felfújva, a diagnózis hamis.
   resetStorageReadBlocked();
   captureUrlParams();
+  // Opt-in (PUBLIC_TRACKING_URL_PASSTHROUGH=1): döntés előtt a jelek a belső linkeken utaznak.
+  installUrlPassthrough();
   if (!consentListenerBound) {
     consentListenerBound = true;
     // Withdrawal must reach the data at rest — until now this callback only had a

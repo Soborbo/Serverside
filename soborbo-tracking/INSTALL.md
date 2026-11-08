@@ -364,6 +364,26 @@ changes when set to `sbo`:
   first-level button in the same row. This deliberately gives up button parity
   (NAIH-3195/2022 class risk) — a per-site owner decision, off by default. The
   banner version gets a `-e` suffix so `consent-rate-report.mjs` separates it.
+- Optional URL passthrough (6.21.0+): `PUBLIC_TRACKING_URL_PASSTHROUGH=1` (default
+  OFF; sbo provider only) is the kit's own analogue of Consent Mode
+  `url_passthrough`. While the visitor has NOT decided yet, the click ids and
+  UTMs of the current URL (`gclid`, `gbraid`, `wbraid`, `fbclid`, `msclkid`,
+  `utm_*`) are appended at click time to same-origin link navigations and added
+  as hidden fields to same-origin GET forms. Never to external links, `tel:`,
+  `mailto:`, `download` links, in-page anchors or POST forms (the submitter's
+  `formaction`/`formmethod` count); a destination that already carries ANY click
+  id/UTM is left untouched (one touch, one group). Decoration lasts only for that
+  click/submit — the `href` is restored and the hidden fields removed right after. Nothing is written to or read from storage — the next page's
+  `captureUrlParams()` reads them from its URL, and on accept the normal
+  `persistTrackingParams()` stores them as today. After any decision (accept,
+  reject, withdraw) it stops decorating. Without it, a click id captured before
+  consent is lost if the visitor navigates before accepting.
+  **Legal note:** no storage on or access to the terminal equipment happens, so
+  PECR reg. 6 / ePrivacy 5(3) is not triggered; the identifiers do travel in the
+  URL to your own pages (server logs, analytics referrers, copied links). Whether
+  that is acceptable is a per-site policy decision — record it in the site's
+  privacy notice / decision log before enabling. Known limit: if the visitor
+  accepts on a later page, `landingPage` is that later page, not the true landing.
 - Also set `PUBLIC_TRACKING_POLICY_VERSION` (the privacy-policy version label) —
   it is a mandatory field of every consent-log row.
 - `PUBLIC_TRACKING_CONSENT_ENDPOINT` (default `/api/consent`) is the base of every consent URL; a trailing slash is honoured (`/api/consent/` → POST `/api/consent/`, shown ping `/api/consent/shown/`) for Astro `trailingSlash: 'always'` sites whose `/api/consent/*` proxy only matches slashed paths. Unset = today's URLs, byte for byte.

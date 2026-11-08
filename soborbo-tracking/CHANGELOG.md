@@ -10,6 +10,32 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.21.0 (2026-11-05)
+
+Minor, mert új, opt-in site-opció érkezik. Alapból KI: az opció nélkül a
+viselkedés bitre változatlan. Gateway-változás nincs.
+
+### Új — URL-passthrough döntés előtt (`lib/url-passthrough.ts`, `lib/config.ts`, `lib/index.ts`)
+
+Döntés előtt a klikk-ID-k/UTM-ek csak memóriában éltek (`captureUrlParams`): ha
+a látogató a banner elfogadása előtt egy másik oldalra lépett, a kattintás
+elveszett. `PUBLIC_TRACKING_URL_PASSTHROUGH=1` (csak sbo CMP alatt) mellett —
+a Consent Mode `url_passthrough` mintájára — amíg nincs döntés, a jelenlegi URL
+`gclid`/`gbraid`/`wbraid`/`fbclid`/`msclkid`/`utm_*` jelei kattintáskor a belső
+linkekre íródnak (belső GET-formra rejtett mezőként). Külső linkre, `tel:`/
+`mailto:`/`download` linkre, oldalon belüli horgonyra és POST-formra soha (a
+beküldő gomb `formaction`/`formmethod`-ja számít). Egy érintés, egy csoport: ha a
+cél már BÁRMELY klikk-ID-t/UTM-et hoz, érintetlen marad (nincs kulcsonkénti merge).
+A dekoráció csak az adott kattintásé/beküldésé: a `href` a következő taskban
+visszaáll, a rejtett mezők (`data-sbo-passthrough`) eltűnnek, és minden beküldés
+előbb takarít — megszakított navigáció után egy elutasítás nem viszi tovább a
+jeleket. Tárolót nem ír és nem olvas; elfogadáskor
+a megszokott `persistTrackingParams` a dekorált URL-ből perzisztál. Döntés után
+(elfogadás, elutasítás, visszavonás) nem dekorál. A `urlTrackingParams` exportált
+lett (egy forrás a kulcslistára). Jogi megjegyzés és ismert korlát: `INSTALL.md`.
+
+---
+
 ## 6.18.0 (2026-11-03)
 
 A leadgen-template attribúciós leletei (`leadgen-template-site` docs/kit-handoff.md,
