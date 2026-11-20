@@ -340,6 +340,25 @@ zone_name = "exquisitelaser.co.uk"
 pattern = "www.exquisitelaser.co.uk/api/consent*"
 zone_name = "exquisitelaser.co.uk"
 #
+# Albert Kártevőirtás (albertkartevoirtas.hu) — 2026-11-20, sbo site like
+# exquisite (template clone, site Worker on a custom domain + GATEWAY binding).
+# /api/event/* from routes.toml; /api/consent* by hand (sbo banner, same-origin).
+# SITE_CONFIG KV: albertkartevoirtas.hu + www (site_id: albertkartevoirtas, HU/HUF,
+# meta pixel 1131663379776022). SMOKE_SITES: NOT yet — added only after the
+# site's own smoke cron has produced an accepted row (see the SMOKE_SITES note).
+[[routes]]
+pattern = "albertkartevoirtas.hu/api/event/*"
+zone_name = "albertkartevoirtas.hu"
+[[routes]]
+pattern = "www.albertkartevoirtas.hu/api/event/*"
+zone_name = "albertkartevoirtas.hu"
+[[routes]]
+pattern = "albertkartevoirtas.hu/api/consent*"
+zone_name = "albertkartevoirtas.hu"
+[[routes]]
+pattern = "www.albertkartevoirtas.hu/api/consent*"
+zone_name = "albertkartevoirtas.hu"
+#
 # Hét 6-7: SkinLab + Life Story Video
 # [[routes]]
 # pattern = "skinlab.hu/api/event/*"
