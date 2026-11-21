@@ -10,6 +10,27 @@ amit nem tudunk bizonyítani.
 
 ---
 
+## 6.20.0 (2026-11-05)
+
+Minor, mert a `<Tracking />` API-ja bővül (opcionális prop). Gateway-változás nincs.
+
+### Új — a `gtmId` opcionális (`components/Tracking.astro`)
+
+Eddig a komponens kötelezően kérte a GTM-id-t, a site-ok pedig (pl. a
+leadgen-template `{gtmId && <Tracking gtmId={gtmId} />}`) az EGÉSZ komponenst
+kapuzták rá: placeholder GTM-id mellett a kit semmit nem futtatott — se
+consent-bootot, se klikk-/scroll-mérést, se attribúció-perzisztálást, se
+gateway-lábat. Mostantól id nélkül (vagy üres stringgel) minden fut, csak a GTM-
+szkript nem injektálódik: a CookieYes-ágon a loader-blokk nem renderelődik, a
+sbo-ágon a `window.__sboLoadGtm()` megmarad (a banner hívja), de nem tölt be
+semmit. A dataLayer-pushok ártalmatlanul gyűlnek. GTM-id-t átadó site-on a
+viselkedés változatlan.
+
+Site-teendő a re-vendor után: a layoutban a `<Tracking />`-ot NE kapuzd a GTM-id-re
+(`<Tracking gtmId={isConfigured(id) ? id : undefined} />`).
+
+---
+
 ## 6.19.0 (2026-11-03)
 
 Minor, mert egy eddig buildelhető konfiguráció mostantól build-hiba.
