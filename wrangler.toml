@@ -41,7 +41,7 @@ command = "node scripts/stamp-build-info.mjs"
 # faradtsag, ami miatt ez a lanc egyaltalan letezik.
 # BIZONYITEK (D1 `deliveries`): smoke-olcsokontenerhaz-20260912 es -20260913,
 # mindketto platform=meta, status=accepted.
-SMOKE_SITES = "painless,beautyflow,lomtalan,skinlab,olcsokontenerhaz"
+SMOKE_SITES = "painless,beautyflow,lomtalan,skinlab,olcsokontenerhaz,exquisite-laser"
 
 # Google OAuth kliens (Soborbo Tracking Worker, Google Cloud Console). NEM titok
 # (public client identifier) — szándékosan ITT él, nem dashboard-only varként:
@@ -323,7 +323,7 @@ zone_name = "thebespokejoinery.co.uk"
 pattern = "www.thebespokejoinery.co.uk/api/consent*"
 zone_name = "thebespokejoinery.co.uk"
 #
-# Exquisite Laser & Clinic (exquisitelaser.co.uk) — 2026-11-05, consent-only sbo
+# Exquisite Laser & Clinic (exquisitelaser.co.uk) — 2026-11-05 consent (sbo); Meta leg 2026-11-24 (dataset 1016108400917319)
 # site like befilo (site Worker on a custom domain + GATEWAY binding). The
 # /api/consent* routes are added by hand (not in the generated routes.toml).
 # SITE_CONFIG KV: exquisitelaser.co.uk + www (site_id: exquisite-laser).
